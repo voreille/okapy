@@ -4,6 +4,7 @@ files?
 '''
 import os
 from os.path import dirname, join
+from string import Template
 
 import re
 import numpy as np
@@ -17,14 +18,19 @@ import SimpleITK as sitk
 from image import ImageCT, ImagePT, Mask
 
 
+dic_sitk_writer = {
+        'nrrd': 'NrrdImageIO'
+    }
+
 class DicomHeader():
-    def __init__(self, patient_id, study_instance_uid, series_instance_uid,
-                 modality, path):
+    def __init__(self, patient_id=None,
+                 study_instance_uid=None,
+                 series_instance_uid=None,
+                 modality=None):
         self.patient_id = patient_id
         self.study_instance_uid = study_instance_uid
         self.series_instance_uid = series_instance_uid
         self.modality = modality
-        self.path = path
 
     def __str__(self):
         return ('PatientID: {}, StudyInstanceUID: {}, SeriesInstanceUID: {},'
@@ -33,22 +39,41 @@ class DicomHeader():
                                        self.series_instance_uid,
                                        self.modality))
 
-    def has_same_header(self, dcm_header):
-        output = True
-        for a in dir(self):
-            if not a.startswith('__') and a != 'path':
-                output = output and getattr(self, a) == getattr(dcm_header, a)
+    def __eq__(self, dcm_header):
+        '''
+        Could be written more efficiently with a function like dir()
+        for another time
+        '''
+        if isinstance(dcm_header, DicomHeader):
+            return (
+                self.patient_id == dcm_header.patient_id and
+                self.study_instance_uid == dcm_header.study_instance_uid and
+                self.series_instance_uid == dcm_header.series_instance_uid and
+                self.modality == dcm_header.modality
+            )
+        else:
+            return False
 
-        return output
+
+class DicomFile():
+    def __init__(self, dicom_header=DicomHeader(), path=None):
+        self.dicom_header = dicom_header
+        self.path = path
 
 
 class DicomWalker():
+
     def __init__(self, input_dirpath, output_dirpath,
-                 sitk_writer=sitk.ImageFileWriter(),
-                 list_labels=None):
+                 template_filename=Template('${patient_id}_${modality}.${ext}'),
+                 extension_output='nrrd',
+                 list_labels=list()):
         self.input_dirpath = input_dirpath
         self.output_dirpath = output_dirpath
-        self.dicom_headers = list()
+        self.template_filename = template_filename
+        self.extension_output = extension_output
+        self.sitk_writer = sitk.ImageFileWriter()
+        self.sitk_writer.SetImageIO(dic_sitk_writer[extension_output])
+        self.dicom_files = list()
         self.images = list()
         self.list_labels=list_labels
 
@@ -76,58 +101,75 @@ class DicomWalker():
                 else:
                     series_instance_uid = data.SeriesInstanceUID
 
-                self.dicom_headers.append(DicomHeader(data.PatientID,
-                                                      data.StudyInstanceUID,
-                                                      series_instance_uid,
-                                                      data.Modality,
-                                                      join(dirpath, filename)
-                                                      ))
+                dicom_header = DicomHeader(
+                    patient_id=data.PatientID,
+                    study_instance_uid=data.StudyInstanceUID,
+                    series_instance_uid=series_instance_uid,
+                    modality=data.Modality
+                )
+                self.dicom_files.append(DicomFile(dicom_header=dicom_header,
+                                                    path=join(dirpath,
+                                                              filename)))
 
-        self.dicom_headers.sort(key=lambda x: (x.patient_id,
-                                               x.study_instance_uid,
-                                               x.series_instance_uid,
-                                               x.modality,
+
+        self.dicom_files.sort(key=lambda x: (x.dicom_header.patient_id,
+                                               x.dicom_header.study_instance_uid,
+                                               x.dicom_header.series_instance_uid,
+                                               x.dicom_header.modality,
                                                x.path))
 
-        def fill_images(self):
-            '''
-            Construct the tree-like dependency of the dicom
-            It all relies on the fact that the collection of headers has been
-            sorted
-            '''
-            im_dicom_headers = list()
-            for i, f in enumerate(self.dicom_headers):
-                if i > 0 and f.has_same_header(self.dicom_headers[i-1]):
-                    # Could be done more elegantly but the RTSTRUCT fucks
-                    # everything, maybe there is a solution with dict of
-                    # function
-                    if f.modality == 'CT':
-                        self.images.append(ImageCT(
-                            dicom_headers=im_dicom_headers))
-                    elif f.modality == 'PT':
-                        self.images.append(ImagePT(
-                            dicom_headers=im_dicom_headers))
-                    elif f.modality == 'RTSTRUCT':
-                        for im in reversed(self.images):
-                            if (im.dicom_headers[0].series_instance_uid ==
-                                f.series_instance_uid):
-                                self.images.append(Mask(
-                                    dicom_headers=im_dicom_headers,
-                                    reference_image=im,
-                                    list_labels=self.list_labels
-                                ))
-                    else:
-                        print('This modality {} is not yet (?) supported'
-                              .format(f.modality))
-
+    def _append_image(self, im_dicom_files, dcm_header):
+        if dcm_header.modality == 'CT':
+            self.images.append(ImageCT(
+                sitk_writer=self.sitk_writer,
+                dicom_header=dcm_header,
+                dicom_paths=[k.path for k in im_dicom_files],
+                template_filename=self.template_filename
+            ))
+        elif dcm_header.modality == 'PT':
+            self.images.append(ImagePT(
+                sitk_writer=self.sitk_writer,
+                dicom_header=dcm_header,
+                dicom_paths=[k.path for k in im_dicom_files],
+                template_filename=self.template_filename
+            ))
+        elif dcm_header.modality == 'RTSTRUCT':
+            for im in reversed(self.images):
+                if (im.dicom_header.series_instance_uid ==
+                    dcm_header.series_instance_uid):
+                    self.images.append(Mask(
+                        reference_image=im,
+                        list_labels=self.list_labels,
+                        sitk_writer=self.sitk_writer,
+                        dicom_header=dcm_header,
+                        dicom_paths=[k.path for k in im_dicom_files],
+                        template_filename=self.template_filename
+                    ))
                 else:
-                    im_dicom_headers = list()
+                    print('This modality {} is not yet (?) supported'
+                          .format(dcm_header.modality))
 
-                im_dicom_headers.append(f)
 
-        def convert(self):
-            for im in self.images:
-                #COMPUTE THE PATH
-                im.convert(path)
+    def fill_images(self):
+        '''
+        Construct the tree-like dependency of the dicom
+        It all relies on the fact that the collection of headers has been
+        sorted
+        '''
+        im_dicom_files = list()
+        dcm_header = DicomHeader()
 
+        for i, f in enumerate(self.dicom_files):
+            if i > 0 and not f.dicom_header == self.dicom_files[i-1].dicom_header:
+                self._append_image(im_dicom_files, dcm_header)
+                im_dicom_files = list()
+
+            im_dicom_files.append(f)
+            dcm_header= f.dicom_header
+
+        self._append_image(im_dicom_files, dcm_header)
+
+    def convert(self):
+        for im in self.images:
+            im.convert(self.output_dirpath)
 

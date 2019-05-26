@@ -3,6 +3,7 @@ TODO: remove the method read, just put all the thing in write
 '''
 import os
 from os.path import dirname, join
+from string import Template
 
 import numpy as np
 import SimpleITK as sitk
@@ -11,9 +12,12 @@ from skimage.draw import polygon
 
 
 class VolumeBase():
-    def __init__(self, sitk_writer=None, dicom_headers=list()):
+    def __init__(self, sitk_writer=None, dicom_header=None, dicom_paths=list(),
+                 extension='nrrd'):
         self.sitk_writer = sitk_writer
-        self.dicom_headers = dicom_headers # we can retrieve path here
+        self.dicom_header = dicom_header
+        self.dicom_paths = dicom_paths
+        self.extension = extension
 
     def convert(self, path):
         self.read()
@@ -26,22 +30,33 @@ class VolumeBase():
     def write(self, path):
         raise NotImplementedError('This is an abstract class')
 
+    def __str__(self):
+        return '''Image :''' + str(self.dicom_header)
+
 
 class ImageBase(VolumeBase):
-    def __init__(self, *args, sitk_image=None, **kwargs):
+    def __init__(self, *args,
+                 template_filename=Template('{patient_id}_${modality}.${ext}'),
+                 **kwargs):
         super().__init__(*args, **kwargs)
         self.slices_z_position = None
         self.image_pos_patient = None
         self.pixel_spacing = None
-        self.sitk_image = sitk_image
+        self.sitk_image = None
+        self.filename = template_filename.substitute(
+            patient_id=self.dicom_header.patient_id,
+            modality=self.dicom_header.modality,
+            ext=self.extension
+        ).lower()
 
-    def get_physical_values(slices):
+    def get_physical_values(self, slices):
         raise NotImplementedError('This is an abstract class')
 
     def read(self):
         slices = [pdcm.read_file(dcm) for dcm in self.dicom_paths]
         slices.sort(key=lambda x: float(x.ImagePositionPatient[2]))
-        image = sitk.GetImageFromArray(self.get_physical_values(slices))
+        image = sitk.GetImageFromArray(np.moveaxis(
+            self.get_physical_values(slices), 2, 0))
 
         slice_spacing = (slices[1].ImagePositionPatient[2] -
           slices[0].ImagePositionPatient[2])
@@ -51,15 +66,17 @@ class ImageBase(VolumeBase):
                                     slice_spacing,
                                     ])
         image.SetSpacing(pixel_spacing)
-        image.SetDirection(slices[0].ImageOrientationPatient)
-        image_pos_patient = slices[0].ImagePositionPatient
+#        image.SetDirection([float(k) for k in slices[0].ImageOrientationPatient])
+        image_pos_patient = [float(k) for k in slices[0].ImagePositionPatient]
         image.SetOrigin(image_pos_patient)
-        self.slices_z_position = [s.ImagePositionPatient[2] for s in slices]
+        self.slices_z_position = [float(s.ImagePositionPatient[2]) for s in slices]
         self.pixel_spacing = pixel_spacing
         self.image_pos_patient = image_pos_patient
+        self.shape = image.GetSize()
         self.sitk_image = image
 
     def write(self, path):
+        path = join(path, self.filename)
         self.sitk_writer.SetFileName(path)
         self.sitk_writer.Execute(self.sitk_image)
 
@@ -73,7 +90,7 @@ class ImageCT(ImageBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def get_physical_values(slices):
+    def get_physical_values(self, slices):
         image = list()
         for s in slices:
             image.append(float(s.RescaleSlope) * s.pixel_array +
@@ -85,7 +102,7 @@ class ImagePT(ImageBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def get_physical_values(slices):
+    def get_physical_values(self, slices):
         # Get SUV from raw PET
         image = list()
         for s in slices:
@@ -108,31 +125,40 @@ class ImagePT(ImageBase):
 
 
 class Mask(VolumeBase):
-    def __init__(self, *args,reference_image=None, list_labels=None, **kwargs):
+    def __init__(self, *args,
+                 template_filename=Template('{patient_id}_${modality}.${ext}'),
+                 reference_image=None,
+                 list_labels=list(),
+                 **kwargs):
         super().__init__(*args, **kwargs)
         self.list_labels = list_labels
         self.contours = None
         self.reference_image = reference_image
-        self.masks = list()
+        self.sitk_masks = list()
+        self.filenames = [template_filename.substitute(
+            patient_id=self.dicom_header.patient_id,
+            modality=self.dicom_header.modality + '_{}'.format(k.replace(' ',
+                                                                         '_')),
+            ext=self.extension).lower() for k in list_labels]
 
     def read_structure(self):
         if len(self.dicom_paths) != 1:
             raise Exception('RTSTRUCT has more than one file')
         structure = pdcm.read_file(self.dicom_paths[0])
-        for roi_seq in structure.ROIContourSequence:
-            contours = []
+        self.contours = []
+        for i, roi_seq in enumerate(structure.StructureSetROISequence):
             contour = {}
             for label in self.list_labels:
                 if roi_seq.ROIName.startswith(label):
-                    contour['color'] = roi_seq.ROIDisplayColor
-                    contour['number'] = roi_seq.ReferencedROINumber
+                    contour['color'] = structure.ROIContourSequence[i].ROIDisplayColor
+                    contour['number'] = structure.ROIContourSequence[i].ReferencedROINumber
                     contour['name'] = roi_seq.ROIName
                     assert contour['number'] == roi_seq.ROINumber
                     contour['contours'] = [
-                        s.ContourData for s in roi_seq.ContourSequence]
-                    contours.append(contour)
+                        s.ContourData for s in structure.ROIContourSequence[i].ContourSequence
+                    ]
+                    self.contours.append(contour)
 
-        self.contours = contours
 
     def compute_mask(self):
         z = self.reference_image.slices_z_position
@@ -140,7 +166,7 @@ class Mask(VolumeBase):
         spacing_r = self.reference_image.pixel_spacing[1]
         pos_c = self.reference_image.image_pos_patient[0]
         spacing_c = self.reference_image.pixel_spacing[0]
-        shape = self.reference_image.GetSize()
+        shape = self.reference_image.shape
 
         for i, con in enumerate(self.contours):
             label = np.zeros(shape, dtype=bool)
@@ -158,11 +184,17 @@ class Mask(VolumeBase):
                 label[rr, cc, z_index] = True
                 name = con['name']
 
-            self.masks.append({'mask':label, 'label_name': name})
+            image = sitk.GetImageFromArray(np.moveaxis(np.uint8(label), 2, 0))
+            image.SetSpacing(self.reference_image.pixel_spacing)
+            image.SetOrigin(self.reference_image.image_pos_patient)
+            self.sitk_masks.append(image)
 
     def read(self):
         self.read_structure()
         self.compute_mask()
 
-    def write(self):
-        pass
+    def write(self, path):
+        for i, mask in enumerate(self.sitk_masks):
+            self.sitk_writer.SetFileName(join(path, self.filenames[i]))
+            self.sitk_writer.Execute(mask)
+
