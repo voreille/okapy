@@ -15,7 +15,7 @@ from pydicom.filereader import read_dicomdir
 from pydicom.errors import InvalidDicomError
 import SimpleITK as sitk
 
-from image import ImageCT, ImagePT, Mask
+from okapy.dicomconverter.image import ImageCT, ImagePT, Mask
 
 
 dic_sitk_writer = {
