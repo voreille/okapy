@@ -3,42 +3,59 @@ import csv
 import math
 
 class SobelFilter():
-    def __init__(self,imagein,mask,imageout,fileout):
+    def __init__(self,imagein,mask=None,imageout=None, outputfile=None):
         self.imagein = sitk.ReadImage(imagein)
-
-        maskin = sitk.ReadImage(mask)
-        castfilter = sitk.CastImageFilter()
-        castfilter.SetOutputPixelType(pixelID=sitk.sitkUInt8)
-        self.mask = castfilter.Execute(maskin)
+        self.mask = mask
         self.imageout = imageout
-        self.outputfile = fileout
+        self.outputfile = outputfile
+        if mask!=None:
+            maskin = sitk.ReadImage(mask)
+            castfilter = sitk.CastImageFilter()
+            castfilter.SetOutputPixelType(pixelID=sitk.sitkUInt8)
+            self.mask = castfilter.Execute(maskin)
+        if imageout!=None:
+            self.imageout = imageout
+        if outputfile!=None:
+            self.outputfile = outputfile
 
     def update(self):
 
         sobelfilter = sitk.SobelEdgeDetectionImageFilter()
-        maskfilter = sitk.MaskImageFilter()
-        maskfilter.SetMaskingValue(0)
-        maskedimage=maskfilter.Execute(self.imagein, self.mask)
+        if self.mask != None:
 
+            maskfilter = sitk.MaskImageFilter()
+            maskfilter.SetMaskingValue(0)
+            maskedimage=maskfilter.Execute(self.imagein, self.mask)
+            imageout = sobelfilter.Execute(maskedimage)
+        else:
+            imageout= sobelfilter.Execute(self.imagein)
 
-        binaryimagetolabelmapfilter = sitk.BinaryImageToLabelMapFilter()
-        binaryimagetolabelmapfilter.SetInputForegroundValue(1)
+        if self.outputfile!=None:
+            if self.mask!=None:
+                binaryimagetolabelmapfilter = sitk.BinaryImageToLabelMapFilter()
+                binaryimagetolabelmapfilter.SetInputForegroundValue(1)
 
-        labelmaptolabelimagefilter = sitk.LabelMapToLabelImageFilter()
-        labeloutput = labelmaptolabelimagefilter.Execute(binaryimagetolabelmapfilter.Execute(self.mask))
+                labelmaptolabelimagefilter = sitk.LabelMapToLabelImageFilter()
+                labeloutput = labelmaptolabelimagefilter.Execute(binaryimagetolabelmapfilter.Execute(self.mask))
 
-        labelstatisticsimagefilter = sitk.LabelStatisticsImageFilter()
-        labelstatisticsimagefilter.Execute(sobelfilter.Execute(maskedimage), labeloutput)
-        csvData = [['First Order Statistics'],
-                   ['Min', '=', labelstatisticsimagefilter.GetMinimum(1)],
-                   ['Max', '=', labelstatisticsimagefilter.GetMaximum(1)],
-                   ['Median', '=', labelstatisticsimagefilter.GetMedian(1)],
-                   ['Mean', '=', labelstatisticsimagefilter.GetMean(1)],
-                   ['Std.', '=', math.sqrt(labelstatisticsimagefilter.GetVariance(1))]]
-        with open(self.outputfile, 'w') as csvFile:
-            writer = csv.writer(csvFile)
-            writer.writerows(csvData)
-        csvFile.close()
+                statisticsimagefilter = sitk.LabelStatisticsImageFilter()
+                statisticsimagefilter.Execute(imageout, labeloutput)
+            else:
+                statisticsimagefilter = sitk.StatisticsImageFilter()
+                statisticsimagefilter.Execute(imageout)
 
-        sitk.WriteImage(sobelfilter.Execute(maskedimage), self.imageout)
+            csvData = [['First Order Statistics'],
+                    ['Min', '=', statisticsimagefilter.GetMinimum(1)],
+                    ['Max', '=', statisticsimagefilter.GetMaximum(1)],
+                    ['Median', '=', statisticsimagefilter.GetMedian(1)],
+                    ['Mean', '=', statisticsimagefilter.GetMean(1)],
+                    ['Std.', '=', math.sqrt(statisticsimagefilter.GetVariance(1))]]
+            with open(self.outputfile, 'w') as csvFile:
+                writer = csv.writer(csvFile)
+                writer.writerows(csvData)
+            csvFile.close()
+
+        if self.imageout!=None:
+            sitk.WriteImage(imageout, self.imageout)
+
 
