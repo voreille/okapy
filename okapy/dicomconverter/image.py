@@ -1,8 +1,8 @@
 '''
 TODO: remove the method read, just put all the thing in write
+TODO: Direction cosine in sitk
 '''
-import os
-from os.path import dirname, join
+from os.path import join
 from string import Template
 
 import numpy as np
@@ -135,11 +135,19 @@ class Mask(VolumeBase):
         self.contours = None
         self.reference_image = reference_image
         self.sitk_masks = list()
-        self.filenames = [template_filename.substitute(
+        self.filenames = list()
+        self.template_filename = template_filename
+
+
+    def _compute_and_append_name(self, name_contour):
+        self.filenames.append(
+            self.template_filename.substitute(
             patient_id=self.dicom_header.patient_id,
-            modality=self.dicom_header.modality + '_{}'.format(k.replace(' ',
-                                                                         '_')),
-            ext=self.extension).lower() for k in list_labels]
+            modality=self.dicom_header.modality + '_{}'.format(
+                name_contour.replace(' ','_')),
+            ext=self.extension).lower()
+        )
+
 
     def read_structure(self):
         if len(self.dicom_paths) != 1:
@@ -168,8 +176,8 @@ class Mask(VolumeBase):
         spacing_c = self.reference_image.pixel_spacing[0]
         shape = self.reference_image.shape
 
-        for i, con in enumerate(self.contours):
-            label = np.zeros(shape, dtype=bool)
+        for con in self.contours:
+            mask = np.zeros(shape, dtype=np.uint8)
             for current in con['contours']:
                 nodes = np.array(current).reshape((-1, 3))
                 assert np.amax(np.abs(np.diff(nodes[:, 2]))) == 0
@@ -181,13 +189,14 @@ class Mask(VolumeBase):
                     if np.max(rr) > 512 or np.max(cc) > 512:
                         raise Exception("The RTSTRUCT file is compromised")
 
-                label[rr, cc, z_index] = True
-                name = con['name']
+                mask[rr, cc, z_index] = 1
 
-            image = sitk.GetImageFromArray(np.moveaxis(np.uint8(label), 2, 0))
+            name = con['name']
+            image = sitk.GetImageFromArray(np.moveaxis(mask, 2, 0))
             image.SetSpacing(self.reference_image.pixel_spacing)
             image.SetOrigin(self.reference_image.image_pos_patient)
             self.sitk_masks.append(image)
+            self._compute_and_append_name(name)
 
     def read(self):
         self.read_structure()

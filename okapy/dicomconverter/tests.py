@@ -14,7 +14,7 @@ class TestOkapy(unittest.TestCase):
         output_path = '/home/val/python_wkspce/output_okapy/'
         print('Running test on the walker')
         walker = DicomWalker(input_path, output_path,
-                             list_labels=['GTV T', 'GTV L'])
+                             list_labels=['GTV L', 'GTV T'])
         walker.walk()
         walker.fill_images()
         walker.convert()
