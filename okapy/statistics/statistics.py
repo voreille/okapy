@@ -2,6 +2,7 @@ import SimpleITK as sitk
 import csv
 
 
+
 class StatisticsFilter():
     def __init__(self, imagein, mask, outputfile):
         self.imagein = sitk.ReadImage(imagein)
