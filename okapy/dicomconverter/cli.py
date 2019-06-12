@@ -2,22 +2,25 @@ import click
 import logging
 import pandas as pd
 
+from dicom_walker import DicomWalker
+
 
 @click.command()
 @click.argument('input_directory', type=click.Path(exists=True), nargs=-1)
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
-@click.option('-s', '--source_features', default='Pyradiomics', required=True,
-              type=click.Path())
-def main(input_directory, output_filepath, source_features):
+def main(input_directory, output_filepath):
     """
     Convert to dicom to the right format based on extension
     """
     logger = logging.getLogger(__name__)
     logger.info('Loading Dicom')
 
-    slices = [pdcm.read_file(dcm) for dcm in patient_files.ct_files]
-    slices.sort(key=lambda x: float(x.ImagePositionPatient[2]))
-    image_ct = get_hounsfield(slices)
+    walker = DicomWalker(input_directory, output_filepath,
+                            list_labels=['GTV L', 'GTV T'])
+    walker.walk()
+    walker.fill_images()
+    walker.convert()
+
 
 
 
