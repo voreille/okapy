@@ -1,20 +1,34 @@
-import click
-import pandas as pd
+import unittest
+from click.testing import CliRunner
 
-from dicom_walker import DicomWalker
+from dicom_walker import *
 
 
-@click.command()
-@click.argument('input_filepath', nargs=-1)
-@click.option('-o', '--output_filepath', required=True, type=click.Path())
-def main(input_filepath, output_filepath):
-    """
-    Test of the dicom walker
-    """
-    walker = DicomWalker(input_filepath[0])
-    walker.walk()
-    for k in walker.dicom_headers:
-        print(k)
+class TestOkapy(unittest.TestCase):
+    """Tests for `okapy` package."""
+
+    def test_walker(self):
+        """Test the DicomWalker class"""
+        input_path = ('/home/val/Documents/data_radiomics/lymphangite/'
+        'final-v3/L0/L0_1')
+        output_path = '/home/val/python_wkspce/output_okapy/'
+        print('Running test on the walker')
+        walker = DicomWalker(input_path, output_path,
+                             list_labels=['GTV L', 'GTV T'])
+        walker.walk()
+        walker.fill_images()
+        walker.convert()
+
+#    def test_command_line_interface(self):
+#        """Test the CLI."""
+#        runner = CliRunner()
+#        result = runner.invoke(cli.main)
+#        assert result.exit_code == 0
+#        assert 'okapy.cli.main' in result.output
+#        help_result = runner.invoke(cli.main, ['--help'])
+#        assert help_result.exit_code == 0
+#        assert '--help  Show this message and exit.' in help_result.output
+#
 
 if __name__ == '__main__':
-    main()
+    unittest.main()
