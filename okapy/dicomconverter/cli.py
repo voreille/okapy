@@ -6,7 +6,7 @@ from dicom_walker import DicomWalker
 
 
 @click.command()
-@click.argument('input_directory', type=click.Path(exists=True), nargs=-1)
+@click.argument('input_directory', type=click.Path(exists=True))
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
 def main(input_directory, output_filepath):
     """
