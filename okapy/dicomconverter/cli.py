@@ -8,7 +8,8 @@ from dicom_walker import DicomWalker
 @click.command()
 @click.argument('input_directory', type=click.Path(exists=True))
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
-def main(input_directory, output_filepath):
+@click.option('-l', '--list_labels', required=True, type=click.Path())
+def main(input_directory, output_filepath, list_labels):
     """
     Convert to dicom to the right format based on extension
     """
@@ -16,7 +17,7 @@ def main(input_directory, output_filepath):
     logger.info('Loading Dicom')
 
     walker = DicomWalker(input_directory, output_filepath,
-                            list_labels=['GTV L', 'GTV T'])
+                            list_labels=list_labels)
     walker.walk()
     walker.fill_images()
     walker.convert()
