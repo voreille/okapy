@@ -2,6 +2,7 @@ from radiomics import glcm
 import radiomics as rad
 import SimpleITK as sitk
 import six
+
 class haralick():
     def __init__(self,imagein,mask,imageout=None,outputfile=None):
         self.imagein = sitk.ReadImage(imagein)
@@ -20,8 +21,9 @@ class haralick():
 
     def update(self):
         rad.setVerbosity(0)
-        haralictexture = glcm.RadiomicsGLCM(self.imagein, self.mask, voxelBased=True, binWidth=2)
+        haralictexture = glcm.RadiomicsGLCM(self.imagein, self.mask, voxelBased=True, binWidth=1)
         haralictexture.disableAllFeatures()
+        haralictexture.enableFeatureByName('JointEntropy')
         haralictexture.enableFeatureByName('Contrast')
         haralictexture.enableFeatureByName('JointEnergy')
         haralictexture.enableFeatureByName('Correlation')
@@ -30,13 +32,11 @@ class haralick():
         haralictexture.enableFeatureByName('SumAverage')
         haralictexture.enableFeatureByName('ClusterTendency')
         haralictexture.enableFeatureByName('SumEntropy')
-        haralictexture.enableFeatureByName('JointEntropy')
         haralictexture.enableFeatureByName('DifferenceVariance')
         haralictexture.enableFeatureByName('DifferenceEntropy')
         haralictexture.enableFeatureByName('Imc1')
         haralictexture.enableFeatureByName('Imc2')
         #haralictexture.enableFeatureByName('MCC')
-
         haralictexture.execute()
         """
         for (key, val) in six.iteritems(haralictexture.featureValues):
