@@ -169,6 +169,7 @@ class Mask(VolumeBase):
 
 
     def compute_mask(self):
+        import ipdb; ipdb.set_trace()  # XXX BREAKPOINT
         z = self.reference_image.slices_z_position
         pos_r = self.reference_image.image_pos_patient[1]
         spacing_r = self.reference_image.pixel_spacing[1]

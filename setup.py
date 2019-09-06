@@ -37,6 +37,7 @@ setup(
     entry_points={
         'console_scripts': [
             'okapy=okapy.cli:main',
+            'okapyconvert=okapy.dicomconverter.cli:main',
         ],
     },
     install_requires=requirements,
