@@ -11,7 +11,25 @@ with open('README.rst') as readme_file:
 with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
-requirements = ['Click>=6.0', ]
+requirements = [
+    'Click>=6.0',
+    'setuptools==41.2.0',
+    'SimpleITK==1.2.2',
+    'click==7.0',
+    'ipdb==0.12.2',
+    'matplotlib==3.1.1',
+    'numpy==1.17.1',
+    'pandas==0.25.1',
+    'pydicom==1.3.0',
+    'radiomics==0.1',
+    'scipy==1.3.1',
+    'six==1.12.0',
+    'skimage==0.0',
+    'scikit_learn==0.21.3',
+    'sympy==1.4',
+    'tensorflow==1.14.0',
+    'termcolor==1.1.0',
+],
 
 setup_requirements = [ ]
 
@@ -46,7 +64,7 @@ setup(
     include_package_data=True,
     keywords='okapy',
     name='okapy',
-    packages=find_packages(include=['okapy']),
+    packages=find_packages(),
     setup_requires=setup_requirements,
     test_suite='tests',
     tests_require=test_requirements,
