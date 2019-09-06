@@ -25,8 +25,8 @@ class meanfilter():
         labelstatisticsimagefilter = sitk.LabelStatisticsImageFilter()
         labelstatisticsimagefilter.Execute(self.imagein, self.mask)
         data = {"ID": [self.name],
-                "Mean": [labelstatisticsimagefilter.GetMean(1)]} #,
-               #"Std.": [math.sqrt(labelstatisticsimagefilter.GetVariance(1))]}
+                "Mean": [labelstatisticsimagefilter.GetMean(1)],
+                "Var.": [labelstatisticsimagefilter.GetVariance(1)]}
         df = pd.DataFrame(data=data)
         df.set_index("ID", inplace=True)
         df.to_csv(os.path.join(self.folderout,self.outputfile))
