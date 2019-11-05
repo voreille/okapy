@@ -36,7 +36,7 @@ setup_requirements = [ ]
 test_requirements = [ ]
 
 setup(
-    author="Valentin Oreiller",
+    author="Pierre Fontaine, Valentin Oreiller",
     author_email='valentin.oreiller@gmail.com',
     classifiers=[
         'Development Status :: 2 - Pre-Alpha',
