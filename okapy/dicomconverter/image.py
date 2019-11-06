@@ -1,4 +1,5 @@
 '''
+TODO: Check the MR of the rescale and slope and stuff
 TODO: remove the method read, just put all the thing in write
 TODO: Direction cosine in sitk
 '''
@@ -14,7 +15,7 @@ from skimage.draw import polygon
 class VolumeBase():
     def __init__(self, sitk_writer=None, dicom_header=None, dicom_paths=list(),
                  extension='nrrd'):
-        self.sitk_writer = sitk_writer
+        self.sitk_writer = sitk_writer # TODO: make it simpler
         self.dicom_header = dicom_header
         self.dicom_paths = dicom_paths
         self.extension = extension
@@ -42,7 +43,7 @@ class ImageBase(VolumeBase):
         self.slices_z_position = None
         self.image_pos_patient = None
         self.pixel_spacing = None
-        self.sitk_image = None
+        self.np_image = None
         self.filename = template_filename.substitute(
             patient_id=self.dicom_header.patient_id,
             modality=self.dicom_header.modality,
@@ -55,8 +56,7 @@ class ImageBase(VolumeBase):
     def read(self):
         slices = [pdcm.read_file(dcm) for dcm in self.dicom_paths]
         slices.sort(key=lambda x: float(x.ImagePositionPatient[2]))
-        image = sitk.GetImageFromArray(np.moveaxis(
-            self.get_physical_values(slices), 2, 0))
+        image = self.get_physical_values(slices)
 
         slice_spacing = (slices[1].ImagePositionPatient[2] -
           slices[0].ImagePositionPatient[2])
@@ -65,25 +65,30 @@ class ImageBase(VolumeBase):
                                     slices[0].PixelSpacing[1],
                                     slice_spacing,
                                     ])
-        image.SetSpacing(pixel_spacing)
 #        image.SetDirection([float(k) for k in slices[0].ImageOrientationPatient])
         image_pos_patient = [float(k) for k in slices[0].ImagePositionPatient]
-        image.SetOrigin(image_pos_patient)
+        import ipdb; ipdb.set_trace()  # XXX BREAKPOINT
         self.slices_z_position = [float(s.ImagePositionPatient[2]) for s in slices]
         self.pixel_spacing = pixel_spacing
         self.image_pos_patient = image_pos_patient
-        self.shape = image.GetSize()
-        self.sitk_image = image
+        self.shape = image.shape
+        self.np_image = image
 
     def write(self, path):
+        trans = (2,0,1)
+        sitk_image = sitk.GetImageFromArray(np.transpose(self.np_image,
+                                                         trans))
+        sitk_image.SetSpacing(self.pixel_spacing)
+        sitk_image.SetOrigin(self.image_pos_patient)
         path = join(path, self.filename)
         self.sitk_writer.SetFileName(path)
-        self.sitk_writer.Execute(self.sitk_image)
+        self.sitk_writer.Execute(sitk_image)
+        del sitk_image
 
     def convert(self, path):
         self.read()
         self.write(path)
-        del self.sitk_image
+        del self.np_image
 
 
 class ImageCT(ImageBase):
@@ -96,6 +101,18 @@ class ImageCT(ImageBase):
             image.append(float(s.RescaleSlope) * s.pixel_array +
                          float(s.RescaleIntercept))
         return np.stack(image, axis=-1)
+
+
+class ImageMR(ImageBase):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def get_physical_values(self, slices):
+        image = list()
+        for s in slices:
+            image.append(s.pixel_array)
+        return np.stack(image, axis=-1)
+
 
 
 class ImagePT(ImageBase):
@@ -128,7 +145,7 @@ class Mask(VolumeBase):
     def __init__(self, *args,
                  template_filename=Template('{patient_id}_${modality}.${ext}'),
                  reference_image=None,
-                 list_labels=list(),
+                 list_labels=None,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.list_labels = list_labels
@@ -156,20 +173,31 @@ class Mask(VolumeBase):
         self.contours = []
         for i, roi_seq in enumerate(structure.StructureSetROISequence):
             contour = {}
-            for label in self.list_labels:
-                if roi_seq.ROIName.startswith(label):
-                    contour['color'] = structure.ROIContourSequence[i].ROIDisplayColor
-                    contour['number'] = structure.ROIContourSequence[i].ReferencedROINumber
-                    contour['name'] = roi_seq.ROIName
-                    assert contour['number'] == roi_seq.ROINumber
-                    contour['contours'] = [
-                        s.ContourData for s in structure.ROIContourSequence[i].ContourSequence
-                    ]
-                    self.contours.append(contour)
+            if self.list_labels is None:
+                contour['color'] = structure.ROIContourSequence[i].ROIDisplayColor
+                contour['number'] = structure.ROIContourSequence[i].ReferencedROINumber
+                contour['name'] = roi_seq.ROIName
+                assert contour['number'] == roi_seq.ROINumber
+                contour['contours'] = [
+                    s.ContourData for s in structure.ROIContourSequence[i].ContourSequence
+                ]
+                self.contours.append(contour)
+
+            else:
+                for label in self.list_labels:
+                    if roi_seq.ROIName.startswith(label):
+                        contour['color'] = structure.ROIContourSequence[i].ROIDisplayColor
+                        contour['number'] = structure.ROIContourSequence[i].ReferencedROINumber
+                        contour['name'] = roi_seq.ROIName
+                        assert contour['number'] == roi_seq.ROINumber
+                        contour['contours'] = [
+                            s.ContourData for s in structure.ROIContourSequence[i].ContourSequence
+                        ]
+                        self.contours.append(contour)
 
 
     def compute_mask(self):
-        z = self.reference_image.slices_z_position
+        z = np.asarray(self.reference_image.slices_z_position)
         pos_r = self.reference_image.image_pos_patient[1]
         spacing_r = self.reference_image.pixel_spacing[1]
         pos_c = self.reference_image.image_pos_patient[0]
@@ -181,7 +209,8 @@ class Mask(VolumeBase):
             for current in con['contours']:
                 nodes = np.array(current).reshape((-1, 3))
                 assert np.amax(np.abs(np.diff(nodes[:, 2]))) == 0
-                z_index = z.index(nodes[0, 2])
+                z_index = np.where((nodes[0, 2]- 0.001 < z) &
+                                   (z < nodes[0, 2]+0.001))[0][0]
                 r = (nodes[:, 1] - pos_r) / spacing_r
                 c = (nodes[:, 0] - pos_c) / spacing_c
                 rr, cc = polygon(r, c)

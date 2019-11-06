@@ -5,6 +5,7 @@ files?
 import os
 from os.path import dirname, join
 from string import Template
+from functools import partial
 
 import re
 import numpy as np
@@ -15,11 +16,12 @@ from pydicom.filereader import read_dicomdir
 from pydicom.errors import InvalidDicomError
 import SimpleITK as sitk
 
-from image import ImageCT, ImagePT, Mask
+from image import ImageCT, ImagePT, Mask, ImageMR
 
 
 dic_sitk_writer = {
-        'nrrd': 'NrrdImageIO'
+        'nrrd': 'NrrdImageIO',
+        'nii': 'NiftiImageIO'
     }
 
 class DicomHeader():
@@ -60,13 +62,16 @@ class DicomFile():
         self.dicom_header = dicom_header
         self.path = path
 
+    def __str__(self):
+        return str(self.dicom_header)
+
 
 class DicomWalker():
-
     def __init__(self, input_dirpath, output_dirpath,
-                 template_filename=Template('${patient_id}_${modality}.${ext}'),
+                 template_filename=Template('${patient_id}_'
+                                            '${modality}.${ext}'),
                  extension_output='nrrd',
-                 list_labels=list()):
+                 list_labels=None):
         self.input_dirpath = input_dirpath
         self.output_dirpath = output_dirpath
         self.template_filename = template_filename
@@ -75,7 +80,28 @@ class DicomWalker():
         self.sitk_writer.SetImageIO(dic_sitk_writer[extension_output])
         self.dicom_files = list()
         self.images = list()
-        self.list_labels=list_labels
+        self.list_labels = list_labels
+
+    def __str__(self):
+        dcm_list = [str(dcm) for dcm in self.dicom_files]
+        return '\n'.join(dcm_list)
+
+
+    def _dict_for_modality(self, dcm_header=None):
+        out_dict = {
+            'CT': ImageCT,
+            'PT': ImagePT,
+            'MR': ImageMR,
+        }
+        for im in reversed(self.images):
+            if (im.dicom_header.series_instance_uid == dcm_header.series_instance_uid):
+                out_dict['RTSTRUCT'] = partial(Mask,
+                                               reference_image=im,
+                                               list_labels=self.list_labels)
+                break
+
+        return out_dict
+
 
     def walk(self):
         '''
@@ -118,36 +144,21 @@ class DicomWalker():
                                                x.dicom_header.modality,
                                                x.path))
 
+
     def _append_image(self, im_dicom_files, dcm_header):
-        if dcm_header.modality == 'CT':
-            self.images.append(ImageCT(
+        try:
+            image_modality_dict = self._dict_for_modality(
+                dcm_header=dcm_header)
+
+            self.images.append(image_modality_dict[dcm_header.modality](
                 sitk_writer=self.sitk_writer,
                 dicom_header=dcm_header,
                 dicom_paths=[k.path for k in im_dicom_files],
                 template_filename=self.template_filename
             ))
-        elif dcm_header.modality == 'PT':
-            self.images.append(ImagePT(
-                sitk_writer=self.sitk_writer,
-                dicom_header=dcm_header,
-                dicom_paths=[k.path for k in im_dicom_files],
-                template_filename=self.template_filename
-            ))
-        elif dcm_header.modality == 'RTSTRUCT':
-            for im in reversed(self.images):
-                if (im.dicom_header.series_instance_uid ==
-                    dcm_header.series_instance_uid):
-                    self.images.append(Mask(
-                        reference_image=im,
-                        list_labels=self.list_labels,
-                        sitk_writer=self.sitk_writer,
-                        dicom_header=dcm_header,
-                        dicom_paths=[k.path for k in im_dicom_files],
-                        template_filename=self.template_filename
-                    ))
-                else:
-                    print('This modality {} is not yet (?) supported'
-                          .format(dcm_header.modality))
+        except KeyError:
+            print('This modality {} is not yet (?) supported'
+                  .format(dcm_header.modality))
 
 
     def fill_images(self):
@@ -172,4 +183,3 @@ class DicomWalker():
     def convert(self):
         for im in self.images:
             im.convert(self.output_dirpath)
-
