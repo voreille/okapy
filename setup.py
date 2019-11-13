@@ -24,7 +24,7 @@ requirements = [
     'radiomics==0.1',
     'scipy==1.3.1',
     'six==1.12.0',
-    'skimage==0.0',
+    'scikit-image',
     'scikit_learn==0.21.3',
     'sympy==1.4',
     'tensorflow==1.14.0',
