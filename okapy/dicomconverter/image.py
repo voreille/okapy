@@ -67,7 +67,6 @@ class ImageBase(VolumeBase):
                                     ])
 #        image.SetDirection([float(k) for k in slices[0].ImageOrientationPatient])
         image_pos_patient = [float(k) for k in slices[0].ImagePositionPatient]
-        import ipdb; ipdb.set_trace()  # XXX BREAKPOINT
         self.slices_z_position = [float(s.ImagePositionPatient[2]) for s in slices]
         self.pixel_spacing = pixel_spacing
         self.image_pos_patient = image_pos_patient

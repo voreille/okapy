@@ -1,15 +1,16 @@
+import os
+
 import click
 import logging
 import pandas as pd
 
-from dicom_walker import DicomWalker
+from .dicom_walker import DicomWalker
 
 
 @click.command()
 @click.argument('input_directory', type=click.Path(exists=True))
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
-@click.option('-l', '--list_labels', default='GTV T', required=True,
-              type=click.Path())
+@click.option('-l', '--list_labels', default=None, type=str)
 def main(input_directory, output_filepath, list_labels):
     """
     Convert to dicom to the right format based on extension
@@ -17,7 +18,9 @@ def main(input_directory, output_filepath, list_labels):
     logger = logging.getLogger(__name__)
     logger.info('Loading Dicom')
 
-    import ipdb; ipdb.set_trace()  # XXX BREAKPOINT
+    if not os.path.exists(output_filepath):
+        os.makedirs(output_filepath)
+
     walker = DicomWalker(input_directory, output_filepath,
                             list_labels=list_labels)
     walker.walk()
