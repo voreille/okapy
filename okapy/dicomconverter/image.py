@@ -7,6 +7,7 @@ from os.path import join
 from string import Template
 
 import numpy as np
+from scipy import ndimage
 import SimpleITK as sitk
 import pydicom as pdcm
 from skimage.draw import polygon
@@ -29,6 +30,9 @@ class VolumeBase():
         raise NotImplementedError('This is an abstract class')
 
     def write(self, path):
+        raise NotImplementedError('This is an abstract class')
+
+    def resample(self, resampling_px_spacing):
         raise NotImplementedError('This is an abstract class')
 
     def __str__(self):
@@ -72,6 +76,25 @@ class ImageBase(VolumeBase):
         self.image_pos_patient = image_pos_patient
         self.shape = image.shape
         self.np_image = image
+
+    def resample(self, resampling_px_spacing):
+        zooming_matrix = np.identity(3)
+        zooming_factor_x = (resampling_px_spacing[0] / self.pixel_spacing[0]
+                            if resampling_px_spacing[0]>0 else 1)
+        zooming_factor_y = (resampling_px_spacing[1] / self.pixel_spacing[1]
+                            if resampling_px_spacing[1]>0 else 1)
+        zooming_factor_z = (resampling_px_spacing[2] / self.pixel_spacing[2]
+                            if resampling_px_spacing[2]>0 else 1)
+        zooming_matrix[0, 0] = zooming_factor_x
+        zooming_matrix[1, 1] = zooming_factor_y
+        zooming_matrix[2, 2] = zooming_factor_z
+        output_shape = (int(self.shape[0] / zooming_factor_x),
+                        int(self.shape[1] / zooming_factor_y),
+                        int(self.shape[2] / zooming_factor_z))
+
+        self.np_image = ndimage.affine_transform(self.np_image, zooming_matrix, mode='mirror',
+                                        output_shape=output_shape)
+
 
     def write(self, path):
         trans = (2,0,1)
@@ -150,7 +173,7 @@ class Mask(VolumeBase):
         self.list_labels = list_labels
         self.contours = None
         self.reference_image = reference_image
-        self.sitk_masks = list()
+        self.np_masks = list()
         self.filenames = list()
         self.template_filename = template_filename
 
@@ -202,6 +225,8 @@ class Mask(VolumeBase):
         pos_c = self.reference_image.image_pos_patient[0]
         spacing_c = self.reference_image.pixel_spacing[0]
         shape = self.reference_image.shape
+        self.pixel_spacing = self.reference_image.pixel_spacing
+        self.image_pos_patient = self.reference_image.image_pos_patient
 
         for con in self.contours:
             mask = np.zeros(shape, dtype=np.uint8)
@@ -220,18 +245,36 @@ class Mask(VolumeBase):
                 mask[rr, cc, z_index] = 1
 
             name = con['name']
-            image = sitk.GetImageFromArray(np.moveaxis(mask, 2, 0))
-            image.SetSpacing(self.reference_image.pixel_spacing)
-            image.SetOrigin(self.reference_image.image_pos_patient)
-            self.sitk_masks.append(image)
+            self.np_masks.append(mask)
             self._compute_and_append_name(name)
 
     def read(self):
         self.read_structure()
         self.compute_mask()
 
-    def write(self, path):
-        for i, mask in enumerate(self.sitk_masks):
-            self.sitk_writer.SetFileName(join(path, self.filenames[i]))
-            self.sitk_writer.Execute(mask)
+    def resample(self, resampling_px_spacing):
+        zooming_matrix = np.identity(3)
+        zooming_factor_x = (resampling_px_spacing[0] / self.pixel_spacing[0]
+                            if resampling_px_spacing[0]>0 else 1)
+        zooming_factor_y = (resampling_px_spacing[1] / self.pixel_spacing[1]
+                            if resampling_px_spacing[1]>0 else 1)
+        zooming_factor_z = (resampling_px_spacing[2] / self.pixel_spacing[2]
+                            if resampling_px_spacing[2]>0 else 1)
+        zooming_matrix[0, 0] = zooming_factor_x
+        zooming_matrix[1, 1] = zooming_factor_y
+        zooming_matrix[2, 2] = zooming_factor_z
+        output_shape = (int(self.shape[0] / zooming_factor_x),
+                        int(self.shape[1] / zooming_factor_y),
+                        int(self.shape[2] / zooming_factor_z))
 
+        for mask in self.np_masks:
+            mask = ndimage.affine_transform(mask, zooming_matrix, mode='mirror',
+                                            output_shape=output_shape)
+
+
+    def write(self, path):
+        for i, mask in enumerate(self.np_masks):
+            sitk_mask = sitk.GetImageFromArray(np.moveaxis(mask, 2, 0))
+            sitk_mask.SetSpacing(self.pixel_spacing)
+            sitk_mask.SetOrigin(self.image_pos_patient)
+            self.sitk_writer.SetFileName(join(path, self.filenames[i]))

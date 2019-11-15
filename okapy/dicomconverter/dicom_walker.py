@@ -180,6 +180,10 @@ class DicomWalker():
 
         self._append_image(im_dicom_files, dcm_header)
 
+    def resample_images(self, resampling_px_spacing):
+        for im in self.images:
+            im.resample(resampling_px_spacing)
+
     def convert(self):
         for im in self.images:
             im.convert(self.output_dirpath)
