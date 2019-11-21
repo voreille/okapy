@@ -12,10 +12,9 @@ from .dicom_walker import DicomWalker
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
 @click.option('-l', '--list_labels', default=None, type=str)
 @click.option('-e', '--extension', default=None, type=str)
-@click.option('-r', '--resampling_px_spacing', default=None,
-              type=(float, float, float), required=False)
-def main(input_directory, output_filepath, list_labels, resampling_px_spacing,
-         extension):
+#@click.option('-r', '--resampling_px_spacing', default=None,
+#              type=(float, float, float), required=False)
+def main(input_directory, output_filepath, list_labels, extension):
     """
     Convert to dicom to the right format based on extension
     """
@@ -29,7 +28,6 @@ def main(input_directory, output_filepath, list_labels, resampling_px_spacing,
                             list_labels=list_labels, extension_output=extension)
     walker.walk()
     walker.fill_images()
-    walker.resample_images(resampling_px_spacing)
     walker.convert()
 
 
