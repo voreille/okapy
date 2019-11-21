@@ -71,7 +71,7 @@ class DicomWalker():
                  template_filename=Template('${patient_id}_'
                                             '${modality}.${ext}'),
                  extension_output='nrrd',
-                 list_labels=None):
+                 list_labels=None, resampling_px_spacing=None):
         self.input_dirpath = input_dirpath
         self.output_dirpath = output_dirpath
         self.template_filename = template_filename
@@ -81,6 +81,7 @@ class DicomWalker():
         self.dicom_files = list()
         self.images = list()
         self.list_labels = list_labels
+        self.resampling_px_spacing = resampling_px_spacing
 
     def __str__(self):
         dcm_list = [str(dcm) for dcm in self.dicom_files]
@@ -154,7 +155,8 @@ class DicomWalker():
                 sitk_writer=self.sitk_writer,
                 dicom_header=dcm_header,
                 dicom_paths=[k.path for k in im_dicom_files],
-                template_filename=self.template_filename
+                template_filename=self.template_filename,
+                resampling_px_spacing=self.resampling_px_spacing
             ))
         except KeyError:
             print('This modality {} is not yet (?) supported'
@@ -180,9 +182,6 @@ class DicomWalker():
 
         self._append_image(im_dicom_files, dcm_header)
 
-    def resample_images(self, resampling_px_spacing):
-        for im in self.images:
-            im.resample(resampling_px_spacing)
 
     def convert(self):
         for im in self.images:
