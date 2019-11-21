@@ -274,7 +274,6 @@ class Mask(VolumeBase):
 
 
     def write(self, path):
-        import ipdb; ipdb.set_trace()  # XXX BREAKPOINT
         for i, mask in enumerate(self.np_masks):
             sitk_mask = sitk.GetImageFromArray(np.moveaxis(mask, 2, 0))
             sitk_mask.SetSpacing(self.pixel_spacing)

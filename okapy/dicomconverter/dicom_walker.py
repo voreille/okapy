@@ -152,6 +152,7 @@ class DicomWalker():
                 dcm_header=dcm_header)
 
             self.images.append(image_modality_dict[dcm_header.modality](
+                extension=self.extension_output,
                 sitk_writer=self.sitk_writer,
                 dicom_header=dcm_header,
                 dicom_paths=[k.path for k in im_dicom_files],

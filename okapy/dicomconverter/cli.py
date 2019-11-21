@@ -11,7 +11,7 @@ from .dicom_walker import DicomWalker
 @click.argument('input_directory', type=click.Path(exists=True))
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
 @click.option('-l', '--list_labels', default=None, type=str)
-@click.option('-e', '--extension', default=None, type=str)
+@click.option('-e', '--extension', default='nii', type=str)
 #@click.option('-r', '--resampling_px_spacing', default=None,
 #              type=(float, float, float), required=False)
 def main(input_directory, output_filepath, list_labels, extension):
