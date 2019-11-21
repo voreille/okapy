@@ -118,7 +118,13 @@ class DicomWalker():
                     print('This file {} is not recognised as DICOM'.format(
                         filename))
                     continue
-                if data.Modality == 'RTSTRUCT':
+                try:
+                    modality = data.Modality
+                except AttributeError:
+                    print('not reading the DICOMDIR')
+                    continue
+
+                if modality == 'RTSTRUCT':
                     # Adaptation from QuantImage
                     series_instance_uid = (data
                                            .ReferencedFrameOfReferenceSequence[0]
