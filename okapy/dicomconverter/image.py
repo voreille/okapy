@@ -53,7 +53,7 @@ class ImageBase(VolumeBase):
             patient_id=self.dicom_header.patient_id,
             modality=self.dicom_header.modality,
             ext=self.extension
-        ).lower()
+        )
 
     def get_physical_values(self, slices):
         raise NotImplementedError('This is an abstract class')
@@ -179,7 +179,7 @@ class Mask(VolumeBase):
             patient_id=self.dicom_header.patient_id,
             modality=self.dicom_header.modality + '_{}'.format(
                 name_contour.replace(' ','_')),
-            ext=self.extension).lower()
+            ext=self.extension)
         )
 
 
