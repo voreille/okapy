@@ -16,7 +16,7 @@ from pydicom.filereader import read_dicomdir
 from pydicom.errors import InvalidDicomError
 import SimpleITK as sitk
 
-from okapy.dicomconverter.image import ImageCT, ImagePT, Mask, ImageMR
+from okapy.dicomconverter.image import ImageCT, ImagePT, Mask, ImageMR, Study
 
 
 dic_sitk_writer = {
@@ -79,6 +79,7 @@ class DicomWalker():
         self.sitk_writer = sitk.ImageFileWriter()
         self.sitk_writer.SetImageIO(dic_sitk_writer[extension_output])
         self.dicom_files = list()
+        self.studies = list()
         self.images = list()
         self.list_labels = list_labels
         self.resampling_px_spacing = resampling_px_spacing
@@ -86,22 +87,6 @@ class DicomWalker():
     def __str__(self):
         dcm_list = [str(dcm) for dcm in self.dicom_files]
         return '\n'.join(dcm_list)
-
-
-    def _dict_for_modality(self, dcm_header=None):
-        out_dict = {
-            'CT': ImageCT,
-            'PT': ImagePT,
-            'MR': ImageMR,
-        }
-        for im in reversed(self.images):
-            if (im.dicom_header.series_instance_uid == dcm_header.series_instance_uid):
-                out_dict['RTSTRUCT'] = partial(Mask,
-                                               reference_image=im,
-                                               list_labels=self.list_labels)
-                break
-
-        return out_dict
 
 
     def walk(self):
@@ -152,24 +137,6 @@ class DicomWalker():
                                                x.path))
 
 
-    def _append_image(self, im_dicom_files, dcm_header):
-        try:
-            image_modality_dict = self._dict_for_modality(
-                dcm_header=dcm_header)
-
-            self.images.append(image_modality_dict[dcm_header.modality](
-                extension=self.extension_output,
-                sitk_writer=self.sitk_writer,
-                dicom_header=dcm_header,
-                dicom_paths=[k.path for k in im_dicom_files],
-                template_filename=self.template_filename,
-                resampling_px_spacing=self.resampling_px_spacing
-            ))
-        except KeyError:
-            print('This modality {} is not yet (?) supported'
-                  .format(dcm_header.modality))
-
-
     def fill_images(self):
         '''
         Construct the tree-like dependency of the dicom
@@ -179,17 +146,30 @@ class DicomWalker():
         im_dicom_files = list()
         dcm_header = DicomHeader()
 
+        previous_study_uid = None
         for i, f in enumerate(self.dicom_files):
+            # When the image changeschanges we store it as a whole
+            current_study_uid = f.dicom_header.series_instance_uid
+            if i==0:
+                current_study = Study(sitk_writer=self.sitk_writer,
+                                      study_instance_uid=current_study_uid)
+
             if i > 0 and not f.dicom_header == self.dicom_files[i-1].dicom_header:
-                self._append_image(im_dicom_files, dcm_header)
+                current_study.append_image(im_dicom_files, dcm_header)
                 im_dicom_files = list()
+
+            if i > 0 and not (current_study_uid == previous_study_uid):
+                self.studies.append(current_study)
+                current_study = Study(sitk_writer=self.sitk_writer,
+                                      study_instance_uid=current_study_uid)
 
             im_dicom_files.append(f)
             dcm_header= f.dicom_header
+            previous_study_uid = f.dicom_header.series_instance_uid
 
-        self._append_image(im_dicom_files, dcm_header)
-
+        current_study.append_image(im_dicom_files, dcm_header)
+        self.studies.append(current_study)
 
     def convert(self):
-        for im in self.images:
-            im.convert(self.output_dirpath)
+        for study in self.studies:
+            study.convert(self.output_dirpath)

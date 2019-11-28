@@ -1,16 +1,21 @@
 '''
-TODO: Check the MR of the rescale and slope and stuff
-TODO: remove the method read, just put all the thing in write
+TODO: Manage when multiple RTSTRUCT
 TODO: Direction cosine in sitk
+TODO: Change the name of the class for instance DicomBase instead of VolumeBase
+TODO: Add check of the bounding_box, if it goes beyond the image domain
 '''
 from os.path import join
 from string import Template
+from functools import partial
 
 import numpy as np
 from scipy import ndimage
 import SimpleITK as sitk
 import pydicom as pdcm
+from radiomics.imageoperations import resampleImage
 from skimage.draw import polygon
+
+
 
 
 class VolumeBase():
@@ -20,7 +25,6 @@ class VolumeBase():
         self.dicom_header = dicom_header
         self.dicom_paths = dicom_paths
         self.extension = extension
-        self.resampling_px_spacing = resampling_px_spacing
 
     def convert(self, path):
         self.read()
@@ -39,16 +43,68 @@ class VolumeBase():
     def __str__(self):
         return '''Image :''' + str(self.dicom_header)
 
+class Volume():
+    def __init__(self, np_image=None, image_pos_patient=None,
+                 pixel_spacing=None):
+        self.np_image = np_image
+        self.image_pos_patient = image_pos_patient
+        self.pixel_spacing = pixel_spacing
+        self.shape = np_image.shape
+
+    def resample(self, resampling_px_spacing, bounding_box):
+        """
+        Resample the 3D volume to the resampling_px_spacing according to
+        the bounding_boc in cm (x1, y1, z1, x2, y2, z2)
+        """
+
+        zooming_matrix = np.identity(3)
+        zooming_matrix[0, 0] = resampling_px_spacing[0] / self.pixel_spacing[0]
+        zooming_matrix[1, 1] = resampling_px_spacing[1] / self.pixel_spacing[1]
+        zooming_matrix[2, 2] = resampling_px_spacing[2] / self.pixel_spacing[2]
+
+        #Check the UNITS
+        offset = ((bounding_box[0] - self.image_pos_patient[0] *
+                   resampling_px_spacing[0]) / self.pixel_spacing[0],
+                  (bounding_box[1] - self.image_pos_patient[1] *
+                   resampling_px_spacing[1]) / self.pixel_spacing[1],
+                  (bounding_box[2] - self.image_pos_patient[2] *
+                   resampling_px_spacing[2]) / self.pixel_spacing[2])
+
+        output_shape = np.ceil([
+            bounding_box[3] - bounding_box[0],
+            bounding_box[4] - bounding_box[1],
+            bounding_box[5] - bounding_box[2],
+        ]) / resampling_px_spacing
+
+        self.np_image = ndimage.affine_transform(self.np_image, zooming_matrix,
+                                                 offset=offset, mode='mirror',
+                                                 output_shape=output_shape)
+
+        self.shape = output_shape
+        self.pixel_spacing = resampling_px_spacing
+        self.image_pos_patient = np.asarray([bounding_box[0], bounding_box[1],
+                                             bounding_box[2]])
+
+    def get_sitk_image(self):
+        trans = (2,0,1)
+        sitk_image = sitk.GetImageFromArray(np.transpose(self.np_image,
+                                                        trans))
+        sitk_image.SetSpacing(self.pixel_spacing)
+        sitk_image.SetOrigin(self.image_pos_patient)
+        return sitk_image
+
 
 class ImageBase(VolumeBase):
     def __init__(self, *args,
                  template_filename=Template('{patient_id}_${modality}.${ext}'),
+                 resampling_px_spacing=(1.0, 1.0, 1.0),
                  **kwargs):
         super().__init__(*args, **kwargs)
+        self.resampling_px_spacing = resampling_px_spacing
         self.slices_z_position = None
-        self.image_pos_patient = None
-        self.pixel_spacing = None
-        self.np_image = None
+        self.image_pos_patient = None # Maybe to get rid of
+        self.pixel_spacing = None # Maybe to get rid of
+        self.volume = None
         self.filename = template_filename.substitute(
             patient_id=self.dicom_header.patient_id,
             modality=self.dicom_header.modality,
@@ -76,42 +132,21 @@ class ImageBase(VolumeBase):
         self.pixel_spacing = pixel_spacing
         self.image_pos_patient = image_pos_patient
         self.shape = image.shape
-        self.np_image = image
+        self.volume = Volume(image, pixel_spacing=pixel_spacing,
+                               image_pos_patient=image_pos_patient)
 
     def resample(self):
         if self.resampling_px_spacing is not None:
-            zooming_matrix = np.identity(3)
-            zooming_factor_x = (self.resampling_px_spacing[0] / self.pixel_spacing[0]
-                                if self.resampling_px_spacing[0]>0 else 1)
-            zooming_factor_y = (self.resampling_px_spacing[1] / self.pixel_spacing[1]
-                                if self.resampling_px_spacing[1]>0 else 1)
-            zooming_factor_z = (self.resampling_px_spacing[2] / self.pixel_spacing[2]
-                                if self.resampling_px_spacing[2]>0 else 1)
-            zooming_matrix[0, 0] = zooming_factor_x
-            zooming_matrix[1, 1] = zooming_factor_y
-            zooming_matrix[2, 2] = zooming_factor_z
-            output_shape = (int(self.shape[0] / zooming_factor_x),
-                            int(self.shape[1] / zooming_factor_y),
-                            int(self.shape[2] / zooming_factor_z))
-
-            self.np_image = ndimage.affine_transform(self.np_image, zooming_matrix, mode='mirror',
-                                            output_shape=output_shape)
-            self.pixel_spacing = self.resampling_px_spacing
+            self.volume.resample(self.resampling_px_spacing)
 
 
     def write(self, path):
-        trans = (2,0,1)
-        sitk_image = sitk.GetImageFromArray(np.transpose(self.np_image,
-                                                         trans))
-        sitk_image.SetSpacing(self.pixel_spacing)
-        sitk_image.SetOrigin(self.image_pos_patient)
         path = join(path, self.filename)
         self.sitk_writer.SetFileName(path)
-        self.sitk_writer.Execute(sitk_image)
-        del sitk_image
+        self.sitk_writer.Execute(self.volume.get_sitk_image())
 
     def convert(self, path):
-        if self.np_image is None:
+        if self.volume is None:
             self.read()
         self.resample()
         self.write(path)
@@ -120,9 +155,10 @@ class ImageBase(VolumeBase):
 class ImageCT(ImageBase):
     def get_physical_values(self, slices):
         image = list()
+        dtype = slices[0].pixel_array.dtype
         for s in slices:
-            image.append(float(s.RescaleSlope) * s.pixel_array +
-                         float(s.RescaleIntercept))
+            image.append(np.asarray(s.RescaleSlope, dtype=dtype) * s.pixel_array +
+                         np.asarray(s.RescaleIntercept, dtype=dtype))
         return np.stack(image, axis=-1)
 
 
@@ -158,7 +194,7 @@ class ImagePT(ImageBase):
         return np.stack(image, axis=-1)
 
 
-class Mask(VolumeBase):
+class Rtstruct(VolumeBase):
     def __init__(self, *args,
                  template_filename=Template('{patient_id}_${modality}.${ext}'),
                  reference_image=None,
@@ -168,7 +204,7 @@ class Mask(VolumeBase):
         self.list_labels = list_labels
         self.contours = None
         self.reference_image = reference_image
-        self.np_masks = list()
+        self.masks = list()
         self.filenames = list()
         self.template_filename = template_filename
 
@@ -214,7 +250,7 @@ class Mask(VolumeBase):
 
 
     def compute_mask(self):
-        if self.reference_image.np_image is None:
+        if self.reference_image.volume is None:
             self.reference_image.read()
         z = np.asarray(self.reference_image.slices_z_position)
         pos_r = self.reference_image.image_pos_patient[1]
@@ -280,3 +316,85 @@ class Mask(VolumeBase):
             sitk_mask.SetOrigin(self.image_pos_patient)
             self.sitk_writer.SetFileName(join(path, self.filenames[i]))
             self.sitk_writer.Execute(sitk_mask)
+
+
+class Study():
+    image_modality_dict = {
+        'CT': ImageCT,
+        'PT': ImagePT,
+        'MR': ImageMR,
+    }
+
+    def __init__(self, sitk_writer=None, study_instance_uid=None,
+                 padding_voi=None, resampling_spacing_modality=None):
+        self.images = list()
+        self.rtstruct = None # Can have multiple RTSTRUCT
+        self.sitk_writer = sitk_writer
+        self.study_instance_uid = study_instance_uid
+        self.padding_voi = padding_voi
+        self.voi_tot = None
+        if resampling_spacing_modality is None:
+            self.resampling_spacing_modality = {
+                    'CT': (1.0, 1.0, 1.0),
+                    'PT': (1.0, 1.0, 1.0),
+                    'MR': (1.0, 1.0, 1.0),
+                }
+        else:
+            self.resampling_spacing_modality = resampling_spacing_modality
+
+
+    def append_image(self, im_dicom_files, dcm_header):
+        if dcm_header.modality == 'RTSTRUCT':
+            for im in reversed(self.images):
+                if (im.dicom_header.series_instance_uid == dcm_header.series_instance_uid):
+                    self.rtstruct = Rtstruct(
+                        reference_image=im,
+                        list_labels=self.list_labels,
+                        extension=self.extension_output,
+                        sitk_writer=self.sitk_writer,
+                        dicom_header=dcm_header,
+                        dicom_paths=[k.path for k in im_dicom_files],
+                        template_filename=self.template_filename,
+                    )
+
+                    break
+        else:
+            try:
+
+                self.images.append(Study.image_modality_dict[dcm_header.modality](
+                    extension=self.extension_output,
+                    sitk_writer=self.sitk_writer,
+                    dicom_header=dcm_header,
+                    dicom_paths=[k.path for k in im_dicom_files],
+                    template_filename=self.template_filename,
+                    resampling_px_spacing=self.resampling_px_spacing
+                ))
+            except KeyError:
+                print('This modality {} is not yet (?) supported'
+                    .format(dcm_header.modality))
+
+    def read(self):
+        self.rtstruct.read()
+
+        self.voi_tot = np.zeros(self.rtstruct.np_masks[0].shape,
+                                dtype=np.uint8)
+        for mask in self.rtstruct.np_masks:
+            self.voi_tot += mask
+
+        for image in self.images:
+            image.read()
+
+
+    def write(self, path):
+        pass
+
+    def resample(self):
+        pass
+
+    def convert(self, path):
+        self.read()
+        if self.voi_tot is not None:
+            self.resample()
+        self.write(path)
+
+
