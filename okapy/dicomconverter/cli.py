@@ -32,7 +32,7 @@ def main(input_directory, output_filepath, list_labels, extension, name_output):
         walker.template_filename = Template(name_output + '_${modality}.${ext}')
 
     walker.walk()
-    walker.fill_images()
+    walker.fill_dicom_files()
     walker.convert()
 
 

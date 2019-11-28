@@ -3,20 +3,14 @@ TODO: Is it better to create a class for just the header and another for the
 files?
 '''
 import os
-from os.path import dirname, join
+from os.path import join
 from string import Template
-from functools import partial
 
-import re
-import numpy as np
 import SimpleITK as sitk
 import pydicom as pdcm
-from skimage.draw import polygon
-from pydicom.filereader import read_dicomdir
 from pydicom.errors import InvalidDicomError
-import SimpleITK as sitk
 
-from okapy.dicomconverter.image import ImageCT, ImagePT, Mask, ImageMR, Study
+from okapy.dicomconverter.image import Study
 
 
 dic_sitk_writer = {
@@ -137,7 +131,7 @@ class DicomWalker():
                                                x.path))
 
 
-    def fill_images(self):
+    def fill_dicom_files(self):
         '''
         Construct the tree-like dependency of the dicom
         It all relies on the fact that the collection of headers has been
@@ -152,24 +146,26 @@ class DicomWalker():
             current_study_uid = f.dicom_header.series_instance_uid
             if i==0:
                 current_study = Study(sitk_writer=self.sitk_writer,
-                                      study_instance_uid=current_study_uid)
+                                      study_instance_uid=current_study_uid,
+                                      list_labels=self.list_labels)
 
             if i > 0 and not f.dicom_header == self.dicom_files[i-1].dicom_header:
-                current_study.append_image(im_dicom_files, dcm_header)
+                current_study.append_dicom_files(im_dicom_files, dcm_header)
                 im_dicom_files = list()
 
             if i > 0 and not (current_study_uid == previous_study_uid):
                 self.studies.append(current_study)
                 current_study = Study(sitk_writer=self.sitk_writer,
-                                      study_instance_uid=current_study_uid)
+                                      study_instance_uid=current_study_uid,
+                                      list_labels=self.list_labels)
 
             im_dicom_files.append(f)
             dcm_header= f.dicom_header
             previous_study_uid = f.dicom_header.series_instance_uid
 
-        current_study.append_image(im_dicom_files, dcm_header)
+        current_study.append_dicom_files(im_dicom_files, dcm_header)
         self.studies.append(current_study)
 
     def convert(self):
         for study in self.studies:
-            study.convert(self.output_dirpath)
+            study.process(self.output_dirpath)
