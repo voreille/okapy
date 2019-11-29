@@ -22,6 +22,14 @@ class Volume():
         self.shape = np_image.shape
         self.str_resampled = str_resampled
         self.name = name
+        self.total_bb = self._get_total_bb()
+
+    def _get_total_bb(self):
+        out = np.asarray([*self.image_pos_patient, *self.image_pos_patient])
+        out += np.asarray([0,0,0, self.shape[0]*self.pixel_spacing[0],
+                           self.shape[1]*self.pixel_spacing[1],
+                           self.shape[2]*self.pixel_spacing[2]])
+        return out
 
     def get_zeros_like(self):
         return Volume(np_image=np.zeros_like(self.np_image),
@@ -45,13 +53,9 @@ class Volume():
             zooming_matrix[1, 1] = resampling_px_spacing[1] / self.pixel_spacing[1]
             zooming_matrix[2, 2] = resampling_px_spacing[2] / self.pixel_spacing[2]
 
-            #Check the UNITS
-            offset = ((bounding_box[0] - self.image_pos_patient[0] *
-                    resampling_px_spacing[0]) / self.pixel_spacing[0],
-                    (bounding_box[1] - self.image_pos_patient[1] *
-                    resampling_px_spacing[1]) / self.pixel_spacing[1],
-                    (bounding_box[2] - self.image_pos_patient[2] *
-                    resampling_px_spacing[2]) / self.pixel_spacing[2])
+            offset = ((bounding_box[0] - self.image_pos_patient[0]) / self.pixel_spacing[0],
+                      (bounding_box[1] - self.image_pos_patient[1]) / self.pixel_spacing[1],
+                      (bounding_box[2] - self.image_pos_patient[2]) / self.pixel_spacing[2])
 
             output_shape = np.ceil([
                 bounding_box[3] - bounding_box[0],
@@ -67,15 +71,15 @@ class Volume():
             return np_image, output_shape
 
 
-    def resample(self, resampling_px_spacing, bounding_box):
+    def resample(self, resampling_px_spacing, bounding_box, order=1):
         """
         Resample the 3D volume to the resampling_px_spacing according to
         the bounding_boc in cm (x1, y1, z1, x2, y2, z2)
         """
         if not self._check_resampling_spacing(resampling_px_spacing):
 
-            self.str_resampled = '_resampled_'
-            np_image, output_shape = self._get_resampled_np(resampling_px_spacing, bounding_box)
+            self.str_resampled = '__resampled'
+            np_image, output_shape = self._get_resampled_np(resampling_px_spacing, bounding_box, order)
 
             self.np_image = np_image
             self.shape = output_shape
@@ -97,6 +101,7 @@ class VolumeMask(Volume):
     def __init__(self, *args,**kwargs):
         super().__init__(*args, **kwargs)
         self.bb = None
+        self.np_image[self.np_image!=0] = 1
 
     def get_absolute_bb(self, padding=0):
         if self.bb is None:
@@ -114,14 +119,23 @@ class VolumeMask(Volume):
             z2 = (np.max(indices[2]) * self.pixel_spacing[2] +
                 self.image_pos_patient[2]  + padding)
 
-            self.bb = np.array([x1, y1, z1, x2, y2, z2,])
+            bb = np.array([x1, y1, z1, x2, y2, z2,])
+            bb[0:3] = np.maximum(bb[0:3], self.total_bb[0:3])
+            bb[3:] = np.minimum(bb[3:], self.total_bb[3:])
+            self.bb = bb
 
         return self.bb
 
-    def get_resampled_volume(self, resampling_px_spacing, bounding_box):
+    def resample(self, resampling_px_spacing, bounding_box, order=1):
+        super().resample(resampling_px_spacing=resampling_px_spacing,
+                         bounding_box=bounding_box, order=order)
+        self.np_image[self.np_image>0.5] = 1
+        self.np_image[self.np_image<0.5] = 0
+
+    def get_resampled_volume(self, resampling_px_spacing, bounding_box, order=1):
         if not self._check_resampling_spacing(resampling_px_spacing):
 
-            np_image, output_shape = self._get_resampled_np(resampling_px_spacing, bounding_box)
+            np_image, output_shape = self._get_resampled_np(resampling_px_spacing, bounding_box, order=order)
             image_pos_patient = np.asarray([bounding_box[0], bounding_box[1],
                                                 bounding_box[2]])
             return VolumeMask(np_image=np_image,
@@ -302,9 +316,9 @@ class RtstructFile(DicomFileBase):
                 mask[rr, cc, z_index] = 1
 
             name = con['name']
-            volume_name = (self.dicom_header.patient_id + '_from_' +
+            volume_name = (self.dicom_header.patient_id + '__from_' +
                            self.reference_image.dicom_header.modality
-                           +'_mask_' + name.replace(' ', '_'))
+                           +'_mask__' + name.replace(' ', '_'))
 
             volume_masks.append(VolumeMask(mask,
                                            image_pos_patient=self.image_pos_patient,
@@ -336,8 +350,8 @@ class Study():
         self.list_labels = list_labels
         if resampling_spacing_modality is None:
             self.resampling_spacing_modality = {
-                    'CT': (1.0, 1.0, 1.0),
-                    'PT': (2.0, 2.0, 2.0),
+                    'CT': (0.75, 0.75, 0.75),
+                    'PT': (1.0, 1.0, 1.0),
                 }
         else:
             self.resampling_spacing_modality = resampling_spacing_modality
@@ -356,6 +370,24 @@ class Study():
                     ))
 
                     break
+
+            if not self.rtstruct_files:
+                for im in reversed(self.dicom_file_images):
+                    if (im.dicom_header.modality == 'CT' and
+                        im.dicom_header.patient_id == dcm_header.patient_id):
+                        self.rtstruct_files.append(RtstructFile(
+                            reference_image=im,
+                            list_labels=self.list_labels,
+                            extension=self.extension_output,
+                            dicom_header=dcm_header,
+                            dicom_paths=[k.path for k in im_dicom_files],
+                        ))
+                        print('Taking the CT as ref for patient: {}'.format(
+                            im.dicom_header.patient_id))
+
+                        break
+
+
         else:
             try:
 
@@ -387,7 +419,7 @@ class Study():
         for dcm_file in self.dicom_file_images:
             image = dcm_file.get_volume()
             image.resample(self.resampling_spacing_modality[dcm_file.dicom_header.modality], bb)
-            filename = (dcm_file.dicom_header.patient_id + '_' + dcm_file.dicom_header.modality +
+            filename = (dcm_file.dicom_header.patient_id + '__' + dcm_file.dicom_header.modality +
                         image.str_resampled + '.' + self.extension_output)
 
             filepath = join(output_dirpath, filename)
@@ -398,7 +430,8 @@ class Study():
         for mask in self.volume_masks:
             for key, item in self.resampling_spacing_modality.items():
                 image = mask.get_resampled_volume(item, bb)
-                filename = mask.name + 'resampled_for_'+ key +'.' + self.extension_output
+                filename = mask.name + '__resampled_for__'+ key +'.' + self.extension_output
                 filepath = join(output_dirpath, filename)
                 self.sitk_writer.SetFileName(filepath)
                 self.sitk_writer.Execute(image.get_sitk_image())
+

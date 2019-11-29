@@ -128,8 +128,8 @@ class DicomWalker():
 
         self.dicom_files.sort(key=lambda x: (x.dicom_header.patient_id,
                                                x.dicom_header.study_instance_uid,
-                                               x.dicom_header.series_instance_uid,
                                                x.dicom_header.modality,
+                                               x.dicom_header.series_instance_uid,
                                                x.path))
 
 
@@ -173,3 +173,4 @@ class DicomWalker():
     def convert(self):
         for study in self.studies:
             study.process(self.output_dirpath)
+
