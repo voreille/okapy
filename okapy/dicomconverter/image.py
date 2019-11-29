@@ -38,7 +38,7 @@ class Volume():
 
         return cond
 
-    def _get_resampled_np(self, resampling_px_spacing, bounding_box):
+    def _get_resampled_np(self, resampling_px_spacing, bounding_box, order=1):
 
             zooming_matrix = np.identity(3)
             zooming_matrix[0, 0] = resampling_px_spacing[0] / self.pixel_spacing[0]
@@ -61,6 +61,7 @@ class Volume():
 
             np_image = ndimage.affine_transform(self.np_image, zooming_matrix,
                                                     offset=offset, mode='mirror',
+                                                    order=order,
                                                     output_shape=output_shape.astype(int))
 
             return np_image, output_shape
@@ -303,7 +304,7 @@ class RtstructFile(DicomFileBase):
             name = con['name']
             volume_name = (self.dicom_header.patient_id + '_from_' +
                            self.reference_image.dicom_header.modality
-                           +'_mask_' + name)
+                           +'_mask_' + name.replace(' ', '_'))
 
             volume_masks.append(VolumeMask(mask,
                                            image_pos_patient=self.image_pos_patient,
@@ -336,7 +337,7 @@ class Study():
         if resampling_spacing_modality is None:
             self.resampling_spacing_modality = {
                     'CT': (1.0, 1.0, 1.0),
-                    'PT': (1.0, 1.0, 1.0),
+                    'PT': (2.0, 2.0, 2.0),
                 }
         else:
             self.resampling_spacing_modality = resampling_spacing_modality

@@ -65,6 +65,7 @@ class DicomWalker():
                  template_filename=Template('${patient_id}_'
                                             '${modality}.${ext}'),
                  extension_output='nrrd',
+                 padding_voi=0,
                  list_labels=None, resampling_px_spacing=None):
         self.input_dirpath = input_dirpath
         self.output_dirpath = output_dirpath
@@ -77,6 +78,7 @@ class DicomWalker():
         self.images = list()
         self.list_labels = list_labels
         self.resampling_px_spacing = resampling_px_spacing
+        self.padding_voi = padding_voi
 
     def __str__(self):
         dcm_list = [str(dcm) for dcm in self.dicom_files]
@@ -143,9 +145,10 @@ class DicomWalker():
         previous_study_uid = None
         for i, f in enumerate(self.dicom_files):
             # When the image changeschanges we store it as a whole
-            current_study_uid = f.dicom_header.series_instance_uid
+            current_study_uid = f.dicom_header.study_instance_uid
             if i==0:
                 current_study = Study(sitk_writer=self.sitk_writer,
+                                      padding_voi=self.padding_voi,
                                       study_instance_uid=current_study_uid,
                                       list_labels=self.list_labels)
 
@@ -156,12 +159,13 @@ class DicomWalker():
             if i > 0 and not (current_study_uid == previous_study_uid):
                 self.studies.append(current_study)
                 current_study = Study(sitk_writer=self.sitk_writer,
+                                      padding_voi=self.padding_voi,
                                       study_instance_uid=current_study_uid,
                                       list_labels=self.list_labels)
 
             im_dicom_files.append(f)
             dcm_header= f.dicom_header
-            previous_study_uid = f.dicom_header.series_instance_uid
+            previous_study_uid = f.dicom_header.study_instance_uid
 
         current_study.append_dicom_files(im_dicom_files, dcm_header)
         self.studies.append(current_study)

@@ -27,7 +27,8 @@ def main(input_directory, output_filepath, list_labels, extension, name_output):
         os.makedirs(output_filepath)
 
     walker = DicomWalker(input_directory, output_filepath,
-                            list_labels=list_labels, extension_output=extension)
+                            list_labels=list_labels, extension_output=extension,
+                         padding_voi=50)
     if name_output is not None:
         walker.template_filename = Template(name_output + '_${modality}.${ext}')
 
