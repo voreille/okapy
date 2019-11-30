@@ -146,11 +146,11 @@ class ImagePT(ImageBase):
             total_dose = float(
                 s.RadiopharmaceuticalInformationSequence[0].RadionuclideTotalDose)
             scan_time = s.SeriesTime
-            scan_t = float(scan_time[1:2])*3600 + \
-                float(scan_time[3:4])*60 + float(scan_time[5:6])
+            scan_t = float(scan_time[0:2])*3600 + \
+                float(scan_time[2:4])*60 + float(scan_time[4:])
             measured_time = s.RadiopharmaceuticalInformationSequence[0].RadiopharmaceuticalStartTime
             measured_t = float(
-                measured_time[1:2])*3600 + float(measured_time[3:4])*60 + float(measured_time[5:6])
+                measured_time[0:2])*3600 + float(measured_time[2:4])*60 + float(measured_time[4:])
             decay = 2**(-(scan_t-measured_t)/half_life)
             actual_activity = total_dose * decay
             im = pet * float(s.PatientWeight)*1000 / actual_activity
