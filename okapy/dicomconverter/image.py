@@ -201,14 +201,12 @@ class DicomFileImageBase(DicomFileBase):
                       image_pos_patient=self.image_pos_patient)
 
 
-
 class DicomFileCT(DicomFileImageBase):
     def get_physical_values(self, slices):
         image = list()
-        dtype = slices[0].pixel_array.dtype
         for s in slices:
-            image.append(np.asarray(s.RescaleSlope, dtype=dtype) * s.pixel_array +
-                         np.asarray(s.RescaleIntercept, dtype=dtype))
+            image.append(float(s.RescaleSlope) * s.pixel_array +
+                         float(s.RescaleIntercept))
         return np.stack(image, axis=-1)
 
 
@@ -232,11 +230,11 @@ class DicomFilePT(DicomFileImageBase):
             total_dose = float(
                 s.RadiopharmaceuticalInformationSequence[0].RadionuclideTotalDose)
             scan_time = s.SeriesTime
-            scan_t = float(scan_time[1:2])*3600 + \
-                float(scan_time[3:4])*60 + float(scan_time[5:6])
+            scan_t = float(scan_time[0:2])*3600 + \
+                float(scan_time[2:4])*60 + float(scan_time[4:])
             measured_time = s.RadiopharmaceuticalInformationSequence[0].RadiopharmaceuticalStartTime
             measured_t = float(
-                measured_time[1:2])*3600 + float(measured_time[3:4])*60 + float(measured_time[5:6])
+                measured_time[0:2])*3600 + float(measured_time[2:4])*60 + float(measured_time[4:])
             decay = 2**(-(scan_t-measured_t)/half_life)
             actual_activity = total_dose * decay
             im = pet * float(s.PatientWeight)*1000 / actual_activity
