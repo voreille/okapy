@@ -57,6 +57,11 @@ class Volume():
                       (bounding_box[1] - self.image_pos_patient[1]) / self.pixel_spacing[1],
                       (bounding_box[2] - self.image_pos_patient[2]) / self.pixel_spacing[2])
 
+#            offset = ((-bounding_box[0] + self.image_pos_patient[0]) / resampling_px_spacing[0],
+#                      (-bounding_box[1] + self.image_pos_patient[1]) / resampling_px_spacing[1],
+#                      (-bounding_box[2] + self.image_pos_patient[2]) / resampling_px_spacing[2])
+
+
             output_shape = np.ceil([
                 bounding_box[3] - bounding_box[0],
                 bounding_box[4] - bounding_box[1],
@@ -84,6 +89,7 @@ class Volume():
             self.np_image = np_image
             self.shape = output_shape
             self.pixel_spacing = resampling_px_spacing
+            self.total_bb = bounding_box
             self.image_pos_patient = np.asarray([bounding_box[0], bounding_box[1],
                                                 bounding_box[2]])
 
@@ -198,7 +204,10 @@ class DicomFileImageBase(DicomFileBase):
         image = self.get_physical_values(self.slices)
 
         return Volume(image, pixel_spacing=self.pixel_spacing,
-                      image_pos_patient=self.image_pos_patient)
+                      image_pos_patient=np.asarray([
+                          self.image_pos_patient[1],
+                          self.image_pos_patient[0],
+                          self.image_pos_patient[2]]))
 
 
 class DicomFileCT(DicomFileImageBase):
@@ -319,7 +328,11 @@ class RtstructFile(DicomFileBase):
                            +'_mask__' + name.replace(' ', '_'))
 
             volume_masks.append(VolumeMask(mask,
-                                           image_pos_patient=self.image_pos_patient,
+                                           image_pos_patient=np.asarray([
+                                               self.image_pos_patient[1],
+                                               self.image_pos_patient[0],
+                                               self.image_pos_patient[2],
+                                           ]),
                                            pixel_spacing=self.pixel_spacing,
                                            name=volume_name
                                            ))
@@ -349,7 +362,7 @@ class Study():
         if resampling_spacing_modality is None:
             self.resampling_spacing_modality = {
                     'CT': (0.75, 0.75, 0.75),
-                    'PT': (1.0, 1.0, 1.0),
+                    'PT': (0.75, 0.75, 0.75),
                 }
         else:
             self.resampling_spacing_modality = resampling_spacing_modality
