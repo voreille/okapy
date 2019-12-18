@@ -46,7 +46,7 @@ class Volume():
 
         return cond
 
-    def _get_resampled_np(self, resampling_px_spacing, bounding_box, order=1):
+    def _get_resampled_np(self, resampling_px_spacing, bounding_box, order=3):
 
             zooming_matrix = np.identity(3)
             zooming_matrix[0, 0] = resampling_px_spacing[0] / self.pixel_spacing[0]
@@ -76,7 +76,7 @@ class Volume():
             return np_image, output_shape
 
 
-    def resample(self, resampling_px_spacing, bounding_box, order=1):
+    def resample(self, resampling_px_spacing, bounding_box, order=3):
         """
         Resample the 3D volume to the resampling_px_spacing according to
         the bounding_boc in cm (x1, y1, z1, x2, y2, z2)
@@ -142,6 +142,9 @@ class VolumeMask(Volume):
         if not self._check_resampling_spacing(resampling_px_spacing):
 
             np_image, output_shape = self._get_resampled_np(resampling_px_spacing, bounding_box, order=order)
+            np_image[np_image>0.5] = 1
+            np_image[np_image<0.5] = 0
+
             image_pos_patient = np.asarray([bounding_box[0], bounding_box[1],
                                                 bounding_box[2]])
             return VolumeMask(np_image=np_image,
