@@ -3,20 +3,14 @@ TODO: Is it better to create a class for just the header and another for the
 files?
 '''
 import os
-from os.path import dirname, join
+from os.path import join
 from string import Template
-from functools import partial
 
-import re
-import numpy as np
 import SimpleITK as sitk
 import pydicom as pdcm
-from skimage.draw import polygon
-from pydicom.filereader import read_dicomdir
 from pydicom.errors import InvalidDicomError
-import SimpleITK as sitk
 
-from okapy.dicomconverter.image import ImageCT, ImagePT, Mask, ImageMR
+from okapy.dicomconverter.image import Study
 
 
 dic_sitk_writer = {
@@ -71,6 +65,7 @@ class DicomWalker():
                  template_filename=Template('${patient_id}_'
                                             '${modality}.${ext}'),
                  extension_output='nrrd',
+                 padding_voi=0,
                  list_labels=None, resampling_px_spacing=None):
         self.input_dirpath = input_dirpath
         self.output_dirpath = output_dirpath
@@ -79,29 +74,15 @@ class DicomWalker():
         self.sitk_writer = sitk.ImageFileWriter()
         self.sitk_writer.SetImageIO(dic_sitk_writer[extension_output])
         self.dicom_files = list()
+        self.studies = list()
         self.images = list()
         self.list_labels = list_labels
         self.resampling_px_spacing = resampling_px_spacing
+        self.padding_voi = padding_voi
 
     def __str__(self):
         dcm_list = [str(dcm) for dcm in self.dicom_files]
         return '\n'.join(dcm_list)
-
-
-    def _dict_for_modality(self, dcm_header=None):
-        out_dict = {
-            'CT': ImageCT,
-            'PT': ImagePT,
-            'MR': ImageMR,
-        }
-        for im in reversed(self.images):
-            if (im.dicom_header.series_instance_uid == dcm_header.series_instance_uid):
-                out_dict['RTSTRUCT'] = partial(Mask,
-                                               reference_image=im,
-                                               list_labels=self.list_labels)
-                break
-
-        return out_dict
 
 
     def walk(self):
@@ -147,30 +128,12 @@ class DicomWalker():
 
         self.dicom_files.sort(key=lambda x: (x.dicom_header.patient_id,
                                                x.dicom_header.study_instance_uid,
-                                               x.dicom_header.series_instance_uid,
                                                x.dicom_header.modality,
+                                               x.dicom_header.series_instance_uid,
                                                x.path))
 
 
-    def _append_image(self, im_dicom_files, dcm_header):
-        try:
-            image_modality_dict = self._dict_for_modality(
-                dcm_header=dcm_header)
-
-            self.images.append(image_modality_dict[dcm_header.modality](
-                extension=self.extension_output,
-                sitk_writer=self.sitk_writer,
-                dicom_header=dcm_header,
-                dicom_paths=[k.path for k in im_dicom_files],
-                template_filename=self.template_filename,
-                resampling_px_spacing=self.resampling_px_spacing
-            ))
-        except KeyError:
-            print('This modality {} is not yet (?) supported'
-                  .format(dcm_header.modality))
-
-
-    def fill_images(self):
+    def fill_dicom_files(self):
         '''
         Construct the tree-like dependency of the dicom
         It all relies on the fact that the collection of headers has been
@@ -179,17 +142,35 @@ class DicomWalker():
         im_dicom_files = list()
         dcm_header = DicomHeader()
 
+        previous_study_uid = None
         for i, f in enumerate(self.dicom_files):
+            # When the image changeschanges we store it as a whole
+            current_study_uid = f.dicom_header.study_instance_uid
+            if i==0:
+                current_study = Study(sitk_writer=self.sitk_writer,
+                                      padding_voi=self.padding_voi,
+                                      study_instance_uid=current_study_uid,
+                                      list_labels=self.list_labels)
+
             if i > 0 and not f.dicom_header == self.dicom_files[i-1].dicom_header:
-                self._append_image(im_dicom_files, dcm_header)
+                current_study.append_dicom_files(im_dicom_files, dcm_header)
                 im_dicom_files = list()
+
+            if i > 0 and not (current_study_uid == previous_study_uid):
+                self.studies.append(current_study)
+                current_study = Study(sitk_writer=self.sitk_writer,
+                                      padding_voi=self.padding_voi,
+                                      study_instance_uid=current_study_uid,
+                                      list_labels=self.list_labels)
 
             im_dicom_files.append(f)
             dcm_header= f.dicom_header
+            previous_study_uid = f.dicom_header.study_instance_uid
 
-        self._append_image(im_dicom_files, dcm_header)
-
+        current_study.append_dicom_files(im_dicom_files, dcm_header)
+        self.studies.append(current_study)
 
     def convert(self):
-        for im in self.images:
-            im.convert(self.output_dirpath)
+        for study in self.studies:
+            study.process(self.output_dirpath)
+

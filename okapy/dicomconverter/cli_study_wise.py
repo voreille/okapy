@@ -9,14 +9,13 @@ from okapy.dicomconverter.dicom_walker import DicomWalker
 
 
 @click.command()
-@click.argument('input_directory', type=click.Path(exists=True))
+@click.option('-r', '--reference_dicom', required=True, type=click.Path())
+@click.option('-m', '--mask_dicom', required=True, type=click.Path())
+@click.option('-i', '--extra_dicom', required=True, type=click.Path())
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
 @click.option('-l', '--list_labels', default=None, type=str)
 @click.option('-e', '--extension', default='nii', type=str)
-@click.option('-n', '--name_output', default=None, type=str)
-#@click.option('-r', '--resampling_px_spacing', default=None,
-#              type=(float, float, float), required=False)
-def main(input_directory, output_filepath, list_labels, extension, name_output):
+def main(reference_dicom, mask_dicom, extra_dicom, list_labels, output_filepath, extension, name_output):
     """
     Convert to dicom to the right format based on extension
     """

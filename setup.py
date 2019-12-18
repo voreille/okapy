@@ -12,23 +12,6 @@ with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
 requirements = [
-    'pydicom==1.2.2',
-    'scikit_image==0.15.0',
-    'scipy==1.3.0',
-    'numpy==1.16.3',
-    'ipdb==0.12',
-    'pyradiomics==2.2.0',
-    'sympy==1.4',
-    'six==1.12.0',
-    'Click==7.0',
-    'pandas==0.24.2',
-    'matplotlib==3.1.0',
-    'radiomics==0.1',
-    'scikit_learn==0.21.3',
-    'SimpleITK==1.2.4',
-    'skimage==0.0',
-    'tensorflow==2.0.0',
-    'termcolor==1.1.0',
 ],
 
 setup_requirements = [ ]
