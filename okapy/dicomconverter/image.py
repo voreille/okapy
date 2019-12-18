@@ -370,6 +370,7 @@ class Study():
                 }
         else:
             self.resampling_spacing_modality = resampling_spacing_modality
+        self.current_modality_list = list()
 
 
     def append_dicom_files(self, im_dicom_files, dcm_header):
@@ -412,6 +413,7 @@ class Study():
                     dicom_paths=[k.path for k in im_dicom_files],
                     resampling_px_spacing=self.resampling_spacing_modality[dcm_header.modality]
                 ))
+                self.current_modality_list.append(dcm_header.modality)
             except KeyError:
                 print('This modality {} is not yet (?) supported'
                     .format(dcm_header.modality))
@@ -442,8 +444,13 @@ class Study():
             self.sitk_writer.SetFileName(filepath)
             self.sitk_writer.Execute(image.get_sitk_image())
 
+        # Keeping only the present modalities
+        resampling_spacing_modality = {
+            key: self.resampling_spacing_modality[key] for key in self.current_modality_list
+        }
+
         for mask in self.volume_masks:
-            for key, item in self.resampling_spacing_modality.items():
+            for key, item in resampling_spacing_modality.items():
                 image = mask.get_resampled_volume(item, bb)
                 filename = mask.name + '__resampled_for__'+ key +'.' + self.extension_output
                 filepath = join(output_dirpath, filename)
