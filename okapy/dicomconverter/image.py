@@ -366,6 +366,7 @@ class Study():
             self.resampling_spacing_modality = {
                     'CT': (0.75, 0.75, 0.75),
                     'PT': (0.75, 0.75, 0.75),
+                    'MR': (0.75, 0.75, 0.75),
                 }
         else:
             self.resampling_spacing_modality = resampling_spacing_modality

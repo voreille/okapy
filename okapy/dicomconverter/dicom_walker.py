@@ -66,7 +66,8 @@ class DicomWalker():
                                             '${modality}.${ext}'),
                  extension_output='nrrd',
                  padding_voi=0,
-                 list_labels=None, resampling_px_spacing=None):
+                 list_labels=None,
+                 resampling_spacing_modality=None):
         self.input_dirpath = input_dirpath
         self.output_dirpath = output_dirpath
         self.template_filename = template_filename
@@ -77,8 +78,12 @@ class DicomWalker():
         self.studies = list()
         self.images = list()
         self.list_labels = list_labels
-        self.resampling_px_spacing = resampling_px_spacing
-        self.padding_voi = padding_voi
+        if resampling_spacing_modality is None:
+            self.resampling_spacing_modality = {
+                    'CT': (0.75, 0.75, 0.75),
+                    'PT': (0.75, 0.75, 0.75),
+                    'MR': (0.75, 0.75, 0.75),
+                }
 
     def __str__(self):
         dcm_list = [str(dcm) for dcm in self.dicom_files]
@@ -150,7 +155,8 @@ class DicomWalker():
                 current_study = Study(sitk_writer=self.sitk_writer,
                                       padding_voi=self.padding_voi,
                                       study_instance_uid=current_study_uid,
-                                      list_labels=self.list_labels)
+                                      list_labels=self.list_labels,
+                                      resampling_spacing_modality=self.resampling_spacing_modality)
 
             if i > 0 and not f.dicom_header == self.dicom_files[i-1].dicom_header:
                 current_study.append_dicom_files(im_dicom_files, dcm_header)
