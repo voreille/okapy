@@ -10,6 +10,7 @@ import numpy as np
 from scipy import ndimage
 import SimpleITK as sitk
 import pydicom as pdcm
+from pydicom.tag import Tag
 from skimage.draw import polygon
 
 
@@ -232,9 +233,32 @@ class DicomFileMR(DicomFileImageBase):
 
 
 class DicomFilePT(DicomFileImageBase):
-    def get_physical_values(self, slices):
+
+    def __init__(self, *args,**kwargs):
+        super().__init__(*args, **kwargs)
+        self._is_philips = None
+
+    def read(self):
+        super().read()
+        if self.slices[0].Manufacturer == 'Philips Medical Systems':
+            self._is_philips = True
+        else:
+            self._is_philips = False
+
+    def _get_physical_values_philips(self, slices):
+        image = list()
+        t1 = Tag(0x70531000) # You can put this in other placs
+        import pdb; pdb.set_trace()  # XXX BREAKPOINT
+        for s in slices:
+            im = (float(s.RescaleSlope) * s.pixel_array +
+                  float(s.RescaleIntercept)) * float(s[t1].value)
+            image.append(im)
+        return np.stack(image, axis=-1)
+
+    def _get_physical_values_not_philips(self, slices):
         # Get SUV from raw PET
         image = list()
+        import pdb; pdb.set_trace()  # XXX BREAKPOINT
         for s in slices:
             pet = float(s.RescaleSlope) * s.pixel_array + float(s.RescaleIntercept)
             half_life = float(
@@ -253,6 +277,12 @@ class DicomFilePT(DicomFileImageBase):
             image.append(im)
         return np.stack(image, axis=-1)
 
+    def get_physical_values(self, slices):
+        print('hey fucker')
+        if self._is_philips:
+            return self._get_physical_values_philips(slices)
+        else:
+            return self._get_physical_values_not_philips(slices)
 
 class RtstructFile(DicomFileBase):
     def __init__(self, *args,
@@ -420,6 +450,7 @@ class Study():
 
     def process(self, output_dirpath):
         # Compute the mask
+        print('hey mthfcker')
         for rtstruct in self.rtstruct_files:
             self.volume_masks.extend(rtstruct.get_volumes())
 
