@@ -9,9 +9,7 @@ six==1.12.0
 Click==7.0
 pandas==0.24.2
 matplotlib==3.1.0
-radiomics==0.1
 scikit_learn==0.21.3
 SimpleITK==1.2.4
-skimage==0.0
 tensorflow==2.0.0
 termcolor==1.1.0
