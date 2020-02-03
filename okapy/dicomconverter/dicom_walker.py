@@ -78,12 +78,15 @@ class DicomWalker():
         self.studies = list()
         self.images = list()
         self.list_labels = list_labels
+        self.padding_voi = padding_voi
         if resampling_spacing_modality is None:
             self.resampling_spacing_modality = {
                     'CT': (0.75, 0.75, 0.75),
                     'PT': (0.75, 0.75, 0.75),
                     'MR': (0.75, 0.75, 0.75),
                 }
+        else:
+            self.resampling_spacing_modality = self.resampling_spacing_modality
 
     def __str__(self):
         dcm_list = [str(dcm) for dcm in self.dicom_files]

@@ -10,7 +10,9 @@ import numpy as np
 from scipy import ndimage
 import SimpleITK as sitk
 import pydicom as pdcm
+from pydicom.tag import Tag
 from skimage.draw import polygon
+import pandas as pd
 
 
 class Volume():
@@ -201,6 +203,17 @@ class DicomFileImageBase(DicomFileBase):
         self.slices = slices
         self.shape = (*slices[0].pixel_array.shape, len(slices))
 
+    def get_dicom_header_df(self):
+        if self.slices is None:
+            self.read()
+        return pd.DataFrame.from_dict({
+            'Manufacturer': [self.slices[0].Manufacturer],
+            'ManufacturerModelName': [self.slices[0].ManufacturerModelName],
+            'InstitutionName': [self.slices[0].InstitutionName],
+        })
+
+
+
     def get_volume(self):
         if self.slices is None:
             self.read()
@@ -232,7 +245,29 @@ class DicomFileMR(DicomFileImageBase):
 
 
 class DicomFilePT(DicomFileImageBase):
-    def get_physical_values(self, slices):
+
+    def __init__(self, *args,**kwargs):
+        super().__init__(*args, **kwargs)
+        self._is_philips = None # Should find a better name
+
+    def read(self):
+        super().read()
+        if (self.slices[0].Manufacturer.upper().startswith('PHILIPS') and
+            self.slices[0].Units.upper() == 'CNTS'):
+            self._is_philips = True
+        else:
+            self._is_philips = False
+
+    def _get_physical_values_philips(self, slices):
+        image = list()
+        t1 = Tag(0x70531000) # You can put this in other placs
+        for s in slices:
+            im = (float(s.RescaleSlope) * s.pixel_array +
+                  float(s.RescaleIntercept)) * float(s[t1].value)
+            image.append(im)
+        return np.stack(image, axis=-1)
+
+    def _get_physical_values_not_philips(self, slices):
         # Get SUV from raw PET
         image = list()
         for s in slices:
@@ -252,6 +287,23 @@ class DicomFilePT(DicomFileImageBase):
             im = pet * float(s.PatientWeight)*1000 / actual_activity
             image.append(im)
         return np.stack(image, axis=-1)
+
+    def get_physical_values(self, slices):
+        if self._is_philips:
+            return self._get_physical_values_philips(slices)
+        else:
+            return self._get_physical_values_not_philips(slices)
+
+    def get_dicom_header_df(self):
+        if self.slices is None:
+            self.read()
+        return pd.DataFrame.from_dict({
+            'Manufacturer': [self.slices[0].Manufacturer],
+            'ManufacturerModelName': [self.slices[0].ManufacturerModelName],
+            'Units': [self.slices[0].Units],
+            'InstitutionName': [self.slices[0].InstitutionName],
+        })
+
 
 
 class RtstructFile(DicomFileBase):
@@ -370,6 +422,7 @@ class Study():
                 }
         else:
             self.resampling_spacing_modality = resampling_spacing_modality
+        self.current_modality_list = list()
 
 
     def append_dicom_files(self, im_dicom_files, dcm_header):
@@ -412,6 +465,7 @@ class Study():
                     dicom_paths=[k.path for k in im_dicom_files],
                     resampling_px_spacing=self.resampling_spacing_modality[dcm_header.modality]
                 ))
+                self.current_modality_list.append(dcm_header.modality)
             except KeyError:
                 print('This modality {} is not yet (?) supported'
                     .format(dcm_header.modality))
@@ -442,8 +496,24 @@ class Study():
             self.sitk_writer.SetFileName(filepath)
             self.sitk_writer.Execute(image.get_sitk_image())
 
+            # Save the minimal dicom info relevant for the stantdardisation
+
+            dicom_header_df = dcm_file.get_dicom_header_df()
+            filename = (dcm_file.dicom_header.patient_id + '__' + dcm_file.dicom_header.modality +
+                        image.str_resampled + '.csv')
+            filepath = join(output_dirpath, filename)
+            dicom_header_df.to_csv(filepath)
+
+
+
+
+        # Keeping only the present modalities
+        resampling_spacing_modality = {
+            key: self.resampling_spacing_modality[key] for key in self.current_modality_list
+        }
+
         for mask in self.volume_masks:
-            for key, item in self.resampling_spacing_modality.items():
+            for key, item in resampling_spacing_modality.items():
                 image = mask.get_resampled_volume(item, bb)
                 filename = mask.name + '__resampled_for__'+ key +'.' + self.extension_output
                 filepath = join(output_dirpath, filename)
