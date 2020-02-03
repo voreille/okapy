@@ -254,6 +254,7 @@ class DicomFilePT(DicomFileImageBase):
         super().read()
         if (self.slices[0].Manufacturer.upper().startswith('PHILIPS') and
             self.slices[0].Units.upper() == 'CNTS'):
+
             self._is_philips = True
         else:
             self._is_philips = False
@@ -270,6 +271,7 @@ class DicomFilePT(DicomFileImageBase):
     def _get_physical_values_not_philips(self, slices):
         # Get SUV from raw PET
         image = list()
+        import pdb; pdb.set_trace()  # XXX BREAKPOINT
         for s in slices:
             pet = float(s.RescaleSlope) * s.pixel_array + float(s.RescaleIntercept)
             half_life = float(
@@ -472,6 +474,7 @@ class Study():
 
     def process(self, output_dirpath):
         # Compute the mask
+        print('hey mthfcker')
         for rtstruct in self.rtstruct_files:
             self.volume_masks.extend(rtstruct.get_volumes())
 
