@@ -1,243 +1,74 @@
-'''
-TODO: Is SliceLocation always a thing, if yes, use it instead of
-      ImagePositionPatient[2]
-TODO: Resampling with nearest neighbor for VolumeMask
-TODO: Change how pixelspacing and origin fields are initialized in RtstructFile
-TODO: Direction cosine in sitk
-TODO: Change the name of the class for instance DicomBase instead of DicomFileBase
-TODO: Add check of the bounding_box, if it goes beyond the image domain
-'''
+"""
+TODO: Make it DRYer line 220
+"""
+
 from os.path import join
+import warnings
+from copy import copy
 
 import numpy as np
-from scipy import ndimage
-import SimpleITK as sitk
 import pydicom as pdcm
 from pydicom.tag import Tag
 import pydicom_seg
 from skimage.draw import polygon
 import pandas as pd
+import SimpleITK as sitk
 
-
-class Volume():
-    def __init__(self,
-                 np_image=None,
-                 image_pos_patient=None,
-                 pixel_spacing=None,
-                 name='',
-                 str_resampled=''):
-        self.np_image = np_image
-        self.image_pos_patient = image_pos_patient
-        self.pixel_spacing = pixel_spacing
-        self.shape = np_image.shape
-        self.str_resampled = str_resampled
-        self.name = name
-        self.total_bb = self._get_total_bb()
-
-    def _get_total_bb(self):
-        out = np.asarray([*self.image_pos_patient, *self.image_pos_patient])
-        out += np.asarray([
-            0, 0, 0, self.shape[0] * self.pixel_spacing[0],
-            self.shape[1] * self.pixel_spacing[1],
-            self.shape[2] * self.pixel_spacing[2]
-        ])
-        return out
-
-    def get_zeros_like(self):
-        return Volume(np_image=np.zeros_like(self.np_image),
-                      image_pos_patient=self.image_pos_patient,
-                      pixel_spacing=self.pixel_spacing)
-
-    def _check_resampling_spacing(self, resampling_px_spacing):
-        if len(resampling_px_spacing) == 3:
-            cond = True
-            for i in range(3):
-                cond *= (self.pixel_spacing[i] == resampling_px_spacing[i])
-        else:
-            cond = False
-
-        return cond
-
-    def _get_resampled_np(self, resampling_px_spacing, bounding_box, order=3):
-
-        zooming_matrix = np.identity(3)
-        zooming_matrix[0, 0] = resampling_px_spacing[0] / self.pixel_spacing[0]
-        zooming_matrix[1, 1] = resampling_px_spacing[1] / self.pixel_spacing[1]
-        zooming_matrix[2, 2] = resampling_px_spacing[2] / self.pixel_spacing[2]
-
-        offset = ((bounding_box[0] - self.image_pos_patient[0]) /
-                  self.pixel_spacing[0],
-                  (bounding_box[1] - self.image_pos_patient[1]) /
-                  self.pixel_spacing[1],
-                  (bounding_box[2] - self.image_pos_patient[2]) /
-                  self.pixel_spacing[2])
-
-        #            offset = ((-bounding_box[0] + self.image_pos_patient[0]) / resampling_px_spacing[0],
-        #                      (-bounding_box[1] + self.image_pos_patient[1]) / resampling_px_spacing[1],
-        #                      (-bounding_box[2] + self.image_pos_patient[2]) / resampling_px_spacing[2])
-
-        output_shape = np.ceil([
-            bounding_box[3] - bounding_box[0],
-            bounding_box[4] - bounding_box[1],
-            bounding_box[5] - bounding_box[2],
-        ]) / resampling_px_spacing
-
-        np_image = ndimage.affine_transform(
-            self.np_image,
-            zooming_matrix,
-            offset=offset,
-            mode='mirror',
-            order=order,
-            output_shape=output_shape.astype(int))
-
-        return np_image, output_shape
-
-    def resample(self, resampling_px_spacing, bounding_box, order=3):
-        """
-        Resample the 3D volume to the resampling_px_spacing according to
-        the bounding_boc in cm (x1, y1, z1, x2, y2, z2)
-        """
-        if not self._check_resampling_spacing(resampling_px_spacing):
-
-            self.str_resampled = '__resampled'
-            np_image, output_shape = self._get_resampled_np(
-                resampling_px_spacing, bounding_box, order)
-
-            self.np_image = np_image
-            self.shape = output_shape
-            self.pixel_spacing = resampling_px_spacing
-            self.total_bb = bounding_box
-            self.image_pos_patient = np.asarray(
-                [bounding_box[0], bounding_box[1], bounding_box[2]])
-
-    def get_sitk_image(self):
-        trans = (2, 0, 1)
-        sitk_image = sitk.GetImageFromArray(np.transpose(self.np_image, trans))
-        sitk_image.SetSpacing(self.pixel_spacing)
-        sitk_image.SetOrigin(self.image_pos_patient)
-        return sitk_image
-
-
-class VolumeMask(Volume):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.bb = None
-        self.np_image[self.np_image != 0] = 1
-
-    def get_absolute_bb(self, padding=0):
-        if self.bb is None:
-            indices = np.where(self.np_image > 0)
-            x1 = (np.min(indices[0]) * self.pixel_spacing[0] +
-                  self.image_pos_patient[0] - padding)
-            x2 = (np.max(indices[0]) * self.pixel_spacing[0] +
-                  self.image_pos_patient[0] + padding)
-            y1 = (np.min(indices[1]) * self.pixel_spacing[1] +
-                  self.image_pos_patient[1] - padding)
-            y2 = (np.max(indices[1]) * self.pixel_spacing[1] +
-                  self.image_pos_patient[1] + padding)
-            z1 = (np.min(indices[2]) * self.pixel_spacing[2] +
-                  self.image_pos_patient[2] - padding)
-            z2 = (np.max(indices[2]) * self.pixel_spacing[2] +
-                  self.image_pos_patient[2] + padding)
-
-            bb = np.array([
-                x1,
-                y1,
-                z1,
-                x2,
-                y2,
-                z2,
-            ])
-            bb[0:3] = np.maximum(bb[0:3], self.total_bb[0:3])
-            bb[3:] = np.minimum(bb[3:], self.total_bb[3:])
-            self.bb = bb
-
-        return self.bb
-
-    def resample(self, resampling_px_spacing, bounding_box, order=1):
-        super().resample(resampling_px_spacing=resampling_px_spacing,
-                         bounding_box=bounding_box,
-                         order=order)
-        self.np_image[self.np_image > 0.5] = 1
-        self.np_image[self.np_image < 0.5] = 0
-
-    def get_resampled_volume(self,
-                             resampling_px_spacing,
-                             bounding_box,
-                             order=1):
-        if not self._check_resampling_spacing(resampling_px_spacing):
-
-            np_image, output_shape = self._get_resampled_np(
-                resampling_px_spacing, bounding_box, order=order)
-            np_image[np_image > 0.5] = 1
-            np_image[np_image < 0.5] = 0
-
-            image_pos_patient = np.asarray(
-                [bounding_box[0], bounding_box[1], bounding_box[2]])
-            return VolumeMask(np_image=np_image,
-                              image_pos_patient=image_pos_patient,
-                              pixel_spacing=resampling_px_spacing,
-                              name=self.name,
-                              str_resampled='_resampled_')
-
-        else:
-            return self
+from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
 
 
 class DicomFileBase():
-    def __init__(self,
-                 dicom_header=None,
-                 dicom_paths=list(),
-                 extension='nrrd',
-                 resampling_px_spacing=None):
+    def __init__(
+            self,
+            dicom_header=None,
+            dicom_paths=list(),
+            extension='nii.gz',
+            reference_frame=None,
+    ):
         self.dicom_header = dicom_header
         self.dicom_paths = dicom_paths
         self.extension = extension
 
+    @property
+    def reference_frame(self):
+        raise NotImplementedError('This is an abstract class')
+
+    @reference_frame.setter
+    def reference_frame(self, value):
+        raise NotImplementedError('This is an abstract class')
+
 
 class DicomFileImageBase(DicomFileBase):
-    def __init__(self, *args, resampling_px_spacing=(1.0, 1.0, 1.0), **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.resampling_px_spacing = resampling_px_spacing
-        self.slices_z_position = None
-        self.image_pos_patient = None  # Maybe to get rid of
-        self.pixel_spacing = None  # Maybe to get rid of
         self.slices = None
+        self._reference_frame = None
 
-    def get_physical_values(self, slices):
+    @property
+    def reference_frame(self):
+        return self._reference_frame
+
+    @reference_frame.setter
+    def reference_frame(self, value):
+        self._reference_frame = value
+
+    def get_physical_values(self):
         raise NotImplementedError('This is an abstract class')
 
     def read(self):
         slices = [pdcm.read_file(dcm) for dcm in self.dicom_paths]
         image_orientation = slices[0].ImageOrientationPatient
-        n = np.cross(image_orientation[3:], image_orientation[:3])
-        slices.sort(key=lambda x: np.dot(n,np.asarray(x.ImagePositionPatient)))
+        n = np.cross(image_orientation[:3], image_orientation[3:])
+        slices.sort(
+            key=lambda x: np.dot(n, np.asarray(x.ImagePositionPatient)))
 
-        slice_spacing = (slices[1].ImagePositionPatient[2] -
-                         slices[0].ImagePositionPatient[2])
-        use_slice_location = False
-        if slice_spacing == 0:
-            slices.sort(key=lambda x: float(x.SliceLocation))
-            slice_spacing = (slices[1].SliceLocation - slices[0].SliceLocation)
-            use_slice_location = True
-
-        pixel_spacing = np.asarray([
-            slices[0].PixelSpacing[0],
-            slices[0].PixelSpacing[1],
-            slice_spacing,
-        ])
-        #        image.SetDirection([float(k) for k in slices[0].ImageOrientationPatient])
-        image_pos_patient = [float(k) for k in slices[0].ImagePositionPatient]
-        if use_slice_location:
-            self.slices_z_position = [float(s.SliceLocation) for s in slices]
-        else:
-            self.slices_z_position = [
-                float(s.ImagePositionPatient[2]) for s in slices
-            ]
-        self.pixel_spacing = pixel_spacing
-        self.image_pos_patient = image_pos_patient
         self.slices = slices
-        self.shape = (*slices[0].pixel_array.shape, len(slices))
+        self.reference_frame = ReferenceFrame(
+            origin=slices[0].ImagePositionPatient,
+            origin_last_slice=slices[-1].ImagePositionPatient,
+            orientation=slices[0].ImageOrientationPatient,
+            pixel_spacing=slices[0].PixelSpacing,
+            shape=(*slices[0].pixel_array.shape, len(slices)))
 
     def get_dicom_header_df(self):
         if self.slices is None:
@@ -251,20 +82,16 @@ class DicomFileImageBase(DicomFileBase):
     def get_volume(self):
         if self.slices is None:
             self.read()
-        image = self.get_physical_values(self.slices)
+        image = self.get_physical_values()
+        image = np.transpose(image, (1, 0, 2))
 
-        return Volume(image,
-                      pixel_spacing=self.pixel_spacing,
-                      image_pos_patient=np.asarray([
-                          self.image_pos_patient[1], self.image_pos_patient[0],
-                          self.image_pos_patient[2]
-                      ]))
+        return Volume(image, reference_frame=copy(self.reference_frame))
 
 
 class DicomFileCT(DicomFileImageBase):
-    def get_physical_values(self, slices):
+    def get_physical_values(self):
         image = list()
-        for s in slices:
+        for s in self.slices:
             image.append(
                 float(s.RescaleSlope) * s.pixel_array +
                 float(s.RescaleIntercept))
@@ -272,17 +99,9 @@ class DicomFileCT(DicomFileImageBase):
 
 
 class DicomFileMR(DicomFileImageBase):
-    def get_physical_values(self, slices):
+    def get_physical_values(self):
         image = list()
-        for s in slices:
-            image.append(s.pixel_array)
-        return np.stack(image, axis=-1)
-
-
-class DicomFileSEG(DicomFileImageBase):
-    def get_physical_values(self, slices):
-        image = list()
-        for s in slices:
+        for s in self.slices:
             image.append(s.pixel_array)
         return np.stack(image, axis=-1)
 
@@ -300,19 +119,19 @@ class DicomFilePT(DicomFileImageBase):
         else:
             self._is_philips = False
 
-    def _get_physical_values_philips(self, slices):
+    def _get_physical_values_philips(self):
         image = list()
         t1 = Tag(0x70531000)  # You can put this in other placs
-        for s in slices:
+        for s in self.slices:
             im = (float(s.RescaleSlope) * s.pixel_array +
                   float(s.RescaleIntercept)) * float(s[t1].value)
             image.append(im)
         return np.stack(image, axis=-1)
 
-    def _get_physical_values_not_philips(self, slices):
+    def _get_physical_values_not_philips(self):
         # Get SUV from raw PET
         image = list()
-        for s in slices:
+        for s in self.slices:
             pet = float(s.RescaleSlope) * s.pixel_array + float(
                 s.RescaleIntercept)
             half_life = float(s.RadiopharmaceuticalInformationSequence[0].
@@ -332,11 +151,11 @@ class DicomFilePT(DicomFileImageBase):
             image.append(im)
         return np.stack(image, axis=-1)
 
-    def get_physical_values(self, slices):
+    def get_physical_values(self):
         if self._is_philips:
-            return self._get_physical_values_philips(slices)
+            return self._get_physical_values_philips()
         else:
-            return self._get_physical_values_not_philips(slices)
+            return self._get_physical_values_not_philips()
 
     def get_dicom_header_df(self):
         if self.slices is None:
@@ -361,6 +180,15 @@ class SegFile(MaskFile):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.reader = pydicom_seg.SegmentReader()
+        self._reference_frame = None
+
+    @property
+    def reference_frame(self):
+        return self._reference_frame
+
+    @reference_frame.setter
+    def reference_frame(self, value):
+        self._reference_frame = value
 
     def get_volumes(self, list_labels):
         volume_masks = list()
@@ -368,11 +196,22 @@ class SegFile(MaskFile):
             raise RuntimeError('RTSTRUCT has more than one file')
         dcm = pdcm.dcmread(self.dicom_paths[0])
         result = self.reader.read(dcm)
+        trans = (2, 1, 0)
+        coordinate_matrix = np.zeros((4, 4))
+        coordinate_matrix[:3, :3] = result.direction
+        coordinate_matrix[:3, 3] = result.origin
+        coordinate_matrix[3, 3] = 1
+        compute_ref = True
         for segment_number in result.available_segments:
+            np_volume = np.transpose(result.segment_data(segment_number),
+                                     trans)
+            if compute_ref:
+                self.reference_frame = ReferenceFrame(
+                    coordinate_matrix=coordinate_matrix, shape=np_volume.shape)
+                compute_ref = False
             volume_masks.append(
-                VolumeMask(result.segment_data(segment_number),
-                           image_pos_patient=np.asarray(result.origin),
-                           pixel_spacing=result.spacing,
+                VolumeMask(np_volume,
+                           reference_frame=copy(self.reference_frame),
                            name=result.segment_infos[segment_number][Tag(
                                0x620006)].value))
 
@@ -384,6 +223,10 @@ class RtstructFile(MaskFile):
         super().__init__(*args, **kwargs)
         self.contours = None
         self.reference_image = reference_image
+
+    @property
+    def reference_frame(self):
+        return self.reference_image.reference_frame
 
     def read_structure(self, list_labels):
         if len(self.dicom_paths) != 1:
@@ -399,10 +242,16 @@ class RtstructFile(MaskFile):
                     i].ReferencedROINumber
                 contour['name'] = roi_seq.ROIName
                 assert contour['number'] == roi_seq.ROINumber
-                contour['contours'] = [
-                    s.ContourData
-                    for s in structure.ROIContourSequence[i].ContourSequence
-                ]
+                try:
+                    contour['contours'] = [
+                        s.ContourData for s in
+                        structure.ROIContourSequence[i].ContourSequence
+                    ]
+                except AttributeError:
+                    warnings.warn("No contour found for label {}.".format(
+                        roi_seq.ROIName))
+                    continue
+
                 self.contours.append(contour)
 
             else:
@@ -414,35 +263,37 @@ class RtstructFile(MaskFile):
                             i].ReferencedROINumber
                         contour['name'] = roi_seq.ROIName
                         assert contour['number'] == roi_seq.ROINumber
-                        contour['contours'] = [
-                            s.ContourData for s in
-                            structure.ROIContourSequence[i].ContourSequence
-                        ]
+                        try:
+                            contour['contours'] = [
+                                s.ContourData for s in
+                                structure.ROIContourSequence[i].ContourSequence
+                            ]
+                        except AttributeError:
+                            warnings.warn(
+                                "No contour found for label {}.".format(
+                                    roi_seq.ROIName))
+                            continue
+
                         self.contours.append(contour)
 
     def get_volumes(self, list_labels):
         self.read_structure(list_labels)
         volume_masks = list()
-        if self.reference_image.slices_z_position is None:
+        if self.reference_image.slices is None:
             self.reference_image.read()
-        z = np.asarray(self.reference_image.slices_z_position)
-        pos_r = self.reference_image.image_pos_patient[1]
-        spacing_r = self.reference_image.pixel_spacing[1]
-        pos_c = self.reference_image.image_pos_patient[0]
-        spacing_c = self.reference_image.pixel_spacing[0]
-        shape = self.reference_image.shape
-        self.pixel_spacing = self.reference_image.pixel_spacing
-        self.image_pos_patient = self.reference_image.image_pos_patient
+        z = self.reference_frame.slices_z_position
+        origin = self.reference_frame.origin
+        pixel_spacing = self.reference_frame.pixel_spacing
 
         for con in self.contours:
-            mask = np.zeros(shape, dtype=np.uint8)
+            mask = np.zeros(self.reference_frame.shape, dtype=np.uint8)
             for current in con['contours']:
                 nodes = np.array(current).reshape((-1, 3))
                 assert np.amax(np.abs(np.diff(nodes[:, 2]))) == 0
                 z_index = np.where((nodes[0, 2] - 0.001 < z)
                                    & (z < nodes[0, 2] + 0.001))[0][0]
-                r = (nodes[:, 1] - pos_r) / spacing_r
-                c = (nodes[:, 0] - pos_c) / spacing_c
+                r = (nodes[:, 1] - origin[0]) / pixel_spacing[0]
+                c = (nodes[:, 0] - origin[1]) / pixel_spacing[1]
                 rr, cc = polygon(r, c)
                 if len(rr) > 0 and len(cc) > 0:
                     if np.max(rr) > 512 or np.max(cc) > 512:
@@ -457,12 +308,7 @@ class RtstructFile(MaskFile):
 
             volume_masks.append(
                 VolumeMask(mask,
-                           image_pos_patient=np.asarray([
-                               self.image_pos_patient[1],
-                               self.image_pos_patient[0],
-                               self.image_pos_patient[2],
-                           ]),
-                           pixel_spacing=self.pixel_spacing,
+                           reference_frame=self.reference_frame,
                            name=volume_name))
         return volume_masks
 
@@ -545,8 +391,7 @@ class Study():
                         extension=self.extension_output,
                         dicom_header=dcm_header,
                         dicom_paths=[k.path for k in im_dicom_files],
-                        resampling_px_spacing=self.resampling_spacing_modality[
-                            dcm_header.modality]))
+                    ))
                 self.current_modality_list.append(dcm_header.modality)
             except KeyError:
                 print('This modality {} is not yet (?) supported'.format(
@@ -560,11 +405,9 @@ class Study():
 
         # Compute the bounding box
 
-        bb = self.volume_masks[0].get_absolute_bb(self.padding_voi)
+        bb = self.volume_masks[0].padded_bb(self.padding_voi)
         for mask in self.volume_masks:
-            bb_m = mask.get_absolute_bb(self.padding_voi)
-            bb[0:3] = np.minimum(bb[0:3], bb_m[0:3])
-            bb[3:] = np.maximum(bb[3:], bb_m[3:])
+            bb = mask.bb_union(bb, self.padding_voi)
 
         # process the images i. to np ii. resampling iii. saving
         for dcm_file in self.dicom_file_images:
@@ -599,6 +442,7 @@ class Study():
         for mask in self.volume_masks:
             for key, item in resampling_spacing_modality.items():
                 image = mask.get_resampled_volume(item, bb)
-                filename = mask.name + '__resampled_for__' + key + '.' + self.extension_output
+                filename = (mask.name + '__resampled_for__' + key + '.' +
+                            self.extension_output)
                 filepath = join(output_dirpath, filename)
                 sitk.WriteImage(image.get_sitk_image(), filepath)

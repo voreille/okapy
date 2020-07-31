@@ -10,7 +10,7 @@ import SimpleITK as sitk
 import pydicom as pdcm
 from pydicom.errors import InvalidDicomError
 
-from okapy.dicomconverter.image import Study
+from okapy.dicomconverter.dicom_file import Study
 
 
 class DicomHeader():

@@ -1,7 +1,12 @@
 import unittest
-from click.testing import CliRunner
+from pathlib import Path
 
-from dicom_walker import DicomWalker
+from click.testing import CliRunner
+import numpy as np
+
+from okapy.dicomconverter.dicom_walker import DicomWalker
+from okapy.dicomconverter.volume import ReferenceFrame
+from okapy.dicomconverter.dicom_file import DicomFileMR
 
 
 class TestOkapy(unittest.TestCase):
@@ -36,13 +41,55 @@ class TestOkapy(unittest.TestCase):
         label in the name of the file and resample at 0.75 mm
         """
 
+        # input_path = '/mnt/nas4/datasets/ToReadme/HECKTOR/testing/dicom/P006/'
         input_path = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
         output_path = '/home/val/Documents/output_okapy'
         print('yoyoyo')
-        walker = DicomWalker(input_path, output_path)
+        walker = DicomWalker(input_path, output_path, padding_voi=0)
         walker.walk()
         walker.fill_dicom_files()
         walker.convert()
+
+    # def test_dicomfilemr(self):
+    #     input_path = Path(
+    #         '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/dicoms/')
+    #     dcm_paths = [str(k.resolve()) for k in input_path.rglob('*.dcm')]
+    #     dicom_mr = DicomFileMR(dicom_paths=dcm_paths)
+    #     volume = dicom_mr.get_volume()
+    #     assert True
+
+    def test_ref_frame(self):
+        orientation = [0, 1, 0, 0, 0, -1]
+        origin = [82.615730762482, -143.29116344452, 153.0847454071]
+        origin_last_slice = [
+            -92.384269237518, -143.29116344452, 153.0847454071
+        ]
+        pixel_spacing = [0.5, 0.5]
+        shape = [256, 256, 176]
+        ref_frame = ReferenceFrame(origin=origin,
+                                   origin_last_slice=origin_last_slice,
+                                   orientation=orientation,
+                                   pixel_spacing=pixel_spacing,
+                                   shape=shape)
+        assert np.equal(ref_frame.vx_to_mm([0, 0, 0]), np.array(origin)).all()
+        assert np.equal(ref_frame.vx_to_mm([0, 0, shape[-1] - 1]),
+                        np.array(origin_last_slice)).all()
+
+        assert np.equal(ref_frame.mm_to_vx(origin), np.array([0, 0, 0])).all()
+
+        assert np.equal(ref_frame.mm_to_vx(origin_last_slice),
+                        np.array([0, 0, shape[-1] - 1])).all()
+
+        bb_vx = np.array([128, 64, 80, 172, 128, 150], dtype=float)
+        bb_mm = np.zeros_like(bb_vx)
+        bb_mm[:3] = ref_frame.vx_to_mm(bb_vx[:3])
+        bb_mm[3:] = ref_frame.vx_to_mm(bb_vx[3:])
+        new_resampling = np.array([1.5, 1, 0.5])
+        new_ref_frame = ref_frame.get_new_reference_frame(
+            bb_mm, new_resampling)
+        assert (new_ref_frame.vx_to_mm([0, 0, 0]) == bb_mm[:3]).all()
+        assert np.sqrt(
+            np.sum((new_ref_frame.voxel_spacing - new_resampling)**2)) < 0.01
 
 
 if __name__ == '__main__':
