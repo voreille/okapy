@@ -281,25 +281,24 @@ class RtstructFile(MaskFile):
         volume_masks = list()
         if self.reference_image.slices is None:
             self.reference_image.read()
-        z = self.reference_frame.slices_z_position
-        origin = self.reference_frame.origin
-        pixel_spacing = self.reference_frame.pixel_spacing
 
         for con in self.contours:
             mask = np.zeros(self.reference_frame.shape, dtype=np.uint8)
             for current in con['contours']:
                 nodes = np.array(current).reshape((-1, 3))
                 assert np.amax(np.abs(np.diff(nodes[:, 2]))) == 0
-                z_index = np.where((nodes[0, 2] - 0.001 < z)
-                                   & (z < nodes[0, 2] + 0.001))[0][0]
-                r = (nodes[:, 1] - origin[0]) / pixel_spacing[0]
-                c = (nodes[:, 0] - origin[1]) / pixel_spacing[1]
-                rr, cc = polygon(r, c)
+                vx_positions = np.stack([
+                    self.reference_frame.mm_to_vx(
+                        [nodes[k, 1], nodes[k, 0], nodes[k, 2]])
+                    for k in range(nodes.shape[0])
+                ],
+                                        axis=0)
+                rr, cc = polygon(vx_positions[:, 1], vx_positions[:, 0])
                 if len(rr) > 0 and len(cc) > 0:
                     if np.max(rr) > 512 or np.max(cc) > 512:
                         raise Exception("The RTSTRUCT file is compromised")
 
-                mask[rr, cc, z_index] = 1
+                mask[rr, cc, np.round(vx_positions[0, 2]).astype(int)] = 1
 
             name = con['name']
             volume_name = (self.dicom_header.patient_id + '__from_' +
@@ -324,7 +323,7 @@ class Study():
                  study_instance_uid=None,
                  padding_voi=0,
                  resampling_spacing_modality=None,
-                 extension_output='nii',
+                 extension_output='nii.gz',
                  list_labels=None,
                  csv_info=False):
         self.volume_masks = list()

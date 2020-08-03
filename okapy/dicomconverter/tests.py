@@ -41,11 +41,11 @@ class TestOkapy(unittest.TestCase):
         label in the name of the file and resample at 0.75 mm
         """
 
-        # input_path = '/mnt/nas4/datasets/ToReadme/HECKTOR/testing/dicom/P006/'
-        input_path = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
+        input_path = '/mnt/nas4/datasets/ToReadme/HECKTOR/testing/dicom/P006/'
+        # input_path = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
         output_path = '/home/val/Documents/output_okapy'
         print('yoyoyo')
-        walker = DicomWalker(input_path, output_path, padding_voi=0)
+        walker = DicomWalker(input_path, output_path, padding_voi=20)
         walker.walk()
         walker.fill_dicom_files()
         walker.convert()

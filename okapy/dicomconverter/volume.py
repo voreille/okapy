@@ -74,20 +74,38 @@ class ReferenceFrame():
 
     @property
     def voxel_spacing(self):
-        delta_x = np.sqrt(
+        delta_r = np.sqrt(
             np.sum(((np.dot(self.coordinate_matrix, [1, 0, 0, 1]) -
                      np.dot(self.coordinate_matrix, [0, 0, 0, 1]))[:3])**2))
-        delta_y = np.sqrt(
+        delta_c = np.sqrt(
             np.sum(((np.dot(self.coordinate_matrix, [0, 1, 0, 1]) -
                      np.dot(self.coordinate_matrix, [0, 0, 0, 1]))[:3])**2))
-        delta_z = np.sqrt(
+        delta_s = np.sqrt(
             np.sum(((np.dot(self.coordinate_matrix, [0, 0, 1, 1]) -
                      np.dot(self.coordinate_matrix, [0, 0, 0, 1]))[:3])**2))
-        return np.array([delta_x, delta_y, delta_z])
+        return np.array([delta_r, delta_c, delta_s])
 
     @property
     def inv_coordinate_matrix(self):
         return np.linalg.inv(self.coordinate_matrix)
+
+    def direction_vector(self, vx_vector):
+        v = self.vx_to_mm(vx_vector) - self.vx_to_mm([0, 0, 0])
+        return v / np.linalg.norm(v)
+
+    @property
+    def direction_vector_dict(self):
+        return {
+            'row': self.direction_vector([1, 0, 0]),
+            'col': self.direction_vector([0, 1, 0]),
+            'slice': self.direction_vector([0, 0, 1]),
+        }
+
+    def positions(self, key='slice'):
+        return np.array([
+            np.dot(self.vx_to_mm([0, 0, k]), self.direction_vector_dict[key])
+            for k in range(self.shape[2])
+        ])
 
     def get_bb_vx(self, bb):
         bb_vx = np.zeros((6, ), dtype=int)

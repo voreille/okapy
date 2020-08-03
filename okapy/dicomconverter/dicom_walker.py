@@ -61,7 +61,7 @@ class DicomWalker():
                  output_dirpath,
                  template_filename=Template('${patient_id}_'
                                             '${modality}.${ext}'),
-                 extension_output='nrrd',
+                 extension_output='nii.gz',
                  padding_voi=0,
                  list_labels=None,
                  resampling_spacing_modality=None):
@@ -147,7 +147,8 @@ class DicomWalker():
                                       study_instance_uid=current_study_uid,
                                       list_labels=self.list_labels,
                                       resampling_spacing_modality=self.
-                                      resampling_spacing_modality)
+                                      resampling_spacing_modality,
+                                      extension_output=self.extension_output)
 
             if i > 0 and not f.dicom_header == self.dicom_files[
                     i - 1].dicom_header:
@@ -158,7 +159,8 @@ class DicomWalker():
                 self.studies.append(current_study)
                 current_study = Study(padding_voi=self.padding_voi,
                                       study_instance_uid=current_study_uid,
-                                      list_labels=self.list_labels)
+                                      list_labels=self.list_labels,
+                                      extension_output=self.extension_output)
 
             im_dicom_files.append(f)
             dcm_header = f.dicom_header
