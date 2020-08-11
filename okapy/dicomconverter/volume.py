@@ -89,6 +89,20 @@ class ReferenceFrame():
     def inv_coordinate_matrix(self):
         return np.linalg.inv(self.coordinate_matrix)
 
+    @property
+    def bounding_box(self):
+        return np.array(
+            [*self.vx_to_mm([0, 0, 0]), *self.vx_to_mm(self.shape - 1)])
+
+    def bounding_box_intersection(self, bb):
+        bb_vx_1 = self.mm_to_vx(bb[:3])
+        bb_vx_2 = self.mm_to_vx(bb[3:])
+        bb_vx = np.zeros((6, ))
+        bb_vx[0:3] = np.maximum([0, 0, 0], bb_vx_1)
+        bb_vx[3:] = np.minimum(
+            [self.shape[0] - 1, self.shape[1] - 1, self.shape[2] - 1], bb_vx_2)
+        return np.array([*self.vx_to_mm(bb_vx[:3]), *self.vx_to_mm(bb_vx[3:])])
+
     def direction_vector(self, vx_vector):
         v = self.vx_to_mm(vx_vector) - self.vx_to_mm([0, 0, 0])
         return v / np.linalg.norm(v)
@@ -140,15 +154,15 @@ class ReferenceFrame():
 
 
 class Volume():
-    def __init__(self,
-                 np_image=None,
-                 reference_frame=None,
-                 name='',
-                 str_resampled=''):
+    def __init__(
+        self,
+        np_image=None,
+        reference_frame=None,
+        modality=None,
+    ):
         self.np_image = np_image
         self.reference_frame = reference_frame
-        self.str_resampled = str_resampled
-        self.name = name
+        self.modality = modality
 
     # def __getattr__(self, attr):
     #     return getattr(self.reference_frame, attr)
@@ -156,6 +170,7 @@ class Volume():
     def zeros_like(self):
         return Volume(
             np_image=np.zeros_like(self.np_image),
+            modality=self.modality,
             reference_frame=copy(self.reference_frame),
         )
 
@@ -193,14 +208,14 @@ class Volume():
         """
         if not self._check_resampling_spacing(resampling_vx_spacing):
 
-            self.str_resampled = '__resampled'
             np_image, reference_frame = self._get_resampled_np(
                 resampling_vx_spacing, bounding_box, order)
 
             self.np_image = np_image
             self.reference_frame = reference_frame
 
-    def get_sitk_image(self):
+    @property
+    def sitk_image(self):
         trans = (2, 1, 0)
         sitk_image = sitk.GetImageFromArray(np.transpose(self.np_image, trans))
         sitk_image.SetSpacing(self.reference_frame.voxel_spacing)
@@ -211,9 +226,18 @@ class Volume():
 
 
 class VolumeMask(Volume):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, label=None, reference_modality=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.np_image[self.np_image != 0] = 1
+        self.reference_modality = reference_modality
+        self.label = label
+
+    def zeros_like(self):
+        return VolumeMask(np_image=np.zeros_like(self.np_image),
+                          reference_frame=copy(self.reference_frame),
+                          reference_modality=self.reference_modality,
+                          modality=self.modality,
+                          label=self.label)
 
     @property
     def bounding_box_vx(self):
@@ -242,7 +266,7 @@ class VolumeMask(Volume):
             ]),
         ])
 
-    def bb_union(self, bb, padding):
+    def bb_union(self, bb, padding=0):
         bb_vx_1 = self.reference_frame.mm_to_vx(bb[:3])
         bb_vx_2 = self.reference_frame.mm_to_vx(bb[3:])
         bb_vx = self.bounding_box_vx
@@ -271,10 +295,94 @@ class VolumeMask(Volume):
             np_image[np_image > 0.5] = 1
             np_image[np_image < 0.5] = 0
 
-            return VolumeMask(np_image=np_image,
-                              reference_frame=reference_frame,
-                              name=self.name,
-                              str_resampled='_resampled_')
+            return VolumeMask(
+                np_image=np_image,
+                reference_frame=reference_frame,
+                name=self.name,
+            )
 
         else:
             return self
+
+
+class VolumeProcessor():
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+
+    def process(self, volume, *args, **kwargs):
+        raise NotImplementedError('abstract class')
+
+    def __call__(self, volume, *args, **kwargs):
+        return self.process(volume, *args, **kwargs)
+
+
+class BasicResampler(VolumeProcessor):
+    def __init__(self, resampling_spacing=(1, 1, 1), order=3):
+        self.resampling_spacing = resampling_spacing
+        self.order = order
+
+    def process(self, volume, bounding_box):
+        new_reference_frame = volume.reference_frame.get_new_reference_frame(
+            bounding_box, self.resampling_spacing)
+        matrix = np.dot(volume.reference_frame.inv_coordinate_matrix,
+                        new_reference_frame.coordinate_matrix)
+
+        np_image = ndimage.affine_transform(
+            volume.np_image,
+            matrix[:3, :3],
+            offset=matrix[:3, 3],
+            mode='mirror',
+            order=self.order,
+            output_shape=new_reference_frame.shape)
+
+        v = volume.zeros_like()
+        v.np_image = np_image
+        v.reference_frame = new_reference_frame
+        return v
+
+
+class MaskResampler(BasicResampler):
+    def __init__(self, *args, threshold=0.5, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.t = threshold
+
+    def threshold(self, volume):
+        volume.np_image[volume.np_image < self.t] = 0
+        volume.np_image[volume.np_image >= self.t] = 1
+        return volume
+
+    def process(self, volume, *args, **kwargs):
+        return self.threshold(super().process(volume, *args, **kwargs))
+
+
+def resample_np_binary_volume(np_volume, origin, current_pixel_spacing,
+                              resampling_px_spacing, bounding_box):
+
+    x_old = grid_from_spacing(origin[0], current_pixel_spacing[0],
+                              np_volume.shape[0])
+    y_old = grid_from_spacing(origin[1], current_pixel_spacing[1],
+                              np_volume.shape[1])
+    z_old = grid_from_spacing(origin[2], current_pixel_spacing[2],
+                              np_volume.shape[2])
+
+    output_shape = (np.ceil([
+        bounding_box[3] - bounding_box[0],
+        bounding_box[4] - bounding_box[1],
+        bounding_box[5] - bounding_box[2],
+    ]) / resampling_px_spacing).astype(int)
+
+    x_new = grid_from_spacing(bounding_box[0], resampling_px_spacing[0],
+                              output_shape[0])
+    y_new = grid_from_spacing(bounding_box[1], resampling_px_spacing[1],
+                              output_shape[1])
+    z_new = grid_from_spacing(bounding_box[2], resampling_px_spacing[2],
+                              output_shape[2])
+    interpolator = RegularGridInterpolator((x_old, y_old, z_old),
+                                           np_volume,
+                                           method='nearest',
+                                           bounds_error=False,
+                                           fill_value=0)
+    x, y, z = np.meshgrid(x_new, y_new, z_new, indexing='ij')
+    pts = np.array(list(zip(x.flatten(), y.flatten(), z.flatten())))
+
+    return interpolator(pts).reshape(output_shape)

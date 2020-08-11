@@ -7,6 +7,7 @@ import numpy as np
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.volume import ReferenceFrame
 from okapy.dicomconverter.dicom_file import DicomFileMR
+from okapy.dicomconverter.converter import Converter
 
 
 class TestOkapy(unittest.TestCase):
@@ -35,20 +36,19 @@ class TestOkapy(unittest.TestCase):
     #        assert '--help  Show this message and exit.' in help_result.output
     #
 
-    def test_convert_mr(self):
+    def test_converter(self):
         """
         The walker must extract all the MR and also all the VOIs with their
         label in the name of the file and resample at 0.75 mm
         """
 
         input_path = '/mnt/nas4/datasets/ToReadme/HECKTOR/testing/dicom/P006/'
+        # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
         # input_path = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
         output_path = '/home/val/Documents/output_okapy'
-        print('yoyoyo')
-        walker = DicomWalker(input_path, output_path, padding_voi=20)
-        walker.walk()
-        walker.fill_dicom_files()
-        walker.convert()
+        converter = Converter(output_folder=output_path)
+        result = converter(input_path)
+        print(result.data_frame)
 
     # def test_dicomfilemr(self):
     #     input_path = Path(
