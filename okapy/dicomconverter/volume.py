@@ -316,6 +316,14 @@ class VolumeProcessor():
         return self.process(volume, *args, **kwargs)
 
 
+class IdentityProcessor(VolumeProcessor):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def process(self, volume):
+        return volume
+
+
 class BasicResampler(VolumeProcessor):
     def __init__(self, resampling_spacing=(1, 1, 1), order=3):
         self.resampling_spacing = resampling_spacing

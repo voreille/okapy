@@ -48,7 +48,7 @@ class TestOkapy(unittest.TestCase):
         output_path = '/home/val/Documents/output_okapy'
         converter = Converter(output_folder=output_path)
         result = converter(input_path)
-        print(result.data_frame)
+        print(result)
 
     # def test_dicomfilemr(self):
     #     input_path = Path(

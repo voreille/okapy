@@ -1,4 +1,5 @@
 from os.path import join
+from multiprocessing import Pool
 
 import pandas as pd
 from scipy import ndimage
@@ -6,47 +7,24 @@ import SimpleITK as sitk
 
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.dicom_file import Study, EmptyContourException
-from okapy.dicomconverter.volume import BasicResampler, MaskResampler
+from okapy.dicomconverter.volume import (BasicResampler, MaskResampler,
+                                         IdentityProcessor)
 
 
-class StudyConverterResult():
-    def __init__(self, study):
+class VolumeResult():
+    def __init__(self, study, volume, path):
         self.study_instance_uid = study.study_instance_uid
         self.patient_id = study.patient_id
         self.study_date = study.study_date
-        self.volume_paths = list()
-        self.mask_paths = list()
-        self.mask_keys = list()
-        self.volume_keys = list()
-
-    def addpath_mask(self, key, path):
-        self.mask_keys.append(key)
-        self.mask_paths.append(path)
-
-    def addpath_volume(self, key, path):
-        self.volume_keys.append(key)
-        self.volume_paths.append(path)
+        self.modality = volume.modality
+        self.path = path
 
 
-class ConverterResult():
-    def __init__(self, list_labels):
-        self.data_frame = pd.DataFrame()
-
-    def add_result(self, result):
-        r = {
-            'image_' + str(key): [value]
-            for (key, value) in zip(result.volume_keys, result.volume_paths)
-        }
-        r.update({
-            'mask_' + str(key): [value]
-            for (key, value) in zip(result.mask_keys, result.mask_paths)
-        })
-        r.update({'patient_id': [str(result.patient_id)]})
-        self.data_frame = pd.concat((self.data_frame, pd.DataFrame(r)),
-                                    ignore_index=True)
-
-    def to_csv(self, path):
-        self.data_frame.to_csv(path)
+class MaskResult(VolumeResult):
+    def __init__(self, study, volume, path):
+        super().__init__(study, volume, path)
+        self.reference_modality = volume.reference_modality
+        self.label = volume.label
 
 
 class StudyConverter():
@@ -101,7 +79,8 @@ class StudyConverter():
             sitk.WriteImage(volume.sitk_image, path)
 
     def __call__(self, study, output_folder=None):
-        result = StudyConverterResult(study)
+        volume_results_list = list()
+        mask_results_list = list()
         masks_list = self.extract_volume_of_interest(study)
         volumes_list = [f.get_volume() for f in study.volume_files]
 
@@ -113,16 +92,16 @@ class StudyConverter():
             name = study.patient_id + '_' + v.modality + '.' + self.extension
             path = join(output_folder, name)
             self.write(v, path)
-            result.addpath_volume(v.modality, path)
+            volume_results_list.append(VolumeResult(study, v, path))
 
         for v in masks_list:
             name = (study.patient_id + '_' + v.label + '_' + v.modality + '_' +
                     v.reference_modality + '.' + self.extension)
             path = join(output_folder, name)
             self.write(v, path)
-            result.addpath_mask(v.label, path)
+            mask_results_list.append(MaskResult(study, v, path))
 
-        return result
+        return volume_results_list, mask_results_list
 
 
 class Converter():
@@ -143,12 +122,18 @@ class Converter():
         self.list_labels = list_labels
         if dicom_walker is None:
             self.dicom_walker = DicomWalker()
-        if volume_processor is None:
-            self.volume_processor = BasicResampler(
-                resampling_spacing=resampling_spacing, order=order)
-        if mask_processor is None:
-            self.mask_processor = MaskResampler(
-                resampling_spacing=resampling_spacing)
+        if resampling_spacing == -1:
+            if volume_processor is None:
+                self.volume_processor = IdentityProcessor()
+            if mask_processor is None:
+                self.mask_processor = IdentityProcessor()
+        else:
+            if volume_processor is None:
+                self.volume_processor = BasicResampler(
+                    resampling_spacing=resampling_spacing, order=order)
+            if mask_processor is None:
+                self.mask_processor = MaskResampler(
+                    resampling_spacing=resampling_spacing)
         self.converter_backend = converter_backend
         self.study_converter = StudyConverter(
             self.volume_processor,
@@ -163,8 +148,8 @@ class Converter():
             output_folder = self.output_folder
 
         studies_list = self.dicom_walker(input_folder)
-        result = ConverterResult(self.list_labels)
+        result = list()
         for study in studies_list:
-            result.add_result(self.study_converter(study, output_folder))
+            result.append(self.study_converter(study, output_folder))
 
         return result

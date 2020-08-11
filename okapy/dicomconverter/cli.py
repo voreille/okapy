@@ -1,22 +1,21 @@
 import os
-from string import Template
+from pathlib import Path
 
 import click
 import logging
 import pandas as pd
 
-from okapy.dicomconverter.dicom_walker import DicomWalker
+from okapy.dicomconverter.converter import Converter
 
 
 @click.command()
 @click.argument('input_directory', type=click.Path(exists=True))
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
-@click.option('-l', '--list_labels', default=None, type=str)
-@click.option('-e', '--extension', default='nii', type=str)
-@click.option('-n', '--name_output', default=None, type=str)
-#@click.option('-r', '--resampling_px_spacing', default=None,
-#              type=(float, float, float), required=False)
-def main(input_directory, output_filepath, list_labels, extension, name_output):
+@click.option('-l', '--list_labels', default=None, type=click.STRING)
+@click.option('-e', '--extension', default='nii.gz', type=click.STRING)
+@click.option('-j', '--cores', default=1, type=click.INT)
+def main(input_directory, output_filepath, list_labels, extension, name_output,
+         cores):
     """
     Convert to dicom to the right format based on extension
     """
@@ -26,16 +25,11 @@ def main(input_directory, output_filepath, list_labels, extension, name_output):
     if not os.path.exists(output_filepath):
         os.makedirs(output_filepath)
 
-    walker = DicomWalker(input_directory, output_filepath,
-                         list_labels=list_labels, extension_output=extension,
-                         padding_voi=50)
-    if name_output is not None:
-        walker.template_filename = Template(name_output + '_${modality}.${ext}')
-
-    walker.walk()
-    walker.fill_dicom_files()
-    walker.convert()
-
+    folders = [str(f.resolve()) for f in Path(input_directory).glob('**/')]
+    converter = Converter(output_filepath,
+                          padding=-1,
+                          resampling_spacing=-1,
+                          list_labels=['GTV T', 'GTV N'])
 
 
 
