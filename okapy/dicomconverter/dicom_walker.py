@@ -63,19 +63,13 @@ class DicomWalker():
         input_dirpath=None,
     ):
         self.input_dirpath = input_dirpath
-        self.dicom_files = list()
-        self.studies = list()
-
-    def __str__(self):
-        dcm_list = [str(dcm) for dcm in self.dicom_files]
-        return '\n'.join(dcm_list)
 
     def _walk(self, input_dirpath=None):
         '''
         Method to walk through the path given and fill the list of DICOM
         headers and sort them
         '''
-
+        dicom_files = list()
         for (dirpath, dirnames, filenames) in os.walk(input_dirpath):
             for filename in filenames:
                 try:
@@ -106,25 +100,27 @@ class DicomWalker():
                     study_date=data.StudyDate,
                     series_instance_uid=series_instance_uid,
                     modality=data.Modality)
-                self.dicom_files.append(
+                dicom_files.append(
                     DicomFile(dicom_header=dicom_header,
                               path=join(dirpath, filename)))
 
-        self.dicom_files.sort(key=lambda x: (
+        dicom_files.sort(key=lambda x: (
             x.dicom_header.patient_id, x.dicom_header.study_instance_uid, x.
             dicom_header.modality, x.dicom_header.series_instance_uid, x.path))
+        return dicom_files
 
-    def _fill_dicom_files(self):
+    def _get_studies(self, dicom_files):
         '''
         Construct the tree-like dependency of the dicom
         It all relies on the fact that the collection of headers has been
         sorted
         '''
         im_dicom_files = list()
+        studies = list()
         dcm_header = DicomHeader()
 
         previous_study_uid = None
-        for i, f in enumerate(self.dicom_files):
+        for i, f in enumerate(dicom_files):
             # When the image changeschanges we store it as a whole
             current_study_uid = f.dicom_header.study_instance_uid
             if i == 0:
@@ -132,13 +128,12 @@ class DicomWalker():
                                       study_date=f.dicom_header.study_date,
                                       patient_id=f.dicom_header.patient_id)
 
-            if i > 0 and not f.dicom_header == self.dicom_files[
-                    i - 1].dicom_header:
+            if i > 0 and not f.dicom_header == dicom_files[i - 1].dicom_header:
                 current_study.append_dicom_files(im_dicom_files, dcm_header)
                 im_dicom_files = list()
 
             if i > 0 and not (current_study_uid == previous_study_uid):
-                self.studies.append(current_study)
+                studies.append(current_study)
                 current_study = Study(study_instance_uid=current_study_uid,
                                       study_date=f.dicom_header.study_date,
                                       patient_id=f.dicom_header.patient_id)
@@ -148,13 +143,13 @@ class DicomWalker():
             previous_study_uid = f.dicom_header.study_instance_uid
 
         current_study.append_dicom_files(im_dicom_files, dcm_header)
-        self.studies.append(current_study)
+        studies.append(current_study)
+        return studies
 
     def __call__(self, input_dirpath=None):
         if input_dirpath:
-            self._walk(input_dirpath=input_dirpath)
+            dicom_files = self._walk(input_dirpath=input_dirpath)
         else:
-            self._walk(input_dirpath=self.input_dirpath)
+            dicom_files = self._walk(input_dirpath=self.input_dirpath)
 
-        self._fill_dicom_files()
-        return self.studies
+        return self._get_studies(dicom_files)

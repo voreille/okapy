@@ -42,12 +42,16 @@ class TestOkapy(unittest.TestCase):
         label in the name of the file and resample at 0.75 mm
         """
 
-        input_path = '/mnt/nas4/datasets/ToReadme/HECKTOR/testing/dicom/P006/'
+        # input_path = '/mnt/nas4/datasets/ToReadme/HECKTOR/testing/dicom/P006/'
         # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
-        # input_path = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
+        input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
+        input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
+        'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
         output_path = '/home/val/Documents/output_okapy'
         converter = Converter(output_folder=output_path)
-        result = converter(input_path)
+        # result = converter(input_path1)
+        # print(result)
+        result = converter(input_path2)
         print(result)
 
     # def test_dicomfilemr(self):
