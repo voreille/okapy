@@ -320,7 +320,7 @@ class IdentityProcessor(VolumeProcessor):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def process(self, volume):
+    def process(self, volume, *args, **kwargs):
         return volume
 
 
