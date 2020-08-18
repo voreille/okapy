@@ -302,14 +302,17 @@ class RtstructFile(MaskFile):
         self.contours = None
         self.reference_frame = None
         self._reference_image = None
+        self.reference_image_uid = None
         self.error_list = list()
 
     @property
     def reference_image(self):
+        if self.reference_image_uid is None:
+            self.read()
         if self._reference_image is None:
             found = False
             for f in self.study.volume_files:
-                if (self.dicom_header.series_instance_uid ==
+                if (self.reference_image_uid ==
                         f.dicom_header.series_instance_uid):
                     self._reference_image = f
                     found = True
@@ -338,6 +341,10 @@ class RtstructFile(MaskFile):
         if len(self.dicom_paths) != 1:
             raise RuntimeError('RTSTRUCT has more than one file')
         structure = pdcm.read_file(self.dicom_paths[0])
+        self.reference_image_uid = (
+            structure.ReferencedFrameOfReferenceSequence[0].
+            RTReferencedStudySequence[0].RTReferencedSeriesSequence[0].
+            SeriesInstanceUID)
         self.contours = {}
         for i, roi_seq in enumerate(structure.StructureSetROISequence):
 
@@ -368,18 +375,18 @@ class RtstructFile(MaskFile):
             cond_empty = False
             nodes = np.array(current).reshape((-1, 3))
             assert np.amax(np.abs(np.diff(nodes[:, 2]))) == 0
-            vx_positions = np.stack([
+            vx_indices = np.stack([
                 self.reference_frame.mm_to_vx(
-                    [nodes[k, 1], nodes[k, 0], nodes[k, 2]])
+                    [nodes[k, 0], nodes[k, 1], nodes[k, 2]])
                 for k in range(nodes.shape[0])
             ],
-                                    axis=0)
-            rr, cc = polygon(vx_positions[:, 1], vx_positions[:, 0])
+                                  axis=0)
+            rr, cc = polygon(vx_indices[:, 0], vx_indices[:, 1])
             if len(rr) > 0 and len(cc) > 0:
                 if np.max(rr) > 512 or np.max(cc) > 512:
                     raise Exception("The RTSTRUCT file is compromised")
 
-            mask[rr, cc, np.round(vx_positions[0, 2]).astype(int)] = 1
+            mask[rr, cc, np.round(vx_indices[0, 2]).astype(int)] = 1
         if cond_empty:
             raise EmptyContourException()
 

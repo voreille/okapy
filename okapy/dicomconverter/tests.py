@@ -42,7 +42,9 @@ class TestOkapy(unittest.TestCase):
         label in the name of the file and resample at 0.75 mm
         """
 
-        input_path = '/home/val/Documents/check_hecktor_anna_tmp/HN-CHUS-047'
+        # input_path = '/home/val/Documents/check_hecktor_anna_tmp/HN-CHUS-047'
+        # input_path = '/home/val/Documents/check_hecktor_anna_tmp/P9'
+        input_path = '/home/val/python_wkspce/lcnn_radiomic/data/raw/Head-Neck-PET-CT/DICOM/HN-CHUS-047'
         # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
         # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
         # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'

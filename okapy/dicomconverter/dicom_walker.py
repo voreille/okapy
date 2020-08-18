@@ -85,21 +85,12 @@ class DicomWalker():
                     print('not reading the DICOMDIR')
                     continue
 
-                if modality == 'RTSTRUCT':
-                    # Adaptation from QuantImage
-                    series_instance_uid = (
-                        data.ReferencedFrameOfReferenceSequence[0].
-                        RTReferencedStudySequence[0].
-                        RTReferencedSeriesSequence[0].SeriesInstanceUID)
-                else:
-                    series_instance_uid = data.SeriesInstanceUID
-
                 dicom_header = DicomHeader(
                     patient_id=data.PatientID,
                     study_instance_uid=data.StudyInstanceUID,
                     study_date=data.StudyDate,
-                    series_instance_uid=series_instance_uid,
-                    modality=data.Modality)
+                    series_instance_uid=data.SeriesInstanceUID,
+                    modality=modality)
                 dicom_files.append(
                     DicomFile(dicom_header=dicom_header,
                               path=join(dirpath, filename)))
