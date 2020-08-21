@@ -51,7 +51,7 @@ class TestOkapy(unittest.TestCase):
         # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
         output_path = '/home/val/Documents/output_okapy'
         converter = Converter(output_folder=output_path,
-                              list_labels=['GTVt'],
+                              list_labels=['GTV1'],
                               padding=-1,
                               resampling_spacing=-1)
         result = converter(input_path)

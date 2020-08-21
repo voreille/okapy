@@ -324,6 +324,14 @@ class IdentityProcessor(VolumeProcessor):
         return volume
 
 
+class MRStandardizer(VolumeProcessor):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def process(self, volume, *args, **kwargs):
+        return super().process(volume, *args, **kwargs)
+
+
 class BasicResampler(VolumeProcessor):
     def __init__(self, resampling_spacing=(1, 1, 1), order=3):
         self.resampling_spacing = resampling_spacing

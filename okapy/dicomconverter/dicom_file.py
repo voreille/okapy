@@ -365,8 +365,9 @@ class RtstructFile(MaskFile):
     def get_volume(self, label):
         if self.contours is None:
             self.read()
-        if self.reference_image.reference_frame is None:
-            self.reference_image.read()
+        if self.reference_frame is None:
+            if self.reference_image.reference_frame is None:
+                self.reference_image.read()
             self.reference_frame = self.reference_image.reference_frame
 
         mask = np.zeros(self.reference_frame.shape, dtype=np.uint8)

@@ -1,4 +1,4 @@
-from os.path import join
+from pathlib import Path
 from multiprocessing import Pool
 
 import pandas as pd
@@ -75,8 +75,15 @@ class StudyConverter():
         return bb
 
     def write(self, volume, path):
+        counter = 0
+        new_path = path
+        while new_path.is_file():
+            counter += 1
+            new_path = path.with_name(
+                path.name.replace('.' + self.extension, '') + '(' +
+                str(counter) + ')' + '.' + self.extension)
         if self.converter_backend == 'sitk':
-            sitk.WriteImage(volume.sitk_image, path)
+            sitk.WriteImage(volume.sitk_image, str(new_path.resolve()))
 
     def __call__(self, study, output_folder=None):
         volume_results_list = list()
@@ -90,14 +97,14 @@ class StudyConverter():
                            volumes_list)
         for v in volumes_list:
             name = study.patient_id + '_' + v.modality + '.' + self.extension
-            path = join(output_folder, name)
+            path = Path(output_folder) / name
             self.write(v, path)
             volume_results_list.append(VolumeResult(study, v, path))
 
         for v in masks_list:
             name = (study.patient_id + '_' + v.label + '_' + v.modality + '_' +
                     v.reference_modality + '.' + self.extension)
-            path = join(output_folder, name)
+            path = Path(output_folder) / name
             self.write(v, path)
             mask_results_list.append(MaskResult(study, v, path))
 
