@@ -1,12 +1,10 @@
 from pathlib import Path
-from multiprocessing import Pool
 
-import pandas as pd
-from scipy import ndimage
+import numpy as np
 import SimpleITK as sitk
 
 from okapy.dicomconverter.dicom_walker import DicomWalker
-from okapy.dicomconverter.dicom_file import Study, EmptyContourException
+from okapy.dicomconverter.dicom_file import EmptyContourException
 from okapy.dicomconverter.volume import (BasicResampler, MaskResampler,
                                          IdentityProcessor)
 
@@ -34,13 +32,17 @@ class StudyConverter():
                  padding=0,
                  extension='nii.gz',
                  converter_backend='sitk',
-                 list_labels=None):
+                 list_labels=None,
+                 volume_dtype=np.float32,
+                 mask_dtype=np.uint32):
         self.volume_processor = volume_processor
         self.mask_processor = mask_processor
         self.list_labels = list_labels
         self.padding = padding
         self.extension = extension
         self.converter_backend = converter_backend
+        self.volume_dtype = volume_dtype
+        self.mask_dtype = mask_dtype
 
     def extract_volume_of_interest(self, study):
         masks_list = list()
@@ -74,7 +76,9 @@ class StudyConverter():
             bb = v.reference_frame.bounding_box_intersection(bb)
         return bb
 
-    def write(self, volume, path):
+    def write(self, volume, path, dtype=None):
+        if dtype:
+            volume = volume.astype(dtype)
         counter = 0
         new_path = path
         while new_path.is_file():
@@ -98,14 +102,14 @@ class StudyConverter():
         for v in volumes_list:
             name = study.patient_id + '_' + v.modality + '.' + self.extension
             path = Path(output_folder) / name
-            self.write(v, path)
+            self.write(v, path, dtype=self.volume_dtype)
             volume_results_list.append(VolumeResult(study, v, path))
 
         for v in masks_list:
             name = (study.patient_id + '_' + v.label + '_' + v.modality + '_' +
                     v.reference_modality + '.' + self.extension)
             path = Path(output_folder) / name
-            self.write(v, path)
+            self.write(v, path, dtype=self.mask_dtype)
             mask_results_list.append(MaskResult(study, v, path))
 
         return volume_results_list, mask_results_list

@@ -44,14 +44,14 @@ class TestOkapy(unittest.TestCase):
 
         # input_path = '/home/val/Documents/check_hecktor_anna_tmp/HN-CHUS-047'
         # input_path = '/home/val/Documents/check_hecktor_anna_tmp/P9'
-        input_path = '/home/val/python_wkspce/lcnn_radiomic/data/raw/Head-Neck-PET-CT/DICOM/HN-CHUS-047'
-        # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
+        # input_path = '/home/val/python_wkspce/lcnn_radiomic/data/raw/Head-Neck-PET-CT/DICOM/HN-CHUS-047'
+        input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
         # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
         # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
         # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
         output_path = '/home/val/Documents/output_okapy'
         converter = Converter(output_folder=output_path,
-                              list_labels=['GTV1'],
+                              list_labels=['GTV T'],
                               padding=-1,
                               resampling_spacing=-1)
         result = converter(input_path)

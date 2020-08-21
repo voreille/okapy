@@ -167,6 +167,10 @@ class Volume():
     # def __getattr__(self, attr):
     #     return getattr(self.reference_frame, attr)
 
+    def astype(self, dtype):
+        self.np_image = self.np_image.astype(dtype)
+        return self
+
     def zeros_like(self):
         return Volume(
             np_image=np.zeros_like(self.np_image),
