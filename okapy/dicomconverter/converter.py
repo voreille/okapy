@@ -104,14 +104,15 @@ class StudyConverter():
         volumes_list = map(lambda v: self.volume_processor(v, bb),
                            volumes_list)
         for v in volumes_list:
-            name = study.patient_id + '_' + v.modality + '.' + self.extension
+            name = study.patient_id + '__' + v.modality + '.' + self.extension
             path = Path(output_folder) / name
             self.write(v, path, dtype=self.volume_dtype)
             volume_results_list.append(VolumeResult(study, v, path))
 
         for v in masks_list:
-            name = (study.patient_id + '_' + v.label + '_' + v.modality + '_' +
-                    v.reference_modality + '.' + self.extension)
+            name = (study.patient_id + '__' + v.label.replace(' ', '_') +
+                    '__' + v.modality + '__' + v.reference_modality + '.' +
+                    self.extension)
             path = Path(output_folder) / name
             self.write(v, path, dtype=self.mask_dtype)
             mask_results_list.append(MaskResult(study, v, path))
