@@ -17,6 +17,9 @@ class VolumeResult():
         self.modality = volume.modality
         self.path = path
 
+    def __str__(self):
+        return self.path
+
 
 class MaskResult(VolumeResult):
     def __init__(self, study, volume, path):
