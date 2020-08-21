@@ -1,9 +1,7 @@
 import os
-from pathlib import Path
 
 import click
 import logging
-import pandas as pd
 
 from okapy.dicomconverter.converter import Converter
 
@@ -25,12 +23,13 @@ def main(input_directory, output_filepath, list_labels, extension, name_output,
     if not os.path.exists(output_filepath):
         os.makedirs(output_filepath)
 
-    folders = [str(f.resolve()) for f in Path(input_directory).glob('**/')]
     converter = Converter(output_filepath,
                           padding=-1,
                           resampling_spacing=-1,
-                          list_labels=['GTV T', 'GTV N'])
-
+                          list_labels=list_labels,
+                          extension=extension)
+    result = converter(input_directory)
+    print(result)
 
 
 if __name__ == '__main__':
