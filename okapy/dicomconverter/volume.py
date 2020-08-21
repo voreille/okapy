@@ -139,6 +139,8 @@ class ReferenceFrame():
 
     def get_new_reference_frame(self, bb, new_voxel_spacing):
         # You need to add one since the last pixel of the bb is in the domain
+        if bb is None:
+            bb = self.bounding_box
         output_shape = np.ceil(
             (self.mm_to_vx([bb[3], bb[4], bb[5]]) -
              self.mm_to_vx([bb[0], bb[1], bb[2]])) * self.voxel_spacing /
