@@ -11,9 +11,7 @@ from okapy.dicomconverter.converter import Converter
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
 @click.option('-l', '--list_labels', default=None, type=click.STRING)
 @click.option('-e', '--extension', default='nii.gz', type=click.STRING)
-@click.option('-j', '--cores', default=1, type=click.INT)
-def main(input_directory, output_filepath, list_labels, extension, name_output,
-         cores):
+def main(input_directory, output_filepath, list_labels, extension):
     """
     Convert to dicom to the right format based on extension
     """
