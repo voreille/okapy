@@ -142,9 +142,7 @@ class ReferenceFrame():
         if bb is None:
             bb = self.bounding_box
         output_shape = np.ceil(
-            (self.mm_to_vx([bb[3], bb[4], bb[5]]) -
-             self.mm_to_vx([bb[0], bb[1], bb[2]])) * self.voxel_spacing /
-            new_voxel_spacing).astype(int) + 1
+            (bb[3:] - bb[:3]) / new_voxel_spacing).astype(int)
         new_coordinate_matrix = np.zeros((4, 4))
         new_coordinate_matrix[:3, :3] = (self.coordinate_matrix[:3, :3] /
                                          self.voxel_spacing *
