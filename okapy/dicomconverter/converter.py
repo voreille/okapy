@@ -98,11 +98,14 @@ class StudyConverter():
         masks_list = self.extract_volume_of_interest(study)
         volumes_list = [f.get_volume() for f in study.volume_files]
 
-        if self.padding:
+        if self.padding != 'whole_image':
             bb = self.get_bounding_box(masks_list, volumes_list)
-        else:
+        elif self.padding == 'whole_image':
             # The image is not cropped
             bb = None
+        else:
+            raise ValueError(
+                "padding must be a positive integer or 'whole_image'")
         masks_list = map(lambda v: self.mask_processor(v, bb), masks_list)
         volumes_list = map(lambda v: self.volume_processor(v, bb),
                            volumes_list)

@@ -53,7 +53,6 @@ class TestOkapy(unittest.TestCase):
         output_path = '/home/val/Documents/output_okapy'
         converter = Converter(output_folder=output_path,
                               list_labels=['GTV L', 'GTV N', 'GTV T'],
-                              padding=10,
                               resampling_spacing=(0.75, 0.75, 0.75))
         result = converter(input_path)
         print(result)
