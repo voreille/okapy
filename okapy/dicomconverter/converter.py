@@ -137,6 +137,7 @@ class Converter():
                  dicom_walker=None,
                  volume_processor=None,
                  mask_processor=None,
+                 study_converter=None,
                  converter_backend='sitk'):
         self.padding = padding
         self.extension = extension
@@ -144,6 +145,8 @@ class Converter():
         self.list_labels = list_labels
         if dicom_walker is None:
             self.dicom_walker = DicomWalker()
+        else:
+            self.dicom_walker = dicom_walker
         if resampling_spacing == -1:
             if volume_processor is None:
                 self.volume_processor = IdentityProcessor()
@@ -157,13 +160,16 @@ class Converter():
                 self.mask_processor = MaskResampler(
                     resampling_spacing=resampling_spacing)
         self.converter_backend = converter_backend
-        self.study_converter = StudyConverter(
-            self.volume_processor,
-            self.mask_processor,
-            list_labels=list_labels,
-            converter_backend=converter_backend,
-            extension=extension,
-            padding=padding)
+        if study_converter is None:
+            self.study_converter = StudyConverter(
+                self.volume_processor,
+                self.mask_processor,
+                list_labels=list_labels,
+                converter_backend=converter_backend,
+                extension=extension,
+                padding=padding)
+        else:
+            self.study_converter = study_converter
 
     def __call__(self, input_folder, output_folder=None):
         if output_folder is None:
