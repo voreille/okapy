@@ -22,7 +22,7 @@ def main(input_directory, output_filepath, list_labels, extension):
         os.makedirs(output_filepath)
 
     converter = Converter(output_filepath,
-                          padding=-1,
+                          padding='whole_image',
                           resampling_spacing=-1,
                           list_labels=list_labels,
                           extension=extension)

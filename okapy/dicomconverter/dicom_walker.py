@@ -64,7 +64,7 @@ class DicomWalker():
     ):
         self.input_dirpath = input_dirpath
 
-    def _walk(self, input_dirpath=None):
+    def _walk(self, input_dirpath):
         '''
         Method to walk through the path given and fill the list of DICOM
         headers and sort them
@@ -139,8 +139,8 @@ class DicomWalker():
 
     def __call__(self, input_dirpath=None):
         if input_dirpath:
-            dicom_files = self._walk(input_dirpath=input_dirpath)
+            dicom_files = self._walk(input_dirpath)
         else:
-            dicom_files = self._walk(input_dirpath=self.input_dirpath)
+            dicom_files = self._walk(self.input_dirpath)
 
         return self._get_studies(dicom_files)
