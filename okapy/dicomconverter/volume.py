@@ -373,36 +373,3 @@ class MaskResampler(BasicResampler):
 
     def process(self, volume, *args, **kwargs):
         return self.threshold(super().process(volume, *args, **kwargs))
-
-
-def resample_np_binary_volume(np_volume, origin, current_pixel_spacing,
-                              resampling_px_spacing, bounding_box):
-
-    x_old = grid_from_spacing(origin[0], current_pixel_spacing[0],
-                              np_volume.shape[0])
-    y_old = grid_from_spacing(origin[1], current_pixel_spacing[1],
-                              np_volume.shape[1])
-    z_old = grid_from_spacing(origin[2], current_pixel_spacing[2],
-                              np_volume.shape[2])
-
-    output_shape = (np.ceil([
-        bounding_box[3] - bounding_box[0],
-        bounding_box[4] - bounding_box[1],
-        bounding_box[5] - bounding_box[2],
-    ]) / resampling_px_spacing).astype(int)
-
-    x_new = grid_from_spacing(bounding_box[0], resampling_px_spacing[0],
-                              output_shape[0])
-    y_new = grid_from_spacing(bounding_box[1], resampling_px_spacing[1],
-                              output_shape[1])
-    z_new = grid_from_spacing(bounding_box[2], resampling_px_spacing[2],
-                              output_shape[2])
-    interpolator = RegularGridInterpolator((x_old, y_old, z_old),
-                                           np_volume,
-                                           method='nearest',
-                                           bounds_error=False,
-                                           fill_value=0)
-    x, y, z = np.meshgrid(x_new, y_new, z_new, indexing='ij')
-    pts = np.array(list(zip(x.flatten(), y.flatten(), z.flatten())))
-
-    return interpolator(pts).reshape(output_shape)

@@ -5,8 +5,8 @@ import SimpleITK as sitk
 
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.dicom_file import EmptyContourException
-from okapy.dicomconverter.volume import (BasicResampler, MaskResampler,
-                                         IdentityProcessor)
+from okapy.dicomconverter.volume import BasicResampler, MaskResampler
+from okapy.dicomconverter.volume_processor import IdentityProcessor
 
 
 class VolumeResult():

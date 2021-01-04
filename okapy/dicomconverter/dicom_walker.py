@@ -111,6 +111,7 @@ class DicomWalker():
         dcm_header = DicomHeader()
 
         previous_study_uid = None
+
         for i, f in enumerate(dicom_files):
             # When the image changeschanges we store it as a whole
             current_study_uid = f.dicom_header.study_instance_uid
@@ -142,5 +143,9 @@ class DicomWalker():
             dicom_files = self._walk(input_dirpath)
         else:
             dicom_files = self._walk(self.input_dirpath)
+
+        if len(dicom_files) == 0:
+            raise RuntimeError(
+                "No valid DICOM files found in the input directory")
 
         return self._get_studies(dicom_files)
