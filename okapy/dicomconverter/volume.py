@@ -257,25 +257,26 @@ class VolumeMask(Volume):
 
     def padded_bb(self, padding):
         indices = np.where(self.np_image != 0)
-        return np.array([
-            *self.reference_frame.vx_to_mm([
-                np.min(indices[0]) - padding,
-                np.min(indices[1]) - padding,
-                np.min(indices[2]) - padding
-            ]),
-            *self.reference_frame.vx_to_mm([
-                np.max(indices[0]) + padding,
-                np.max(indices[1]) + padding,
-                np.max(indices[2]) + padding
-            ]),
+        bb = np.array([
+            *self.reference_frame.vx_to_mm(
+                [np.min(indices[0]),
+                 np.min(indices[1]),
+                 np.min(indices[2])]),
+            *self.reference_frame.vx_to_mm(
+                [np.max(indices[0]),
+                 np.max(indices[1]),
+                 np.max(indices[2])]),
         ])
+        bb[:3] = bb[:3] - padding
+        bb[3:] = bb[3:] + padding
+        return bb
 
     def bb_union(self, bb, padding=0):
         bb_vx_1 = self.reference_frame.mm_to_vx(bb[:3])
         bb_vx_2 = self.reference_frame.mm_to_vx(bb[3:])
         bb_vx = self.bounding_box_vx
-        bb_vx[0:3] = np.minimum(bb_vx[0:3] - padding, bb_vx_1)
-        bb_vx[3:] = np.maximum(bb_vx[3:] + padding, bb_vx_2)
+        bb_vx[0:3] = np.minimum(bb_vx[0:3], bb_vx_1) - padding
+        bb_vx[3:] = np.maximum(bb_vx[3:], bb_vx_2) + padding
         return np.array([
             *self.reference_frame.vx_to_mm(bb_vx[:3]),
             *self.reference_frame.vx_to_mm(bb_vx[3:])
