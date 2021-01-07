@@ -71,9 +71,12 @@ class StudyConverter():
         return masks_list
 
     def get_bounding_box(self, masks_list, volumes_list):
-        bb = masks_list[0].padded_bb(self.padding)
+        bb = masks_list[0].bb
         for mask in masks_list:
-            bb = mask.bb_union(bb, padding=self.padding)
+            bb = mask.bb_union(bb)
+
+        bb[:3] = bb[:3] - self.padding
+        bb[3:] = bb[3:] + self.padding
 
         for v in volumes_list:
             bb = v.reference_frame.bounding_box_intersection(bb)

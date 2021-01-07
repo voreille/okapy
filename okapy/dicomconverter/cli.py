@@ -11,19 +11,24 @@ from okapy.dicomconverter.converter import Converter
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
 @click.option('-l', '--list_labels', default=None, type=click.STRING)
 @click.option('-e', '--extension', default='nii.gz', type=click.STRING)
-def main(input_directory, output_filepath, list_labels, extension):
+@click.option('-s', '--spacing', default=-1, type=click.FLOAT)
+@click.option('-p', '--padding', default=-1, type=click.FLOAT)
+def main(input_directory, output_filepath, list_labels, extension, spacing,
+         padding):
     """
     Convert to dicom to the right format based on extension
     """
     logger = logging.getLogger(__name__)
     logger.info('Loading Dicom')
+    if padding == -1:
+        padding = "whole_image"
 
     if not os.path.exists(output_filepath):
         os.makedirs(output_filepath)
 
     converter = Converter(output_filepath,
-                          padding='whole_image',
-                          resampling_spacing=-1,
+                          padding=padding,
+                          resampling_spacing=spacing,
                           list_labels=list_labels,
                           extension=extension)
     result = converter(input_directory)
