@@ -25,8 +25,11 @@ class MRStandardizer(VolumeProcessor):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def process(self, volume, *args, **kwargs):
-        return super().process(volume, *args, **kwargs)
+    def process(self, volume, bounding_box):
+        mean = np.mean(volume.np_image)
+        stdev = np.std(volume.np_image)
+        volume.np_image = (volume.np_image - mean / stdev)
+        return volume
 
 
 class BasicResampler(VolumeProcessor):
