@@ -275,11 +275,11 @@ class VolumeMask(Volume):
         bb_vx_1 = self.reference_frame.mm_to_vx(bb[:3])
         bb_vx_2 = self.reference_frame.mm_to_vx(bb[3:])
         bb_vx = self.bounding_box_vx
-        bb_vx[0:3] = np.minimum(bb_vx[0:3], bb_vx_1) - padding
-        bb_vx[3:] = np.maximum(bb_vx[3:], bb_vx_2) + padding
+        bb_vx[0:3] = np.minimum(bb_vx[0:3], bb_vx_1)
+        bb_vx[3:] = np.maximum(bb_vx[3:], bb_vx_2)
         return np.array([
-            *self.reference_frame.vx_to_mm(bb_vx[:3]),
-            *self.reference_frame.vx_to_mm(bb_vx[3:])
+            *(self.reference_frame.vx_to_mm(bb_vx[:3]) - padding),
+            *(self.reference_frame.vx_to_mm(bb_vx[3:]) + padding)
         ])
 
     def resample(self, resampling_vx_spacing, bounding_box, order=1):
