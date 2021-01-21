@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-
 """The setup script."""
 
 from setuptools import setup, find_packages
@@ -12,11 +11,14 @@ with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
 requirements = [
+    "pydicom",
+    "pydicom_seg",
+    "scikit-image",
 ],
 
-setup_requirements = [ ]
+setup_requirements = []
 
-test_requirements = [ ]
+test_requirements = []
 
 setup(
     author="Pierre Fontaine, Valentin Oreiller",
@@ -26,15 +28,13 @@ setup(
         'Intended Audience :: Developers',
         'License :: OSI Approved :: MIT License',
         'Natural Language :: English',
-        "Programming Language :: Python :: 2",
-        'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.4',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
     ],
-    description="toolbox for biomedical analysis from preprocessing to model evaluation",
+    description=
+    "toolbox for biomedical analysis from preprocessing to model evaluation",
     entry_points={
         'console_scripts': [
             'okapy=okapy.cli:main',
