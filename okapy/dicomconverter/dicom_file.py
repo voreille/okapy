@@ -32,6 +32,7 @@ def get_mask(rtstruct_file, ref_dicom_paths, label):
                                        stop_before_pixels=True).Modality
     ref_dicom = DicomFileBase.get(modality)(dicom_paths=ref_dicom_paths)
     dicom = RtstructFile(dicom_paths=[rtstruct_file],
+                         reference_modality=modality,
                          reference_frame=ref_dicom.reference_frame)
     return dicom.get_volume(label)
 
@@ -106,7 +107,7 @@ class DicomFileBase():
     @property
     def reference_frame(self):
         if self._reference_frame is None:
-            self.read(stop_before_pixel=True)
+            self.read(stop_before_pixel=False)
         return self._reference_frame
 
 
@@ -343,11 +344,13 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                  *args,
                  reference_image=None,
                  reference_frame=None,
+                 reference_modality=None,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.contours = None
-        self.reference_frame = reference_frame
+        self._reference_frame = reference_frame
         self._reference_image = reference_image
+        self.reference_modality = reference_modality
         self.reference_image_uid = None
         self.error_list = list()
 
@@ -411,10 +414,10 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
     def get_volume(self, label):
         if self.contours is None:
             self.read()
-        if self.reference_frame is None:
+        if self._reference_frame is None:
             if self.reference_image.reference_frame is None:
                 self.reference_image.read()
-            self.reference_frame = self.reference_image.reference_frame
+            self._reference_frame = self.reference_image.reference_frame
 
         mask = np.zeros(self.reference_frame.shape, dtype=np.uint8)
         cond_empty = True
@@ -437,12 +440,11 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         if cond_empty:
             raise EmptyContourException()
 
-        return VolumeMask(
-            mask,
-            reference_frame=self.reference_frame,
-            reference_modality=self.reference_image.dicom_header.modality,
-            label=label,
-            modality=self.dicom_header.modality)
+        return VolumeMask(mask,
+                          reference_frame=self.reference_frame,
+                          reference_modality=self.reference_modality,
+                          label=label,
+                          modality=self.__class__.name)
 
 
 class Study():
