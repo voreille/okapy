@@ -17,10 +17,7 @@ from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
 
 
 def get_sitk_image(dicom_paths):
-    modality = pdcm.filereader.dcmread(dicom_paths[0],
-                                       stop_before_pixels=True).Modality
-    dicom = DicomFileBase.get(modality)(dicom_paths=dicom_paths)
-    return dicom.get_volume().sitk_image
+    return get_volume(dicom_paths).sitk_image
 
 
 def get_volume(dicom_paths):
@@ -28,6 +25,19 @@ def get_volume(dicom_paths):
                                        stop_before_pixels=True).Modality
     dicom = DicomFileBase.get(modality)(dicom_paths=dicom_paths)
     return dicom.get_volume()
+
+
+def get_mask(rtstruct_file, ref_dicom_paths, label):
+    modality = pdcm.filereader.dcmread(ref_dicom_paths[0],
+                                       stop_before_pixels=True).Modality
+    ref_dicom = DicomFileBase.get(modality)(dicom_paths=ref_dicom_paths)
+    dicom = RtstructFile(dicom_paths=[rtstruct_file],
+                         reference_frame=ref_dicom.reference_frame)
+    return dicom.get_volume(label)
+
+
+def get_sitk_mask(rtstruct_file, ref_dicom_paths, label):
+    return get_mask(rtstruct_file, ref_dicom_paths, label).sitk_image
 
 
 class OkapyException(Exception):
@@ -66,7 +76,7 @@ class DicomFileBase():
     ):
         self.dicom_header = dicom_header
         self.dicom_paths = dicom_paths
-        self.reference_frame = reference_frame
+        self._reference_frame = reference_frame
         if study:
             self.study = study
         elif dicom_header:
@@ -93,25 +103,33 @@ class DicomFileBase():
 
         return patient_weight
 
+    @property
+    def reference_frame(self):
+        if self._reference_frame is None:
+            self.read(stop_before_pixel=True)
+        return self._reference_frame
+
 
 class DicomFileImageBase(DicomFileBase, name="image_base"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.slices = None
-        self.reference_frame = None
 
     def get_physical_values(self):
         raise NotImplementedError('This is an abstract class')
 
-    def read(self):
-        slices = [pdcm.read_file(dcm) for dcm in self.dicom_paths]
+    def read(self, stop_before_pixel=False):
+        slices = [
+            pdcm.filereader.dcmread(dcm, stop_before_pixels=stop_before_pixel)
+            for dcm in self.dicom_paths
+        ]
         image_orientation = slices[0].ImageOrientationPatient
         n = np.cross(image_orientation[:3], image_orientation[3:])
         slices.sort(
             key=lambda x: np.dot(n, np.asarray(x.ImagePositionPatient)))
 
         self.slices = slices
-        self.reference_frame = ReferenceFrame(
+        self._reference_frame = ReferenceFrame(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,
@@ -321,11 +339,15 @@ class SegFile(MaskFile, name="SEG"):
 
 
 class RtstructFile(MaskFile, name="RTSTRUCT"):
-    def __init__(self, *args, reference_image=None, **kwargs):
+    def __init__(self,
+                 *args,
+                 reference_image=None,
+                 reference_frame=None,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         self.contours = None
-        self.reference_frame = None
-        self._reference_image = None
+        self.reference_frame = reference_frame
+        self._reference_image = reference_image
         self.reference_image_uid = None
         self.error_list = list()
 
