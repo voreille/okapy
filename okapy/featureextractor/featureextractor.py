@@ -35,10 +35,31 @@ def compute_mtv(image, mask, threshold=0.4, relative=True):
     new_mask = np_image
 
 
-class OkapyFeatureExtractorPT():
+class OkapyFeatureExtractor():
     def __init__(self, params):
         self.params = params
-        self.radiomics_extractor = RadiomicsFeatureExtractor(params)
+        self.radiomics_extractor = RadiomicsFeatureExtractor(
+            params["PyRadiomics"])
+
+    def execute(self,
+                image_path,
+                mask_path,
+                label=None,
+                label_channel=None,
+                voxelBased=False):
+        image = sitk.ReadImage(image_path)
+        mask = sitk.ReadImage(mask_path)
+        results = self.radiomics_extractor(image,
+                                           mask,
+                                           label=label,
+                                           label_channel=label_channel,
+                                           voxelBased=voxelBased)
+        return results
+
+
+class OkapyFeatureExtractorPT(OkapyFeatureExtractor):
+    def __init__(self, params):
+        super().__init__(params)
 
     @staticmethod
     def translate_radiomics_output(results):
