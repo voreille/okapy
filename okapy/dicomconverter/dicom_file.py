@@ -2,7 +2,6 @@
 TODO: Make it DRYer line 220
 """
 
-from os.path import join
 import warnings
 from copy import copy
 from datetime import time, datetime
@@ -13,9 +12,33 @@ from pydicom.tag import Tag
 import pydicom_seg
 from skimage.draw import polygon
 import pandas as pd
-import SimpleITK as sitk
 
 from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
+
+
+def get_sitk_image(dicom_paths):
+    return get_volume(dicom_paths).sitk_image
+
+
+def get_volume(dicom_paths):
+    modality = pdcm.filereader.dcmread(dicom_paths[0],
+                                       stop_before_pixels=True).Modality
+    dicom = DicomFileBase.get(modality)(dicom_paths=dicom_paths)
+    return dicom.get_volume()
+
+
+def get_mask(rtstruct_file, ref_dicom_paths, label):
+    modality = pdcm.filereader.dcmread(ref_dicom_paths[0],
+                                       stop_before_pixels=True).Modality
+    ref_dicom = DicomFileBase.get(modality)(dicom_paths=ref_dicom_paths)
+    dicom = RtstructFile(dicom_paths=[rtstruct_file],
+                         reference_modality=modality,
+                         reference_frame=ref_dicom.reference_frame)
+    return dicom.get_volume(label)
+
+
+def get_sitk_mask(rtstruct_file, ref_dicom_paths, label):
+    return get_mask(rtstruct_file, ref_dicom_paths, label).sitk_image
 
 
 class OkapyException(Exception):
@@ -34,6 +57,17 @@ class MissingWeightException(OkapyException):
 
 
 class DicomFileBase():
+    _registry = {}  # class var that store the different daughter
+
+    def __init_subclass__(cls, name, **kwargs):
+        cls.name = name
+        DicomFileBase._registry[name] = cls
+        super().__init_subclass__(**kwargs)
+
+    @classmethod
+    def get(cls, name: str):
+        return DicomFileBase._registry[name]
+
     def __init__(
             self,
             dicom_header=None,
@@ -43,11 +77,12 @@ class DicomFileBase():
     ):
         self.dicom_header = dicom_header
         self.dicom_paths = dicom_paths
-        self.reference_frame = reference_frame
+        self._reference_frame = reference_frame
         if study:
             self.study = study
-        else:
-            study = Study(study_instance_uid=dicom_header.study_instance_uid)
+        elif dicom_header:
+            self.study = Study(
+                study_instance_uid=dicom_header.study_instance_uid)
 
     def get_volume(self, *args):
         raise NotImplementedError('It is an abstract class')
@@ -69,25 +104,33 @@ class DicomFileBase():
 
         return patient_weight
 
+    @property
+    def reference_frame(self):
+        if self._reference_frame is None:
+            self.read(stop_before_pixel=False)
+        return self._reference_frame
 
-class DicomFileImageBase(DicomFileBase):
+
+class DicomFileImageBase(DicomFileBase, name="image_base"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.slices = None
-        self.reference_frame = None
 
     def get_physical_values(self):
         raise NotImplementedError('This is an abstract class')
 
-    def read(self):
-        slices = [pdcm.read_file(dcm) for dcm in self.dicom_paths]
+    def read(self, stop_before_pixel=False):
+        slices = [
+            pdcm.filereader.dcmread(dcm, stop_before_pixels=stop_before_pixel)
+            for dcm in self.dicom_paths
+        ]
         image_orientation = slices[0].ImageOrientationPatient
         n = np.cross(image_orientation[:3], image_orientation[3:])
         slices.sort(
             key=lambda x: np.dot(n, np.asarray(x.ImagePositionPatient)))
 
         self.slices = slices
-        self.reference_frame = ReferenceFrame(
+        self._reference_frame = ReferenceFrame(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,
@@ -109,10 +152,10 @@ class DicomFileImageBase(DicomFileBase):
 
         return Volume(image,
                       reference_frame=copy(self.reference_frame),
-                      modality=self.dicom_header.modality)
+                      modality=self.__class__.name)
 
 
-class DicomFileCT(DicomFileImageBase):
+class DicomFileCT(DicomFileImageBase, name="CT"):
     def get_physical_values(self):
         image = list()
         for s in self.slices:
@@ -122,7 +165,7 @@ class DicomFileCT(DicomFileImageBase):
         return np.stack(image, axis=-1)
 
 
-class DicomFileMR(DicomFileImageBase):
+class DicomFileMR(DicomFileImageBase, name="MR"):
     def get_physical_values(self):
         image = list()
         for s in self.slices:
@@ -130,7 +173,7 @@ class DicomFileMR(DicomFileImageBase):
         return np.stack(image, axis=-1)
 
 
-class DicomFilePT(DicomFileImageBase):
+class DicomFilePT(DicomFileImageBase, name="PT"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -240,7 +283,7 @@ class DicomFilePT(DicomFileImageBase):
         })
 
 
-class MaskFile(DicomFileBase):
+class MaskFile(DicomFileBase, name="mask_base"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._labels = None
@@ -256,7 +299,7 @@ class MaskFile(DicomFileBase):
         raise NotImplementedError('This is an abstract class')
 
 
-class SegFile(MaskFile):
+class SegFile(MaskFile, name="SEG"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.reference_frame = None
@@ -296,12 +339,18 @@ class SegFile(MaskFile):
                           modality=self.dicom_header.modality)
 
 
-class RtstructFile(MaskFile):
-    def __init__(self, *args, reference_image=None, **kwargs):
+class RtstructFile(MaskFile, name="RTSTRUCT"):
+    def __init__(self,
+                 *args,
+                 reference_image=None,
+                 reference_frame=None,
+                 reference_modality=None,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         self.contours = None
-        self.reference_frame = None
-        self._reference_image = None
+        self._reference_frame = reference_frame
+        self._reference_image = reference_image
+        self.reference_modality = reference_modality
         self.reference_image_uid = None
         self.error_list = list()
 
@@ -365,10 +414,10 @@ class RtstructFile(MaskFile):
     def get_volume(self, label):
         if self.contours is None:
             self.read()
-        if self.reference_frame is None:
+        if self._reference_frame is None:
             if self.reference_image.reference_frame is None:
                 self.reference_image.read()
-            self.reference_frame = self.reference_image.reference_frame
+            self._reference_frame = self.reference_image.reference_frame
 
         mask = np.zeros(self.reference_frame.shape, dtype=np.uint8)
         cond_empty = True
@@ -391,23 +440,14 @@ class RtstructFile(MaskFile):
         if cond_empty:
             raise EmptyContourException()
 
-        return VolumeMask(
-            mask,
-            reference_frame=self.reference_frame,
-            reference_modality=self.reference_image.dicom_header.modality,
-            label=label,
-            modality=self.dicom_header.modality)
+        return VolumeMask(mask,
+                          reference_frame=self.reference_frame,
+                          reference_modality=self.reference_modality,
+                          label=label,
+                          modality=self.__class__.name)
 
 
 class Study():
-    image_modality_dict = {
-        'CT': DicomFileCT,
-        'PT': DicomFilePT,
-        'MR': DicomFileMR,
-        'RTSTRUCT': RtstructFile,
-        'SEG': SegFile,
-    }
-
     def __init__(self,
                  study_instance_uid=None,
                  study_date=None,
@@ -421,7 +461,7 @@ class Study():
     def append_dicom_files(self, im_dicom_files, dcm_header):
         if dcm_header.modality == 'RTSTRUCT' or dcm_header.modality == 'SEG':
             self.mask_files.append(
-                Study.image_modality_dict[dcm_header.modality](
+                DicomFileBase.get(dcm_header.modality)(
                     dicom_header=dcm_header,
                     dicom_paths=[k.path for k in im_dicom_files],
                     study=self,
@@ -431,7 +471,7 @@ class Study():
             try:
 
                 self.volume_files.append(
-                    Study.image_modality_dict[dcm_header.modality](
+                    DicomFileBase.get(dcm_header.modality)(
                         dicom_header=dcm_header,
                         dicom_paths=[k.path for k in im_dicom_files],
                         study=self,

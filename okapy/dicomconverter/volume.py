@@ -225,7 +225,8 @@ class Volume():
         sitk_image.SetSpacing(self.reference_frame.voxel_spacing)
         sitk_image.SetOrigin(self.reference_frame.origin)
         sitk_image.SetDirection(
-            self.reference_frame.coordinate_matrix[:3, :3].flatten())
+            self.reference_frame.coordinate_matrix[:3, :3].flatten('F') /
+            np.repeat(self.reference_frame.voxel_spacing, 3))
         return sitk_image
 
 
