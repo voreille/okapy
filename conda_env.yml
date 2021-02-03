@@ -1,9 +1,12 @@
 name: okapy
 channels:
     - defaults
+    - https://conda.anaconda.org/simpleitk
+    - conda-forge
+    - radiomics
 dependencies:
     - pydicom
-    - scikit_image
+    - scikit-image
     - scipy
     - numpy
     - pyradiomics
