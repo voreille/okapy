@@ -13,14 +13,16 @@ input_path  = base_path.joinpath('DICOM')
 
 #base_path   = pl.Path('/Users/dabler/Documents/repositories/okapy/test_data/TCGA-GBM/')
 #input_path  = base_path.joinpath('TCGA-02-0046').joinpath('1.3.6.1.4.1.14519.5.2.1.1706.4001.667069087302553300405296434177')
-output_path = base_path.joinpath('out_GTV-V_pad-100_res-1-1-1')
+
+padding = 100
+output_path = base_path.joinpath('out_GTV-V_pad-%i_res-1-1-1'%padding)
 output_path.mkdir(parents=True, exist_ok=True)
 
 converter = Converter(output_folder=output_path,
                       #list_labels=['GTV L', 'GTV N', 'GTV T'],
                       list_labels=['GTV T'],
                       resampling_spacing=(1, 1, 1),
-                      padding=100,
+                      padding=padding+1,
                       #padding='whole_image'
                       )
 

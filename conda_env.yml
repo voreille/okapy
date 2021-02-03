@@ -1,0 +1,12 @@
+name: okapy
+channels:
+    - defaults
+dependencies:
+    - pydicom
+    - scikit_image
+    - scipy
+    - numpy
+    - pyradiomics
+    - pandas
+    - matplotlib
+    - SimpleITK
