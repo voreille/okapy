@@ -17,12 +17,12 @@ def to_np(image):
 
 
 def compute_mtv(image, mask, threshold=0.4, relative=True):
-    """Return the Metabolic Tumor Volume (MTV) which is computed by 
-    resegmenting within the mask the tumor base on a relative or 
+    """Return the Metabolic Tumor Volume (MTV) which is computed by
+    resegmenting within the mask the tumor base on a relative or
     absolute threshold.
 
     Args:
-        image (SimpleITK): 
+        image (SimpleITK):
         mask ([type]): [description]
         threshold (float, optional): [description]. Defaults to 0.4.
         relative (bool, optional): [description]. Defaults to True.
@@ -57,7 +57,7 @@ class OkapyFeatureExtractorPT():
                 voxelBased=False):
         image = sitk.ReadImage(image_path)
         mask = sitk.ReadImage(mask_path)
-        results = OkapyFeatureExtractorPT.translate_radiomics_ouput(
+        results = OkapyFeatureExtractorPT.translate_radiomics_output(
             self.radiomics_extractor(image,
                                      mask,
                                      label=label,
