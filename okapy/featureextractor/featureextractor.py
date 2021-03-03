@@ -72,7 +72,7 @@ class FeatureExtractorPT(FeatureExtractor):
         results_copy = results.copy()
         for key, item in six.iteritems(results_copy):
             if key.startswith('original_firstorder'):
-                new_key = key.replace('original_firstorder', 'SUV')
+                new_key = key.replace('original_firstorder', 'PET_SUV')
                 results[new_key] = results.pop(key)
         return results
 
@@ -119,11 +119,11 @@ class FeatureExtractorPT(FeatureExtractor):
             suv_peak = np.nan
             tlg = np.nan
         return OrderedDict({
-            "MTV" + string_output:
+            "PET_MTV" + string_output:
             mtv,
-            "TLG" + string_output:
+            "PET_TLG" + string_output:
             tlg,
-            "SUVpeak" + string_output:
+            "PET_SUVpeak" + string_output:
             suv_peak,
         })
 
@@ -151,8 +151,7 @@ class FeatureExtractorPT(FeatureExtractor):
                                              label_channel=label_channel,
                                              voxelBased=voxelBased))
 
-        for threshold, relative in zip([0, 0.3, 0.4, 0.42, 1, 2.5],
-                                       [True] * 4 + [False] * 3):
+        for threshold, relative in zip([0], [False]):
             results.update(
                 FeatureExtractorPT.pet_features(image,
                                                 mask,
