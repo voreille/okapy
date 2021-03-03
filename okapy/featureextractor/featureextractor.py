@@ -17,7 +17,6 @@ def to_np(image):
     return np.transpose(sitk.GetArrayFromImage(image), (2, 1, 0))
 
 
-
 def ellipsoid_window(radius):
     neighborhood = np.zeros((
         2 * radius[0] + 1,
@@ -50,6 +49,7 @@ def compute_mtv(image, mask, threshold=0.4, relative=True):
     if relative:
         t = threshold * np.max(np_image[positions])
     new_mask = np_image
+
 
 class FeatureExtractor():
     def __init__(self, params):
@@ -98,20 +98,24 @@ class FeatureExtractorPT(FeatureExtractor):
             np_image[positions] > t) * spacing[0] * spacing[1] * spacing[2]
         positions = np.where((np_mask != 0) & (np_image > t))
         # compute SUVpeak
-        ind_max = np.argmax(np_image[positions])
-        pos_max = np.array([
-            positions[0][ind_max], positions[1][ind_max], positions[2][ind_max]
-        ])
-        # Sphere of 12 mm
-        radius = np.round(6 / spacing).astype(int)
-        max_neighborhood = np_image[pos_max[0] - radius[0]:pos_max[0] +
-                                    radius[0] + 1, pos_max[1] -
-                                    radius[1]:pos_max[1] + radius[1] + 1,
-                                    pos_max[2] - radius[2]:pos_max[2] +
-                                    radius[2] + 1, ]
-        # it's an ellipsoid since isotropy is not assumed
-        spherical_mask = ellipsoid_window(radius)
-        suv_peak = np.mean(max_neighborhood[spherical_mask != 0])
+        if len(positions) != 0:
+            ind_max = np.argmax(np_image[positions])
+            pos_max = np.array([
+                positions[0][ind_max], positions[1][ind_max],
+                positions[2][ind_max]
+            ])
+            # Sphere of 12 mm
+            radius = np.round(6 / spacing).astype(int)
+            max_neighborhood = np_image[pos_max[0] - radius[0]:pos_max[0] +
+                                        radius[0] + 1, pos_max[1] -
+                                        radius[1]:pos_max[1] + radius[1] + 1,
+                                        pos_max[2] - radius[2]:pos_max[2] +
+                                        radius[2] + 1, ]
+            # it's an ellipsoid since isotropy is not assumed
+            spherical_mask = ellipsoid_window(radius)
+            suv_peak = np.mean(max_neighborhood[spherical_mask != 0])
+        else:
+            suv_peak = np.nan
         return OrderedDict({
             "MTV" + string_output:
             mtv,
@@ -139,12 +143,10 @@ class FeatureExtractorPT(FeatureExtractor):
             mask = mask_path
 
         results = FeatureExtractorPT.translate_radiomics_output(
-
             self.radiomics_extractor.execute(image,
                                              mask,
                                              label=label,
                                              label_channel=label_channel,
-
                                              voxelBased=voxelBased))
 
         for threshold, relative in zip([0, 0.3, 0.4, 0.42, 1, 2.5],
