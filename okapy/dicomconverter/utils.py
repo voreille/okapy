@@ -1,0 +1,29 @@
+import pydicom as pdcm
+
+from okapy.dicomconverter.dicom_file import DicomFileBase, RtstructFile
+from okapy.dicomconverter.dicom_header import DicomHeader
+
+
+def get_sitk_image(dicom_paths):
+    return get_volume(dicom_paths).sitk_image
+
+
+def get_volume(dicom_paths):
+    modality = pdcm.filereader.dcmread(dicom_paths[0],
+                                       stop_before_pixels=True).Modality
+    dicom = DicomFileBase.get(modality)(dicom_paths=dicom_paths)
+    return dicom.get_volume()
+
+
+def get_mask(rtstruct_file, ref_dicom_paths, label):
+    modality = pdcm.filereader.dcmread(ref_dicom_paths[0],
+                                       stop_before_pixels=True).Modality
+    ref_dicom = DicomFileBase.get(modality)(dicom_paths=ref_dicom_paths)
+    dicom = RtstructFile(dicom_paths=[rtstruct_file],
+                         reference_dicom_header=DicomHeader(modality=modality),
+                         reference_frame=ref_dicom.reference_frame)
+    return dicom.get_volume(label)
+
+
+def get_sitk_mask(rtstruct_file, ref_dicom_paths, label):
+    return get_mask(rtstruct_file, ref_dicom_paths, label).sitk_image

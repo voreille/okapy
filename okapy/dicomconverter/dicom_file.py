@@ -2,6 +2,7 @@
 TODO: Make it DRYer line 220
 """
 
+import time as time_perf
 import warnings
 from copy import copy
 from datetime import time, datetime
@@ -14,31 +15,6 @@ from skimage.draw import polygon
 import pandas as pd
 
 from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
-
-
-def get_sitk_image(dicom_paths):
-    return get_volume(dicom_paths).sitk_image
-
-
-def get_volume(dicom_paths):
-    modality = pdcm.filereader.dcmread(dicom_paths[0],
-                                       stop_before_pixels=True).Modality
-    dicom = DicomFileBase.get(modality)(dicom_paths=dicom_paths)
-    return dicom.get_volume()
-
-
-def get_mask(rtstruct_file, ref_dicom_paths, label):
-    modality = pdcm.filereader.dcmread(ref_dicom_paths[0],
-                                       stop_before_pixels=True).Modality
-    ref_dicom = DicomFileBase.get(modality)(dicom_paths=ref_dicom_paths)
-    dicom = RtstructFile(dicom_paths=[rtstruct_file],
-                         reference_modality=modality,
-                         reference_frame=ref_dicom.reference_frame)
-    return dicom.get_volume(label)
-
-
-def get_sitk_mask(rtstruct_file, ref_dicom_paths, label):
-    return get_mask(rtstruct_file, ref_dicom_paths, label).sitk_image
 
 
 class OkapyException(Exception):
@@ -78,11 +54,7 @@ class DicomFileBase():
         self.dicom_header = dicom_header
         self.dicom_paths = dicom_paths
         self._reference_frame = reference_frame
-        if study:
-            self.study = study
-        elif dicom_header:
-            self.study = Study(
-                study_instance_uid=dicom_header.study_instance_uid)
+        self.study = study
 
     def get_volume(self, *args):
         raise NotImplementedError('It is an abstract class')
@@ -126,8 +98,60 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         ]
         image_orientation = slices[0].ImageOrientationPatient
         n = np.cross(image_orientation[:3], image_orientation[3:])
-        slices.sort(
-            key=lambda x: np.dot(n, np.asarray(x.ImagePositionPatient)))
+
+        orthogonal_positions = [
+            np.dot(n, np.asarray(x.ImagePositionPatient)) for x in slices
+        ]
+        # Sort the slices accordind to orthogonal_postions,
+        slices_pos = list(zip(slices, orthogonal_positions))
+        slices_pos.sort(key=lambda x: x[1])
+        slices, orthogonal_positions = zip(*slices_pos)
+        tic = time_perf.perf_counter()
+        # Check shape consistency
+        columns = [s.Columns for s in slices]
+        val, counts = np.unique(columns, return_counts=True)
+        valcounts = list(zip(val, counts))
+        valcounts.sort(key=lambda x: x[1])
+        val, counts = zip(*valcounts)
+        ind2rm = [
+            ind for ind in range(len(slices))
+            if slices[ind].Columns in val[:-1]
+        ]
+
+        if len(ind2rm) > 0:
+            slices = [k for i, k in enumerate(slices) if i not in ind2rm]
+            orthogonal_positions = [
+                k for i, k in enumerate(orthogonal_positions)
+                if i not in ind2rm
+            ]
+
+        rows = [s.Rows for s in slices]
+        val, counts = np.unique(rows, return_counts=True)
+        valcounts = list(zip(val, counts))
+        valcounts.sort(key=lambda x: x[1])
+        ind2rm = [
+            ind for ind in range(len(slices))
+            if slices[ind].Columns in val[:-1]
+        ]
+
+        if len(ind2rm) > 0:
+            slices = [k for i, k in enumerate(slices) if i not in ind2rm]
+            orthogonal_positions = [
+                k for i, k in enumerate(orthogonal_positions)
+                if i not in ind2rm
+            ]
+
+        # Compute redundant slice positions and possibly weird slice
+        ind2rm = [
+            ind for ind in range(len(orthogonal_positions))
+            if orthogonal_positions[ind] == orthogonal_positions[ind - 1]
+        ]
+        # Check if there is redundancy in slice positions and remove them
+        if len(ind2rm) > 0:
+            slices = [k for i, k in enumerate(slices) if i not in ind2rm]
+
+        toc = time_perf.perf_counter()
+        print(f"ouai mec : {toc - tic:0.4f}")
 
         self.slices = slices
         self._reference_frame = ReferenceFrame(
@@ -152,7 +176,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
         return Volume(image,
                       reference_frame=copy(self.reference_frame),
-                      modality=self.__class__.name)
+                      dicom_header=self.dicom_header)
 
 
 class DicomFileCT(DicomFileImageBase, name="CT"):
@@ -287,7 +311,7 @@ class MaskFile(DicomFileBase, name="mask_base"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._labels = None
-        self.reference_modality = ""
+        self.reference_dicom_header = None
 
     @property
     def labels(self):
@@ -335,8 +359,8 @@ class SegFile(MaskFile, name="SEG"):
         return VolumeMask(np_volume,
                           reference_frame=copy(self.reference_frame),
                           label=label,
-                          reference_modality=self.reference_modality,
-                          modality=self.dicom_header.modality)
+                          reference_dicom_header=self.reference_dicom_header,
+                          dicom_header=self.dicom_header)
 
 
 class RtstructFile(MaskFile, name="RTSTRUCT"):
@@ -344,13 +368,13 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                  *args,
                  reference_image=None,
                  reference_frame=None,
-                 reference_modality=None,
+                 reference_dicom_header=None,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.contours = None
         self._reference_frame = reference_frame
         self._reference_image = reference_image
-        self.reference_modality = reference_modality
+        self.reference_dicom_header = reference_dicom_header
         self.reference_image_uid = None
         self.error_list = list()
 
@@ -368,15 +392,13 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                     break
 
             if not found:
-                warnings.warn(
-                    "The Reference image was not found for"
-                    " the RTSTRUCT {}. The CT image will be taken as reference."
-                    .format(str(self)))
+                warnings.warn("The Reference image was not found for"
+                              " the RTSTRUCT {}. The CT image will be"
+                              " taken as reference.".format(str(self)))
                 for f in self.study.volume_files:
                     if f.dicom_header.modality == 'CT':
                         self._reference_image = f
-            self.reference_modality = (
-                self._reference_image.dicom_header.modality)
+            self.reference_dicom_header = (self._reference_image.dicom_header)
         return self._reference_image
 
     @property
@@ -385,31 +407,48 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             self.read()
         return self._labels
 
+    @staticmethod
+    def get_reference_image_uid(dcm):
+        return (dcm.ReferencedFrameOfReferenceSequence[0].
+                RTReferencedStudySequence[0].RTReferencedSeriesSequence[0].
+                SeriesInstanceUID)
+
     def read(self):
         self._labels = list()
-        if len(self.dicom_paths) != 1:
-            raise RuntimeError('RTSTRUCT has more than one file')
-        structure = pdcm.read_file(self.dicom_paths[0])
-        self.reference_image_uid = (
-            structure.ReferencedFrameOfReferenceSequence[0].
-            RTReferencedStudySequence[0].RTReferencedSeriesSequence[0].
-            SeriesInstanceUID)
+        if len(self.dicom_paths) > 1:
+            warnings.warn("there is multiple instances in the ")
+            multiple_instances = True
+        else:
+            multiple_instances = False
+        dcms = [pdcm.read_file(p) for p in self.dicom_paths]
+        self.reference_image_uid = RtstructFile.get_reference_image_uid(
+            dcms[0])
         self.contours = {}
-        for i, roi_seq in enumerate(structure.StructureSetROISequence):
+        for dcm in dcms:
+            if (self.reference_image_uid !=
+                    RtstructFile.get_reference_image_uid(dcm)):
+                raise RuntimeError(
+                    "The different instances of the rtstruct do not"
+                    " point to the same reference image")
+            for i, roi_seq in enumerate(dcm.StructureSetROISequence):
 
-            assert structure.ROIContourSequence[
-                i].ReferencedROINumber == roi_seq.ROINumber
+                assert dcm.ROIContourSequence[
+                    i].ReferencedROINumber == roi_seq.ROINumber
 
-            try:
-                self.contours[roi_seq.ROIName] = [
-                    s.ContourData
-                    for s in structure.ROIContourSequence[i].ContourSequence
-                ]
-            except AttributeError:
-                warnings.warn(f"{roi_seq.ROIName} is empty")
-                continue
+                label = roi_seq.ROIName
+                if multiple_instances:
+                    label += f"_instance_{dcm.InstanceNumber}"
 
-            self._labels.append(roi_seq.ROIName)
+                try:
+                    self.contours[label] = [
+                        s.ContourData
+                        for s in dcm.ROIContourSequence[i].ContourSequence
+                    ]
+                except AttributeError:
+                    warnings.warn(f"{label} is empty")
+                    continue
+
+                self._labels.append(label)
 
     def get_volume(self, label):
         if self.contours is None:
@@ -440,42 +479,9 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         if cond_empty:
             raise EmptyContourException()
 
-        return VolumeMask(mask,
-                          reference_frame=self.reference_frame,
-                          reference_modality=self.reference_modality,
-                          label=label,
-                          modality=self.__class__.name)
-
-
-class Study():
-    def __init__(self,
-                 study_instance_uid=None,
-                 study_date=None,
-                 patient_id=None):
-        self.mask_files = list()  # Can have multiple RTSTRUCT and also SEG
-        self.volume_files = list()  # Can have multiple RTSTRUCT
-        self.study_instance_uid = study_instance_uid
-        self.study_date = study_date
-        self.patient_id = patient_id
-
-    def append_dicom_files(self, im_dicom_files, dcm_header):
-        if dcm_header.modality == 'RTSTRUCT' or dcm_header.modality == 'SEG':
-            self.mask_files.append(
-                DicomFileBase.get(dcm_header.modality)(
-                    dicom_header=dcm_header,
-                    dicom_paths=[k.path for k in im_dicom_files],
-                    study=self,
-                ))
-
-        else:
-            try:
-
-                self.volume_files.append(
-                    DicomFileBase.get(dcm_header.modality)(
-                        dicom_header=dcm_header,
-                        dicom_paths=[k.path for k in im_dicom_files],
-                        study=self,
-                    ))
-            except KeyError:
-                print('This modality {} is not yet (?) supported'.format(
-                    dcm_header.modality))
+        return VolumeMask(
+            mask,
+            reference_frame=self.reference_frame,
+            reference_dicom_header=self.reference_image.dicom_header,
+            label=label,
+            dicom_header=self.dicom_header)
