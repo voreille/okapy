@@ -114,13 +114,15 @@ class FeatureExtractorPT(FeatureExtractor):
             # it's an ellipsoid since isotropy is not assumed
             spherical_mask = ellipsoid_window(radius)
             suv_peak = np.mean(max_neighborhood[spherical_mask != 0])
+            tlg = mtv * np.mean(np_image[positions])
         else:
             suv_peak = np.nan
+            tlg = np.nan
         return OrderedDict({
             "MTV" + string_output:
             mtv,
             "TLG" + string_output:
-            mtv * np.mean(np_image[positions]),
+            tlg,
             "SUVpeak" + string_output:
             suv_peak,
         })
