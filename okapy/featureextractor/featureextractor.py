@@ -58,9 +58,12 @@ class OkapyFeatureExtractorPT():
         image = sitk.ReadImage(image_path)
         mask = sitk.ReadImage(mask_path)
         results = OkapyFeatureExtractorPT.translate_radiomics_output(
-            self.radiomics_extractor(image,
-                                     mask,
-                                     label=label,
-                                     label_channel=label_channel,
-                                     voxelBased=voxelBased))
+            self.radiomics_extractor.execute(image,
+                                             mask,
+                                             label=label,
+                                             label_channel=label_channel,
+                                             voxelBased=voxelBased
+                                             )
+        )
+
         return results
