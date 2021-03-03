@@ -17,6 +17,7 @@ def to_np(image):
     return np.transpose(sitk.GetArrayFromImage(image), (2, 1, 0))
 
 
+
 def ellipsoid_window(radius):
     neighborhood = np.zeros((
         2 * radius[0] + 1,
@@ -31,6 +32,24 @@ def ellipsoid_window(radius):
                  z**2 / radius[2]**2 <= 1] = 1
     return neighborhood
 
+
+def compute_mtv(image, mask, threshold=0.4, relative=True):
+    """Return the Metabolic Tumor Volume (MTV) which is computed by
+    resegmenting within the mask the tumor base on a relative or
+    absolute threshold.
+
+    Args:
+        image (SimpleITK):
+        mask ([type]): [description]
+        threshold (float, optional): [description]. Defaults to 0.4.
+        relative (bool, optional): [description]. Defaults to True.
+    """
+    np_image = to_np(image)
+    np_mask = to_np(mask)
+    positions = np.where(np_mask != 0)
+    if relative:
+        t = threshold * np.max(np_image[positions])
+    new_mask = np_image
 
 class FeatureExtractor():
     def __init__(self, params):
@@ -108,6 +127,7 @@ class FeatureExtractorPT(FeatureExtractor):
                 label=None,
                 label_channel=None,
                 voxelBased=False):
+
         if type(image_path) != sitk.SimpleITK.Image:
             image = sitk.ReadImage(str(image_path))
         else:
@@ -119,10 +139,12 @@ class FeatureExtractorPT(FeatureExtractor):
             mask = mask_path
 
         results = FeatureExtractorPT.translate_radiomics_output(
+
             self.radiomics_extractor.execute(image,
                                              mask,
                                              label=label,
                                              label_channel=label_channel,
+
                                              voxelBased=voxelBased))
 
         for threshold, relative in zip([0, 0.3, 0.4, 0.42, 1, 2.5],

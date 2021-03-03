@@ -14,6 +14,7 @@ requirements = [
     "pydicom",
     "pydicom_seg",
     "scikit-image",
+    "pandas",
 ],
 
 setup_requirements = []
