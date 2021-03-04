@@ -2,7 +2,6 @@
 TODO: Make it DRYer line 220
 """
 
-import time as time_perf
 import warnings
 from copy import copy
 from datetime import time, datetime
@@ -106,7 +105,6 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         slices_pos = list(zip(slices, orthogonal_positions))
         slices_pos.sort(key=lambda x: x[1])
         slices, orthogonal_positions = zip(*slices_pos)
-        tic = time_perf.perf_counter()
         # Check shape consistency
         columns = [s.Columns for s in slices]
         val, counts = np.unique(columns, return_counts=True)
@@ -149,9 +147,6 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         # Check if there is redundancy in slice positions and remove them
         if len(ind2rm) > 0:
             slices = [k for i, k in enumerate(slices) if i not in ind2rm]
-
-        toc = time_perf.perf_counter()
-        print(f"ouai mec : {toc - tic:0.4f}")
 
         self.slices = slices
         self._reference_frame = ReferenceFrame(
