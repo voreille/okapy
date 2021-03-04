@@ -98,7 +98,7 @@ class FeatureExtractorPT(FeatureExtractor):
             np_image[positions] > t) * spacing[0] * spacing[1] * spacing[2]
         positions = np.where((np_mask != 0) & (np_image > t))
         # compute SUVpeak
-        if len(positions) != 0:
+        if len(positions[0]) != 0:
             ind_max = np.argmax(np_image[positions])
             pos_max = np.array([
                 positions[0][ind_max], positions[1][ind_max],
