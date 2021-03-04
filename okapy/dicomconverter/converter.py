@@ -138,7 +138,7 @@ class Converter():
                  extension='nii.gz',
                  resampling_spacing=(1, 1, 1),
                  order=3,
-                 padding=0,
+                 padding=10,
                  list_labels=None,
                  dicom_walker=None,
                  volume_processor=None,
