@@ -1,5 +1,6 @@
 import six
 from collections import OrderedDict
+import warnings
 
 import numpy as np
 import SimpleITK as sitk
@@ -113,18 +114,23 @@ class FeatureExtractorPT(FeatureExtractor):
                                         radius[2] + 1, ]
             # it's an ellipsoid since isotropy is not assumed
             spherical_mask = ellipsoid_window(radius)
-            suv_peak = np.mean(max_neighborhood[spherical_mask != 0])
+            try:
+                suv_peak = np.mean(max_neighborhood[spherical_mask != 0])
+            except IndexError:
+                suv_peak = np.nan
+                warnings.warn(
+                    "The SUVpeak cannot be computed since the mask"
+                    "is too close of the border, add more padding if you want"
+                    "this feature."
+                )
             tlg = mtv * np.mean(np_image[positions])
         else:
             suv_peak = np.nan
             tlg = np.nan
         return OrderedDict({
-            "PET_MTV" + string_output:
-            mtv,
-            "PET_TLG" + string_output:
-            tlg,
-            "PET_SUVpeak" + string_output:
-            suv_peak,
+            "PET_MTV" + string_output: mtv,
+            "PET_TLG" + string_output: tlg,
+            "PET_SUVpeak" + string_output: suv_peak,
         })
 
     def execute(self,
