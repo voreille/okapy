@@ -8,6 +8,7 @@ from datetime import time, datetime
 
 import numpy as np
 import pydicom as pdcm
+from pydicom.dataset import FileDataset
 from pydicom.tag import Tag
 import pydicom_seg
 from skimage.draw import polygon
@@ -91,10 +92,14 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         raise NotImplementedError('This is an abstract class')
 
     def read(self, stop_before_pixel=False):
-        slices = [
-            pdcm.filereader.dcmread(dcm, stop_before_pixels=stop_before_pixel)
-            for dcm in self.dicom_paths
-        ]
+        if type(self.dicom_paths[0]) == FileDataset:
+            slices = self.dicom_paths
+        else:
+            slices = [
+                pdcm.filereader.dcmread(dcm,
+                                        stop_before_pixels=stop_before_pixel)
+                for dcm in self.dicom_paths
+            ]
         image_orientation = slices[0].ImageOrientationPatient
         n = np.cross(image_orientation[:3], image_orientation[3:])
 
@@ -328,7 +333,10 @@ class SegFile(MaskFile, name="SEG"):
             raise RuntimeError('SEG has more than one file')
 
     def read(self):
-        dcm = pdcm.dcmread(self.dicom_paths[0])
+        if type(self.dicom_paths[0]) == FileDataset:
+            dcm = self.dicom_paths[0]
+        else:
+            dcm = pdcm.dcmread(self.dicom_paths[0])
         self.raw_volume = pydicom_seg.SegmentReader().read(dcm)
         coordinate_matrix = np.zeros((4, 4))
         coordinate_matrix[:3, :3] = self.raw_volume.direction
@@ -415,7 +423,10 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             multiple_instances = True
         else:
             multiple_instances = False
-        dcms = [pdcm.read_file(p) for p in self.dicom_paths]
+        if type(self.dicom_paths[0]) == FileDataset:
+            dcms = self.dicom_paths
+        else:
+            dcms = [pdcm.read_file(p) for p in self.dicom_paths]
         self.reference_image_uid = RtstructFile.get_reference_image_uid(
             dcms[0])
         self.contours = {}
