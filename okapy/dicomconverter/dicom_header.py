@@ -1,3 +1,7 @@
+import pydicom as pdcm
+from pydicom.dataset import FileDataset
+
+
 class DicomHeader():
     def __init__(self,
                  patient_id=None,
@@ -14,6 +18,23 @@ class DicomHeader():
         self.series_number = series_number
         self.instance_number = instance_number
         self.modality = modality
+
+    @staticmethod
+    def from_file(file):
+        if type(file) == FileDataset:
+            data = file
+        else:
+            data = pdcm.filereader.dcmread(file, stop_before_pixels=True)
+
+        return DicomHeader(
+            patient_id=data.PatientID,
+            study_instance_uid=data.StudyInstanceUID,
+            study_date=data.StudyDate,
+            series_instance_uid=data.SeriesInstanceUID,
+            series_number=data.SeriesNumber,
+            instance_number=data.InstanceNumber,
+            modality=data.Modality,
+        )
 
     def __str__(self):
         return ('PatientID: {}, StudyInstanceUID: {}, SeriesInstanceUID: {},'

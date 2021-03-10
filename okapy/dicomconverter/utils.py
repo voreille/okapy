@@ -29,8 +29,7 @@ def get_mask_file(rtstruct_file, ref_dicom_paths):
 
     ref_dicom = DicomFileBase.get(modality)(dicom_paths=ref_dicom_paths)
     dicom = RtstructFile(dicom_paths=[rtstruct_file],
-                         reference_dicom_header=DicomHeader(modality=modality),
-                         reference_frame=ref_dicom.reference_frame)
+                         reference_image=ref_dicom)
     return dicom
 
 
@@ -43,8 +42,7 @@ def get_mask(rtstruct_file, ref_dicom_paths, label):
 
     ref_dicom = DicomFileBase.get(modality)(dicom_paths=ref_dicom_paths)
     dicom = RtstructFile(dicom_paths=[rtstruct_file],
-                         reference_dicom_header=DicomHeader(modality=modality),
-                         reference_frame=ref_dicom.reference_frame)
+                         reference_image=ref_dicom)
     return dicom.get_volume(label)
 
 

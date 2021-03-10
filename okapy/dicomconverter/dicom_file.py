@@ -15,6 +15,7 @@ from skimage.draw import polygon
 import pandas as pd
 
 from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
+from okapy.dicomconverter.dicom_header import DicomHeader
 
 
 class OkapyException(Exception):
@@ -51,7 +52,7 @@ class DicomFileBase():
             reference_frame=None,
             study=None,
     ):
-        self.dicom_header = dicom_header
+        self._dicom_header = dicom_header
         self.dicom_paths = dicom_paths
         self._reference_frame = reference_frame
         self.study = study
@@ -61,6 +62,12 @@ class DicomFileBase():
 
     def read(self):
         raise NotImplementedError('It is an abstract class')
+
+    @property
+    def dicom_header(self):
+        if self._dicom_header is None:
+            self._dicom_header = DicomHeader.from_file(self.dicom_paths[0])
+        return self._dicom_header
 
     @property
     def patient_weight(self):
@@ -311,7 +318,6 @@ class MaskFile(DicomFileBase, name="mask_base"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._labels = None
-        self.reference_dicom_header = None
 
     @property
     def labels(self):
@@ -356,11 +362,12 @@ class SegFile(MaskFile, name="SEG"):
         np_volume = np.transpose(
             self.raw_volume.segment_data(self.label_to_num[label]), trans)
 
-        return VolumeMask(np_volume,
-                          reference_frame=copy(self.reference_frame),
-                          label=label,
-                          reference_dicom_header=self.reference_dicom_header,
-                          dicom_header=self.dicom_header)
+        return VolumeMask(
+            np_volume,
+            reference_frame=copy(self.reference_frame),
+            label=label,
+            reference_dicom_header=self.reference_image.dicom_header,
+            dicom_header=self.dicom_header)
 
 
 class RtstructFile(MaskFile, name="RTSTRUCT"):
@@ -368,13 +375,11 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                  *args,
                  reference_image=None,
                  reference_frame=None,
-                 reference_dicom_header=None,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.contours = None
         self._reference_frame = reference_frame
         self._reference_image = reference_image
-        self.reference_dicom_header = reference_dicom_header
         self.reference_image_uid = None
         self.error_list = list()
 
@@ -398,7 +403,6 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                 for f in self.study.volume_files:
                     if f.dicom_header.modality == 'CT':
                         self._reference_image = f
-            self.reference_dicom_header = (self._reference_image.dicom_header)
         return self._reference_image
 
     @property
@@ -482,8 +486,9 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         if cond_empty:
             raise EmptyContourException()
 
-        return VolumeMask(mask,
-                          reference_frame=self.reference_frame,
-                          reference_dicom_header=self.reference_dicom_header,
-                          label=label,
-                          dicom_header=self.dicom_header)
+        return VolumeMask(
+            mask,
+            reference_frame=self.reference_frame,
+            reference_dicom_header=self.reference_image.dicom_header,
+            label=label,
+            dicom_header=self.dicom_header)
