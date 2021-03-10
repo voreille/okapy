@@ -319,9 +319,6 @@ class MaskFile(DicomFileBase, name="mask_base"):
             self.read()
         return self._labels
 
-    def get_volumes(self, list_labels):
-        raise NotImplementedError('This is an abstract class')
-
 
 class SegFile(MaskFile, name="SEG"):
     def __init__(self, *args, **kwargs):
@@ -485,9 +482,8 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         if cond_empty:
             raise EmptyContourException()
 
-        return VolumeMask(
-            mask,
-            reference_frame=self.reference_frame,
-            reference_dicom_header=self.reference_image.dicom_header,
-            label=label,
-            dicom_header=self.dicom_header)
+        return VolumeMask(mask,
+                          reference_frame=self.reference_frame,
+                          reference_dicom_header=self.reference_dicom_header,
+                          label=label,
+                          dicom_header=self.dicom_header)
