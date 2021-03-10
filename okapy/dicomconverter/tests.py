@@ -10,7 +10,7 @@ from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.volume import ReferenceFrame
 from okapy.dicomconverter.dicom_file import DicomFileMR
 from okapy.dicomconverter.converter import Converter
-from okapy.dicomconverter.utils import get_sitk_image, get_sitk_mask
+from okapy.dicomconverter.utils import get_sitk_image, get_sitk_mask, get_mask_file
 
 
 class TestOkapy(unittest.TestCase):
@@ -53,12 +53,16 @@ class TestOkapy(unittest.TestCase):
         image_dcm_paths = [str(f.resolve()) for f in image_path.rglob("*")]
         mask_dcm_paths = [str(f.resolve()) for f in mask_path.rglob("*")]
         ct_dcm_paths = [str(f.resolve()) for f in ct_path.rglob("*")]
+
+        slices = [pdcm.filereader.dcmread(dcm) for dcm in mask_dcm_paths]
+        mask_file = get_mask_file(slices[0], ct_dcm_paths)
+        print(mask_file.labels)
+        sitk_mask = mask_file.get_volume(mask_file.labels[0]).sitk_image
+        sitk.WriteImage(sitk_mask, output_path_mask)
+
         slices = [pdcm.filereader.dcmread(dcm) for dcm in image_dcm_paths]
         sitk_image = get_sitk_image(slices)
         sitk.WriteImage(sitk_image, output_path_im)
-        slices = [pdcm.filereader.dcmread(dcm) for dcm in mask_dcm_paths]
-        sitk_mask = get_sitk_mask(slices, )
-        sitk.WriteImage(sitk_mask, output_path_mask)
 
     # def test_converter(self):
     # """
