@@ -64,26 +64,26 @@ class TestOkapy(unittest.TestCase):
         sitk_image = get_sitk_image(slices)
         sitk.WriteImage(sitk_image, output_path_im)
 
-    # def test_converter(self):
-    # """
-    # The walker must extract all the MR and also all the VOIs with their
-    # label in the name of the file and resample at 0.75 mm
-    # """
+    def test_converter(self):
+        """
+        The walker must extract all the MR and also all the VOIs with their
+        label in the name of the file and resample at 0.75 mm
+        """
 
-    # # input_path = '/home/val/Documents/check_hecktor_anna_tmp/HN-CHUS-047'
-    # # input_path = '/home/val/Documents/check_hecktor_anna_tmp/P9'
-    # # input_path = '/home/val/python_wkspce/lcnn_radiomic/data/raw/Head-Neck-PET-CT/DICOM/HN-CHUS-047'
-    # # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
-    # input_path = '/home/val/python_wkspce/lymphangitis3.0/data/raw/PatientLC_51'
-    # # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
-    # # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
-    # # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
-    # output_path = '/home/val/Documents/output_okapy'
-    # converter = Converter(output_folder=output_path,
-    #                       list_labels=['GTV L', 'GTV N', 'GTV T'],
-    #                       resampling_spacing=(0.75, 0.75, 0.75))
-    # result = converter(input_path)
-    # print(result)
+        # input_path = '/home/val/Documents/check_hecktor_anna_tmp/HN-CHUS-047'
+        # input_path = '/home/val/Documents/check_hecktor_anna_tmp/P9'
+        # input_path = '/home/val/python_wkspce/lcnn_radiomic/data/raw/Head-Neck-PET-CT/DICOM/HN-CHUS-047'
+        # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
+        input_path = '/home/val/python_wkspce/lymphangitis3.0/data/raw/PatientLC_51'
+        # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
+        # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
+        # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
+        output_path = '/home/val/Documents/output_okapy'
+        converter = Converter(output_folder=output_path,
+                              list_labels=['GTV L', 'GTV N', 'GTV T'],
+                              resampling_spacing=(0.75, 0.75, 0.75))
+        result = converter(input_path)
+        print(result)
 
     # def test_dicomfilemr(self):
     #     input_path = Path(
