@@ -3,11 +3,14 @@ from pathlib import Path
 
 from click.testing import CliRunner
 import numpy as np
+import pydicom as pdcm
+import SimpleITK as sitk
 
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.volume import ReferenceFrame
 from okapy.dicomconverter.dicom_file import DicomFileMR
 from okapy.dicomconverter.converter import Converter
+from okapy.dicomconverter.utils import get_sitk_image, get_sitk_mask
 
 
 class TestOkapy(unittest.TestCase):
@@ -35,27 +38,48 @@ class TestOkapy(unittest.TestCase):
     #        assert help_result.exit_code == 0
     #        assert '--help  Show this message and exit.' in help_result.output
     #
+    def test_utils_get_volume(self):
+        image_path = Path(
+            "/mnt/nas2/data/Personal/Vincent/brain_mets/1A0B5C8D1E0F0/SERIES-8-MR"
+        )
+        mask_path = Path(
+            "/mnt/nas2/data/Personal/Vincent/brain_mets/1A0B5C8D1E0F0/SERIES-5-RTSTRUCT/"
+        )
+        ct_path = Path(
+            "/mnt/nas2/data/Personal/Vincent/brain_mets/1A0B5C8D1E0F0/SERIES-6-CT/"
+        )
+        output_path_im = '/home/val/Documents/output_okapy/image_test1.nii.gz'
+        output_path_mask = '/home/val/Documents/output_okapy/mask_test1.nii.gz'
+        image_dcm_paths = [str(f.resolve()) for f in image_path.rglob("*")]
+        mask_dcm_paths = [str(f.resolve()) for f in mask_path.rglob("*")]
+        ct_dcm_paths = [str(f.resolve()) for f in ct_path.rglob("*")]
+        slices = [pdcm.filereader.dcmread(dcm) for dcm in image_dcm_paths]
+        sitk_image = get_sitk_image(slices)
+        sitk.WriteImage(sitk_image, output_path_im)
+        slices = [pdcm.filereader.dcmread(dcm) for dcm in mask_dcm_paths]
+        sitk_mask = get_sitk_mask(slices, )
+        sitk.WriteImage(sitk_mask, output_path_mask)
 
-    def test_converter(self):
-        """
-        The walker must extract all the MR and also all the VOIs with their
-        label in the name of the file and resample at 0.75 mm
-        """
+    # def test_converter(self):
+    # """
+    # The walker must extract all the MR and also all the VOIs with their
+    # label in the name of the file and resample at 0.75 mm
+    # """
 
-        # input_path = '/home/val/Documents/check_hecktor_anna_tmp/HN-CHUS-047'
-        # input_path = '/home/val/Documents/check_hecktor_anna_tmp/P9'
-        # input_path = '/home/val/python_wkspce/lcnn_radiomic/data/raw/Head-Neck-PET-CT/DICOM/HN-CHUS-047'
-        # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
-        input_path = '/home/val/python_wkspce/lymphangitis3.0/data/raw/PatientLC_51'
-        # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
-        # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
-        # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
-        output_path = '/home/val/Documents/output_okapy'
-        converter = Converter(output_folder=output_path,
-                              list_labels=['GTV L', 'GTV N', 'GTV T'],
-                              resampling_spacing=(0.75, 0.75, 0.75))
-        result = converter(input_path)
-        print(result)
+    # # input_path = '/home/val/Documents/check_hecktor_anna_tmp/HN-CHUS-047'
+    # # input_path = '/home/val/Documents/check_hecktor_anna_tmp/P9'
+    # # input_path = '/home/val/python_wkspce/lcnn_radiomic/data/raw/Head-Neck-PET-CT/DICOM/HN-CHUS-047'
+    # # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
+    # input_path = '/home/val/python_wkspce/lymphangitis3.0/data/raw/PatientLC_51'
+    # # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
+    # # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
+    # # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
+    # output_path = '/home/val/Documents/output_okapy'
+    # converter = Converter(output_folder=output_path,
+    #                       list_labels=['GTV L', 'GTV N', 'GTV T'],
+    #                       resampling_spacing=(0.75, 0.75, 0.75))
+    # result = converter(input_path)
+    # print(result)
 
     # def test_dicomfilemr(self):
     #     input_path = Path(
