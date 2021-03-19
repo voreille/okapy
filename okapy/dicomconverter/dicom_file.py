@@ -470,7 +470,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         for current in self.contours[label]:
             cond_empty = False
             nodes = np.array(current).reshape((-1, 3))
-            assert np.amax(np.abs(np.diff(nodes[:, 2]))) == 0
+            # assert np.amax(np.abs(np.diff(nodes[:, 2]))) == 0
             vx_indices = np.stack([
                 self.reference_frame.mm_to_vx(
                     [nodes[k, 0], nodes[k, 1], nodes[k, 2]])

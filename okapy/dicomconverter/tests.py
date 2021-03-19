@@ -38,6 +38,30 @@ class TestOkapy(unittest.TestCase):
     #        assert help_result.exit_code == 0
     #        assert '--help  Show this message and exit.' in help_result.output
     #
+
+    def test_utils_get_mask_atlas(self):
+        image_path = Path(
+            "/mnt/nas2/data/Personal/Vincent/brain_mets/atlas_luis/ATLAS-BRAIN"
+        )
+        mask_path = Path(
+            "/mnt/nas2/data/Personal/Vincent/brain_mets/atlas_luis/struct_set_2021-03-18_16-10-32.dcm"
+        )
+
+        output_path_im = '/home/val/Documents/output_okapy/image_test2.nii.gz'
+        output_path_mask = '/home/val/Documents/output_okapy/mask_test2.nii.gz'
+        image_dcm_paths = [str(f.resolve()) for f in image_path.rglob("*")]
+        mask_dcm_paths = [str(f.resolve()) for f in mask_path.rglob("*")]
+
+        slices = [pdcm.filereader.dcmread(dcm) for dcm in mask_dcm_paths]
+        mask_file = get_mask_file(slices[0], image_dcm_paths)
+        print(mask_file.labels)
+        sitk_mask = mask_file.get_volume(mask_file.labels[0]).sitk_image
+        sitk.WriteImage(sitk_mask, output_path_mask)
+
+        slices = [pdcm.filereader.dcmread(dcm) for dcm in image_dcm_paths]
+        sitk_image = get_sitk_image(slices)
+        sitk.WriteImage(sitk_image, output_path_im)
+
     def test_utils_get_volume(self):
         image_path = Path(
             "/mnt/nas2/data/Personal/Vincent/brain_mets/1A0B5C8D1E0F0/SERIES-8-MR"
