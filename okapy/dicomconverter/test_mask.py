@@ -23,7 +23,7 @@ class TestOkapy(unittest.TestCase):
 
         mask_file = get_mask_file(str(mask_path.resolve()), image_dcm_paths)
         print(mask_file.labels)
-        sitk_mask = mask_file.get_volume(mask_file.labels[0]).sitk_image
+        sitk_mask = mask_file.get_volume(mask_file.labels[2]).sitk_image
         sitk.WriteImage(sitk_mask, output_path_mask)
 
         slices = [pdcm.filereader.dcmread(dcm) for dcm in image_dcm_paths]
