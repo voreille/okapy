@@ -27,13 +27,13 @@ class DicomHeader():
             data = pdcm.filereader.dcmread(file, stop_before_pixels=True)
 
         return DicomHeader(
-            patient_id=data.PatientID,
-            study_instance_uid=data.StudyInstanceUID,
-            study_date=data.StudyDate,
-            series_instance_uid=data.SeriesInstanceUID,
-            series_number=data.SeriesNumber,
-            instance_number=data.InstanceNumber,
-            modality=data.Modality,
+            patient_id=data.get("PatientID", -1),
+            study_instance_uid=data.get("StudyInstanceUID", -1),
+            study_date=data.get("StudyDate", -1),
+            series_instance_uid=data.get("SeriesInstanceUID", -1),
+            series_number=data.get("SeriesNumber", -1),
+            instance_number=data.get("InstanceNumber", -1),
+            modality=data.get("Modality", -1),
         )
 
     def __str__(self):
