@@ -245,8 +245,11 @@ class VolumeMask(Volume):
 
     def __getattr__(self, name):
         if "reference_" in name:
-            return getattr(self.reference_dicom_header,
-                           name.replace("reference_", ""))
+            if self.reference_dicom_header:
+                return getattr(self.reference_dicom_header,
+                               name.replace("reference_", ""))
+            else:
+                return None
         else:
             return getattr(self.dicom_header, name)
 

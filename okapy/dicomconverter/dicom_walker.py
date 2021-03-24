@@ -66,6 +66,7 @@ class DicomWalker():
                 series_instance_uid=data.get("SeriesInstanceUID", -1),
                 series_number=data.get("SeriesNumber", -1),
                 instance_number=data.get("InstanceNumber", -1),
+                image_type=data.get("ImageType", ["-1"]),
                 modality=modality)
             dicom_files.append(
                 DicomFile(dicom_header=dicom_header, path=str(file.resolve())))

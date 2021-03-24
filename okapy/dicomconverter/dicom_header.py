@@ -10,6 +10,7 @@ class DicomHeader():
                  series_instance_uid=None,
                  series_number=None,
                  instance_number=None,
+                 image_type=None,
                  modality=None):
         self.patient_id = patient_id
         self.study_instance_uid = study_instance_uid
@@ -18,6 +19,7 @@ class DicomHeader():
         self.series_number = series_number
         self.instance_number = instance_number
         self.modality = modality
+        self.image_type = image_type
 
     @staticmethod
     def from_file(file):
@@ -34,6 +36,7 @@ class DicomHeader():
             series_number=data.get("SeriesNumber", -1),
             instance_number=data.get("InstanceNumber", -1),
             modality=data.get("Modality", -1),
+            image_type=data.get("ImageType", ["-1"]),
         )
 
     def __str__(self):
@@ -55,7 +58,8 @@ class DicomHeader():
                 and self.series_instance_uid == dcm_header.series_instance_uid
                 and self.modality == dcm_header.modality
                 and self.instance_number == dcm_header.instance_number
-                and self.series_number == dcm_header.series_number)
+                and self.series_number == dcm_header.series_number
+                and self.image_type == dcm_header.image_type)
         else:
             return False
 
@@ -65,6 +69,7 @@ class DicomHeader():
                     and self.series_instance_uid
                     == dcm_header.series_instance_uid
                     and self.modality == dcm_header.modality
-                    and self.series_number == dcm_header.series_number)
+                    and self.series_number == dcm_header.series_number
+                    and self.image_type == dcm_header.image_type)
         else:
             return False
