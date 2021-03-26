@@ -195,10 +195,7 @@ class ExtractorConverter(BaseConverter):
     def __init__(self, extraction_params, **kwargs):
         super().__init__(**kwargs)
         self.featureextractors = OkapyExtractors(extraction_params)
-        self.output_folder = mkdtemp()
-
-    def __del__(self):
-        rmtree(self.output_folder, True)
+        self.output_folder = None
 
     @staticmethod
     def from_params(params_path):
@@ -286,12 +283,16 @@ class ExtractorConverter(BaseConverter):
         return results_df
 
     def __call__(self, input_folder, labels=None):
-
-        studies_list = self.dicom_walker(input_folder)
-        results_df = ExtractorConverter.get_empty_results_df()
-        for study in studies_list:
-            results_df = self.process_study(study,
-                                            results_df=results_df,
-                                            labels=labels)
+        self.output_folder = mkdtemp()
+        try:
+            studies_list = self.dicom_walker(input_folder)
+            results_df = ExtractorConverter.get_empty_results_df()
+            for study in studies_list:
+                results_df = self.process_study(study,
+                                                results_df=results_df,
+                                                labels=labels)
+        except Exception as e:
+            rmtree(self.output_folder, True)
+            print(e)
 
         return results_df
