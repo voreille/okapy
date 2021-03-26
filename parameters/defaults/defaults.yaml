@@ -1,4 +1,9 @@
-feature_extracion:
+preprocessing:
+  padding: 10
+  resampling_spacing: [1.0, 1.0, 1.0]
+  order: 3
+
+feature_extraction:
   CT:
     pyradiomics:
       - imageType:
@@ -78,8 +83,8 @@ feature_extracion:
             - "SumSquares"
 
         setting:
-          binWidth: 20
-          voxelArrayShift: 1000
+          binWidth: 0.2
+          voxelArrayShift: 0
           label: 1
 
       - imageType:
@@ -90,6 +95,10 @@ feature_extracion:
           firstorder:
 
         setting:
-          binWidth: 20
-          voxelArrayShift: 1000
+          binWidth: 0.2
+          voxelArrayShift: 0
           label: 1
+  common:
+    riesz:
+      - RieszOrder: 1
+        RieszScales: 4
