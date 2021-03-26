@@ -228,6 +228,7 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
                 except MissingWeightException:
                     continue
             if not weight_found:
+                raise ValueError("Just for test")
                 warnings.warn("Estimation of patient weight by 75.0 kg")
                 patient_weight = 75.0
 
