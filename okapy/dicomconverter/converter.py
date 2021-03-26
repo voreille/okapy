@@ -221,8 +221,22 @@ class ExtractorConverter(BaseConverter):
                                 codes=[[], []],
                                 names=["modality", "features"]))
 
-    def process_study(self, study, results_df=None):
-        masks_list = self.extract_volume_of_interest(study)
+    def extract_volume_of_interest(self, study, labels=None):
+        masks_list = list()
+        for f in study.mask_files:
+            if labels is None:
+                masks_list.extend([f.get_volume(label) for label in f.labels])
+            else:
+                label_intersection = list(set(f.labels) & set(labels))
+                for label in label_intersection:
+                    try:
+                        masks_list.append(f.get_volume(label))
+                    except EmptyContourException:
+                        continue
+        return masks_list
+
+    def process_study(self, study, results_df=None, labels=None):
+        masks_list = self.extract_volume_of_interest(study, labels=labels)
         volumes_list = list()
         for f in study.volume_files:
             try:
@@ -271,11 +285,13 @@ class ExtractorConverter(BaseConverter):
 
         return results_df
 
-    def __call__(self, input_folder):
+    def __call__(self, input_folder, labels=None):
 
         studies_list = self.dicom_walker(input_folder)
         results_df = ExtractorConverter.get_empty_results_df()
         for study in studies_list:
-            results_df = self.process_study(study, results_df=results_df)
+            results_df = self.process_study(study,
+                                            results_df=results_df,
+                                            labels=labels)
 
         return results_df
