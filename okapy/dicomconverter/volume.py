@@ -220,8 +220,8 @@ class Volume():
         sitk_image.SetSpacing(self.reference_frame.voxel_spacing)
         sitk_image.SetOrigin(self.reference_frame.origin)
         sitk_image.SetDirection(
-            self.reference_frame.coordinate_matrix[:3, :3].flatten('F') /
-            np.repeat(self.reference_frame.voxel_spacing, 3))
+            self.reference_frame.coordinate_matrix[:3, :3].flatten() /
+            np.tile(self.reference_frame.voxel_spacing, 3))
         return sitk_image
 
 
@@ -245,8 +245,11 @@ class VolumeMask(Volume):
 
     def __getattr__(self, name):
         if "reference_" in name:
-            return getattr(self.reference_dicom_header,
-                           name.replace("reference_", ""))
+            if self.reference_dicom_header:
+                return getattr(self.reference_dicom_header,
+                               name.replace("reference_", ""))
+            else:
+                return None
         else:
             return getattr(self.dicom_header, name)
 

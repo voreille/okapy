@@ -1,4 +1,5 @@
 from pathlib import Path
+import warnings
 import pickle
 
 from okapy.dicomconverter.dicom_file import DicomFileBase
@@ -24,7 +25,7 @@ class Study():
                     study=self,
                 ))
 
-        else:
+        elif len(im_dicom_files) > 1:
             try:
 
                 self.volume_files.append(
@@ -34,8 +35,12 @@ class Study():
                         study=self,
                     ))
             except KeyError:
-                print('This modality {} is not yet (?) supported'.format(
-                    dcm_header.modality))
+                warnings.warn(f"This modality {dcm_header.modality} "
+                              f"is not supported")
+        else:
+            warnings.warn(f"single slice or 2D images are not supported. "
+                          f"Patient {dcm_header.patient_id}, "
+                          f"image number {dcm_header.series_number}")
 
     def save(self, dir_path="./tmp/"):
         path = Path(dir_path)

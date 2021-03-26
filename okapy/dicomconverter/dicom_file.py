@@ -8,12 +8,14 @@ from datetime import time, datetime
 
 import numpy as np
 import pydicom as pdcm
+from pydicom.dataset import FileDataset
 from pydicom.tag import Tag
 import pydicom_seg
 from skimage.draw import polygon
 import pandas as pd
 
 from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
+from okapy.dicomconverter.dicom_header import DicomHeader
 
 
 class OkapyException(Exception):
@@ -27,6 +29,11 @@ class EmptyContourException(OkapyException):
 
 
 class MissingWeightException(OkapyException):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+
+class PETUnitException(OkapyException):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -50,10 +57,11 @@ class DicomFileBase():
             reference_frame=None,
             study=None,
     ):
-        self.dicom_header = dicom_header
+        self._dicom_header = dicom_header
         self.dicom_paths = dicom_paths
         self._reference_frame = reference_frame
         self.study = study
+        self.slices = None
 
     def get_volume(self, *args):
         raise NotImplementedError('It is an abstract class')
@@ -62,16 +70,19 @@ class DicomFileBase():
         raise NotImplementedError('It is an abstract class')
 
     @property
-    def patient_weight(self):
-        if self.slices[0].PatientWeight is None:
-            if hasattr(self.slices[0], 'PatientsWeight'):
-                patient_weight = float(self.slices[0].PatientsWeight)
-            else:
-                raise MissingWeightException(
-                    'Weight is missing in {}'.format(self))
+    def dicom_header(self):
+        if self._dicom_header is None:
+            self._dicom_header = DicomHeader.from_file(self.dicom_paths[0])
+        return self._dicom_header
 
+    @property
+    def patient_weight(self):
+        if hasattr(self.slices[0], 'PatientsWeight'):
+            if self.slices[0].PatientWeight is not None:
+                patient_weight = float(self.slices[0].PatientsWeight)
         else:
-            patient_weight = float(self.slices[0].PatientWeight)
+            raise MissingWeightException(
+                'Weight is missing in {}'.format(self))
 
         return patient_weight
 
@@ -85,16 +96,19 @@ class DicomFileBase():
 class DicomFileImageBase(DicomFileBase, name="image_base"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.slices = None
 
     def get_physical_values(self):
         raise NotImplementedError('This is an abstract class')
 
     def read(self, stop_before_pixel=False):
-        slices = [
-            pdcm.filereader.dcmread(dcm, stop_before_pixels=stop_before_pixel)
-            for dcm in self.dicom_paths
-        ]
+        if type(self.dicom_paths[0]) == FileDataset:
+            slices = self.dicom_paths
+        else:
+            slices = [
+                pdcm.filereader.dcmread(dcm,
+                                        stop_before_pixels=stop_before_pixel)
+                for dcm in self.dicom_paths
+            ]
         image_orientation = slices[0].ImageOrientationPatient
         n = np.cross(image_orientation[:3], image_orientation[3:])
 
@@ -201,7 +215,10 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
         try:
             patient_weight = super().patient_weight
         except MissingWeightException:
-            list_images = self.study.volume_files.extend(self.study.mask_files)
+            list_images = [
+                f for f in self.study.volume_files + self.study.mask_files
+                if f is not self
+            ]
             weight_found = False
             for f in list_images:
                 try:
@@ -225,7 +242,7 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
         elif units == 'CNTS':
             return self._get_suv_philips()
         else:
-            raise ValueError('The {} units is not handled'.format(units))
+            raise PETUnitException('The {} units is not handled'.format(units))
 
     def _get_decay_time(self):
         s = self.slices[0]
@@ -306,7 +323,6 @@ class MaskFile(DicomFileBase, name="mask_base"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._labels = None
-        self.reference_dicom_header = None
 
     @property
     def labels(self):
@@ -314,27 +330,26 @@ class MaskFile(DicomFileBase, name="mask_base"):
             self.read()
         return self._labels
 
-    def get_volumes(self, list_labels):
-        raise NotImplementedError('This is an abstract class')
-
 
 class SegFile(MaskFile, name="SEG"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.reference_frame = None
         self.raw_volume = None
         self.label_to_num = dict()
         if len(self.dicom_paths) != 1:
             raise RuntimeError('SEG has more than one file')
 
     def read(self):
-        dcm = pdcm.dcmread(self.dicom_paths[0])
+        if type(self.dicom_paths[0]) == FileDataset:
+            dcm = self.dicom_paths[0]
+        else:
+            dcm = pdcm.dcmread(self.dicom_paths[0])
         self.raw_volume = pydicom_seg.SegmentReader().read(dcm)
         coordinate_matrix = np.zeros((4, 4))
         coordinate_matrix[:3, :3] = self.raw_volume.direction
         coordinate_matrix[:3, 3] = self.raw_volume.origin
         coordinate_matrix[3, 3] = 1
-        self.reference_frame = ReferenceFrame(
+        self._reference_frame = ReferenceFrame(
             coordinate_matrix=coordinate_matrix, shape=self.raw_volume.size)
         self._labels = list()
         for segment_number in self.raw_volume.available_segments:
@@ -354,7 +369,7 @@ class SegFile(MaskFile, name="SEG"):
         return VolumeMask(np_volume,
                           reference_frame=copy(self.reference_frame),
                           label=label,
-                          reference_dicom_header=self.reference_dicom_header,
+                          reference_dicom_header=None,
                           dicom_header=self.dicom_header)
 
 
@@ -363,13 +378,11 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                  *args,
                  reference_image=None,
                  reference_frame=None,
-                 reference_dicom_header=None,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.contours = None
         self._reference_frame = reference_frame
         self._reference_image = reference_image
-        self.reference_dicom_header = reference_dicom_header
         self.reference_image_uid = None
         self.error_list = list()
 
@@ -393,7 +406,6 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                 for f in self.study.volume_files:
                     if f.dicom_header.modality == 'CT':
                         self._reference_image = f
-            self.reference_dicom_header = (self._reference_image.dicom_header)
         return self._reference_image
 
     @property
@@ -415,11 +427,14 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             multiple_instances = True
         else:
             multiple_instances = False
-        dcms = [pdcm.read_file(p) for p in self.dicom_paths]
+        if type(self.dicom_paths[0]) == FileDataset:
+            self.slices = self.dicom_paths
+        else:
+            self.slices = [pdcm.read_file(p) for p in self.dicom_paths]
         self.reference_image_uid = RtstructFile.get_reference_image_uid(
-            dcms[0])
+            self.slices[0])
         self.contours = {}
-        for dcm in dcms:
+        for dcm in self.slices:
             if (self.reference_image_uid !=
                     RtstructFile.get_reference_image_uid(dcm)):
                 raise RuntimeError(
@@ -458,7 +473,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         for current in self.contours[label]:
             cond_empty = False
             nodes = np.array(current).reshape((-1, 3))
-            assert np.amax(np.abs(np.diff(nodes[:, 2]))) == 0
+            # assert np.amax(np.abs(np.diff(nodes[:, 2]))) == 0
             vx_indices = np.stack([
                 self.reference_frame.mm_to_vx(
                     [nodes[k, 0], nodes[k, 1], nodes[k, 2]])
