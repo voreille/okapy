@@ -17,7 +17,7 @@ class TestOkapy(unittest.TestCase):
         # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
         extraction_params = "/home/val/python_wkspce/okapy/parameters/defaults/defaults.yaml"
         converter = ExtractorConverter.from_params(extraction_params)
-        result = converter(input_path)
+        result = converter(input_path, labels=["GTVt", "GTVn"])
         print(result)
 
 
