@@ -1,17 +1,56 @@
+import subprocess
+import json
 import six
+from pathlib import Path
+from abc import ABC, abstractmethod
 from collections import OrderedDict
 import warnings
+import yaml
 
 import numpy as np
 import SimpleITK as sitk
 from radiomics.featureextractor import RadiomicsFeatureExtractor
 
 
-def create_extractor(modality, params):
-    if modality == 'PT':
-        return FeatureExtractorPT(params)
+class OkapyExtractors():
+    def __init__(self, params_path):
+        if type(params_path) == dict:
+            params = params_path
+        else:
+            with open(params_path, 'r') as f:
+                params = yaml.safe_load(f)
+        self.feature_extractors = dict()
+        self.default_extractor = FeatureExtractorPyradiomics()
+        for modality, sub_dict in params.items():
+            self.feature_extractors[modality] = list()
+            for extractor_type, list_params in sub_dict.items():
+                self.feature_extractors[modality].extend([
+                    create_extractor(modality=modality,
+                                     extractor_type=extractor_type,
+                                     params=p) for p in list_params
+                ])
+
+    def __call__(self, image, mask, modality=None):
+        results = OrderedDict()
+        for extractor in self.feature_extractors.get(modality,
+                                                     [self.default_extractor]):
+            results.update(extractor(image, mask))
+        for extractor in self.feature_extractors.get("common"):
+            results.update(extractor(image, mask))
+        return results
+
+
+def create_extractor(modality=None, extractor_type="pyradiomics", params=None):
+    if extractor_type == "pyradiomics":
+        if modality == 'PT':
+            return FeatureExtractorPyradiomicsPT(params)
+        else:
+            return FeatureExtractorPyradiomics(params)
+    elif extractor_type == "riesz":
+        return RieszFeatureExtractor(params)
+
     else:
-        return RadiomicsFeatureExtractor(params)
+        raise ValueError(f"The type {extractor_type} is not recongised")
 
 
 def to_np(image):
@@ -33,40 +72,42 @@ def ellipsoid_window(radius):
     return neighborhood
 
 
-def compute_mtv(image, mask, threshold=0.4, relative=True):
-    """Return the Metabolic Tumor Volume (MTV) which is computed by
-    resegmenting within the mask the tumor base on a relative or
-    absolute threshold.
-
-    Args:
-        image (SimpleITK):
-        mask ([type]): [description]
-        threshold (float, optional): [description]. Defaults to 0.4.
-        relative (bool, optional): [description]. Defaults to True.
-    """
-    np_image = to_np(image)
-    np_mask = to_np(mask)
-    positions = np.where(np_mask != 0)
-    if relative:
-        t = threshold * np.max(np_image[positions])
-    new_mask = np_image
+def check_image(image):
+    if isinstance(image, sitk.Image):
+        return image
+    elif isinstance(image, Path):
+        return sitk.ReadImage(str(image.resolve()))
+    elif isinstance(image, str):
+        return sitk.ReadImage(image)
+    else:
+        raise ValueError(f"{image} is not accepted for the feature extractor")
 
 
-class FeatureExtractor():
-    def __init__(self, params):
+class FeatureExtractor(ABC):
+    @abstractmethod
+    def __init__(self, params=None):
+        pass
+
+    @abstractmethod
+    def __call__(self, image, mask):
+        pass
+
+
+class FeatureExtractorPyradiomics(FeatureExtractor):
+    def __init__(self, params=None):
         self.params = params
         self.radiomics_extractor = RadiomicsFeatureExtractor(params)
 
-    def execute(self, image_path, mask_path, **kwargs):
-        image = sitk.ReadImage(image_path)
-        mask = sitk.ReadImage(mask_path)
-        results = self.radiomics_extractor(image, mask)
+    def __call__(self, image_path, mask_path, **kwargs):
+        image = check_image(image_path)
+        mask = check_image(mask_path)
+        results = self.radiomics_extractor.execute(image, mask, **kwargs)
         return results
 
 
-class FeatureExtractorPT(FeatureExtractor):
-    def __init__(self, params):
-        super().__init__(params)
+class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
+    def __init__(self, params=None):
+        super().__init__(params=params)
 
     @staticmethod
     def translate_radiomics_output(results):
@@ -121,8 +162,7 @@ class FeatureExtractorPT(FeatureExtractor):
                 warnings.warn(
                     "The SUVpeak cannot be computed since the mask"
                     "is too close of the border, add more padding if you want"
-                    "this feature."
-                )
+                    "this feature.")
             tlg = mtv * np.mean(np_image[positions])
         else:
             suv_peak = np.nan
@@ -133,12 +173,7 @@ class FeatureExtractorPT(FeatureExtractor):
             "SUVpeak" + string_output: suv_peak,
         })
 
-    def execute(self,
-                image_path,
-                mask_path,
-                label=None,
-                label_channel=None,
-                voxelBased=False):
+    def __call__(self, image_path, mask_path, **kwargs):
 
         if type(image_path) != sitk.SimpleITK.Image:
             image = sitk.ReadImage(str(image_path))
@@ -150,18 +185,36 @@ class FeatureExtractorPT(FeatureExtractor):
         else:
             mask = mask_path
 
-        results = FeatureExtractorPT.translate_radiomics_output(
-            self.radiomics_extractor.execute(image,
-                                             mask,
-                                             label=label,
-                                             label_channel=label_channel,
-                                             voxelBased=voxelBased))
+        results = FeatureExtractorPyradiomicsPT.translate_radiomics_output(
+            self.radiomics_extractor.execute(image, mask, **kwargs))
 
         for threshold, relative in zip([0, 0.3, 0.4, 0.42, 1, 2.5],
                                        [True] * 4 + [False] * 3):
             results.update(
-                FeatureExtractorPT.pet_features(image,
-                                                mask,
-                                                threshold=threshold,
-                                                relative=relative))
+                FeatureExtractorPyradiomicsPT.pet_features(image,
+                                                           mask,
+                                                           threshold=threshold,
+                                                           relative=relative))
+        return results
+
+
+class RieszFeatureExtractor(FeatureExtractor):
+    def __init__(self, params):
+        self.params = params
+
+    def __call__(self, images_path, labels_path):
+        completed_matlab_process = subprocess.run(
+            [
+                "okapy/featureextractor/matlab_bin/RieszExtractor",
+                images_path, labels_path,
+                json.dumps(self.params)
+            ],
+            stdout=subprocess.PIPE,
+            encoding="utf-8",
+        )
+        print("MATLAB STDOUT!!!!!!!!!!!!!!")
+        output = completed_matlab_process.stdout
+        output_lines = output.splitlines()
+        results = json.loads(output_lines[-1])
+
         return results

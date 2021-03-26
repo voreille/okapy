@@ -33,6 +33,11 @@ class MissingWeightException(OkapyException):
         super().__init__(*args, **kwargs)
 
 
+class PETUnitException(OkapyException):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+
 class DicomFileBase():
     _registry = {}  # class var that store the different daughter
 
@@ -237,7 +242,7 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
         elif units == 'CNTS':
             return self._get_suv_philips()
         else:
-            raise ValueError('The {} units is not handled'.format(units))
+            raise PETUnitException('The {} units is not handled'.format(units))
 
     def _get_decay_time(self):
         s = self.slices[0]
@@ -329,7 +334,6 @@ class MaskFile(DicomFileBase, name="mask_base"):
 class SegFile(MaskFile, name="SEG"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.reference_frame = None
         self.raw_volume = None
         self.label_to_num = dict()
         if len(self.dicom_paths) != 1:
@@ -345,7 +349,7 @@ class SegFile(MaskFile, name="SEG"):
         coordinate_matrix[:3, :3] = self.raw_volume.direction
         coordinate_matrix[:3, 3] = self.raw_volume.origin
         coordinate_matrix[3, 3] = 1
-        self.reference_frame = ReferenceFrame(
+        self._reference_frame = ReferenceFrame(
             coordinate_matrix=coordinate_matrix, shape=self.raw_volume.size)
         self._labels = list()
         for segment_number in self.raw_volume.available_segments:
@@ -362,12 +366,11 @@ class SegFile(MaskFile, name="SEG"):
         np_volume = np.transpose(
             self.raw_volume.segment_data(self.label_to_num[label]), trans)
 
-        return VolumeMask(
-            np_volume,
-            reference_frame=copy(self.reference_frame),
-            label=label,
-            reference_dicom_header=self.reference_image.dicom_header,
-            dicom_header=self.dicom_header)
+        return VolumeMask(np_volume,
+                          reference_frame=copy(self.reference_frame),
+                          label=label,
+                          reference_dicom_header=None,
+                          dicom_header=self.dicom_header)
 
 
 class RtstructFile(MaskFile, name="RTSTRUCT"):
