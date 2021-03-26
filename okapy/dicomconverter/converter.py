@@ -102,7 +102,6 @@ class BaseConverter():
             bb = v.reference_frame.bounding_box_intersection(bb)
         return bb
 
-    @abstractmethod
     def get_path(self, volume, is_mask=False):
         if is_mask:
             name = (
