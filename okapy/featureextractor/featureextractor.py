@@ -1,3 +1,4 @@
+import os
 import subprocess
 import json
 import six
@@ -203,9 +204,13 @@ class RieszFeatureExtractor(FeatureExtractor):
         self.params = params
 
     def __call__(self, images_path, labels_path):
+
+        path_of_this_file = os.path.dirname(os.path.abspath(__file__))
+        path_of_executable = os.path.join(path_of_this_file, 'matlab_bin/RieszExtractor')
+
         completed_matlab_process = subprocess.run(
             [
-                "okapy/featureextractor/matlab_bin/RieszExtractor",
+                path_of_executable,
                 images_path, labels_path,
                 json.dumps(self.params)
             ],
