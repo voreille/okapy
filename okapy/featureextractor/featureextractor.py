@@ -35,8 +35,9 @@ class OkapyExtractors():
         for extractor in self.feature_extractors.get(modality,
                                                      [self.default_extractor]):
             results.update(extractor(image, mask))
-        for extractor in self.feature_extractors.get("common"):
-            results.update(extractor(image, mask))
+
+            for extractor in self.feature_extractors.get("common", []):
+                results.update(extractor(image, mask))
         return results
 
 
