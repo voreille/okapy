@@ -61,6 +61,7 @@ class DicomFileBase():
         self.dicom_paths = dicom_paths
         self._reference_frame = reference_frame
         self.study = study
+        self.slices = None
 
     def get_volume(self, *args):
         raise NotImplementedError('It is an abstract class')
@@ -76,15 +77,12 @@ class DicomFileBase():
 
     @property
     def patient_weight(self):
-        if self.slices[0].PatientWeight is None:
-            if hasattr(self.slices[0], 'PatientsWeight'):
+        if hasattr(self.slices[0], 'PatientsWeight'):
+            if self.slices[0].PatientWeight is not None:
                 patient_weight = float(self.slices[0].PatientsWeight)
-            else:
-                raise MissingWeightException(
-                    'Weight is missing in {}'.format(self))
-
         else:
-            patient_weight = float(self.slices[0].PatientWeight)
+            raise MissingWeightException(
+                'Weight is missing in {}'.format(self))
 
         return patient_weight
 
@@ -98,7 +96,6 @@ class DicomFileBase():
 class DicomFileImageBase(DicomFileBase, name="image_base"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.slices = None
 
     def get_physical_values(self):
         raise NotImplementedError('This is an abstract class')
@@ -218,7 +215,10 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
         try:
             patient_weight = super().patient_weight
         except MissingWeightException:
-            list_images = self.study.volume_files.extend(self.study.mask_files)
+            list_images = [
+                f for f in self.study.volume_files + self.study.mask_files
+                if f is not self
+            ]
             weight_found = False
             for f in list_images:
                 try:
@@ -428,13 +428,13 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         else:
             multiple_instances = False
         if type(self.dicom_paths[0]) == FileDataset:
-            dcms = self.dicom_paths
+            self.slices = self.dicom_paths
         else:
-            dcms = [pdcm.read_file(p) for p in self.dicom_paths]
+            self.slices = [pdcm.read_file(p) for p in self.dicom_paths]
         self.reference_image_uid = RtstructFile.get_reference_image_uid(
-            dcms[0])
+            self.slices[0])
         self.contours = {}
-        for dcm in dcms:
+        for dcm in self.slices:
             if (self.reference_image_uid !=
                     RtstructFile.get_reference_image_uid(dcm)):
                 raise RuntimeError(
