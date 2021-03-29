@@ -3,6 +3,7 @@ from pathlib import Path
 from itertools import product
 from tempfile import mkdtemp
 from shutil import rmtree
+from pandas.core.frame import DataFrame
 
 import yaml
 import numpy as np
@@ -192,10 +193,19 @@ class NiftiConverter(BaseConverter):
 
 
 class ExtractorConverter(BaseConverter):
-    def __init__(self, extraction_params, **kwargs):
+    def __init__(self, extraction_params, results_format="long", **kwargs):
         super().__init__(**kwargs)
         self.featureextractors = OkapyExtractors(extraction_params)
         self.output_folder = None
+        self.results_format = ExtractorConverter._check_results_format(
+            results_format)
+
+    @staticmethod
+    def _check_results_format(results_format):
+        if results_format not in ["long", "multiindex"]:
+            raise ValueError(f"The format {results_format} for the argument "
+                             f"results_format is not supported.")
+        return results_format
 
     @staticmethod
     def from_params(params_path):
@@ -208,15 +218,17 @@ class ExtractorConverter(BaseConverter):
         return ExtractorConverter(params["feature_extraction"],
                                   **params["preprocessing"])
 
-    @staticmethod
-    def get_empty_results_df():
-        return pd.DataFrame(index=pd.MultiIndex(levels=[[], []],
-                                                codes=[[], []],
-                                                names=["patient", "VOI"]),
-                            columns=pd.MultiIndex(
-                                levels=[[], []],
-                                codes=[[], []],
-                                names=["modality", "features"]))
+    def get_empty_results_df(self):
+        if self.results_format == "mutltiindex":
+            return pd.DataFrame(
+                index=pd.MultiIndex(levels=[[], []],
+                                    codes=[[], []],
+                                    names=["patient_id", "VOI"]),
+                columns=pd.MultiIndex(levels=[[], []],
+                                      codes=[[], []],
+                                      names=["modality", "features"]))
+        elif self.results_format == "long":
+            return pd.DataFrame()
 
     def extract_volume_of_interest(self, study, labels=None):
         masks_list = list()
@@ -266,7 +278,7 @@ class ExtractorConverter(BaseConverter):
                 masks_list))
 
         if results_df is None:
-            results_df = ExtractorConverter.get_empty_results_df()
+            results_df = self.get_empty_results_df()
 
         for (volume, modality), (mask, label) in product(
                 zip(volumes_list, modalities_list),
@@ -277,22 +289,36 @@ class ExtractorConverter(BaseConverter):
                 if "diagnostics" in key or ("glcm" in key
                                             and "original" not in key):
                     continue
-                results_df.loc[(study.patient_id, label),
-                               (modality, key)] = val
+                if self.results_format == "multiindex":
+                    results_df.loc[(study.patient_id, label),
+                                   (modality, key)] = val
+                elif self.results_format == "long":
+                    results_df = results_df.append(
+                        {
+                            "patient_id": study.patient_id,
+                            "modality": modality,
+                            "VOI": label,
+                            "feature_name": key,
+                            "feature_value": val,
+                        },
+                        ignore_index=True)
 
         return results_df
 
     def __call__(self, input_folder, labels=None):
-        self.output_folder = mkdtemp()
         try:
+            self.output_folder = mkdtemp()
             studies_list = self.dicom_walker(input_folder)
-            results_df = ExtractorConverter.get_empty_results_df()
+            results_df = self.get_empty_results_df()
             for study in studies_list:
                 results_df = self.process_study(study,
                                                 results_df=results_df,
                                                 labels=labels)
+            rmtree(self.output_folder, True)
+            self.output_folder = None
         except Exception as e:
             rmtree(self.output_folder, True)
+            self.output_folder = None
             print(e)
 
         return results_df
