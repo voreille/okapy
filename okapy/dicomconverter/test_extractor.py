@@ -1,10 +1,10 @@
 import unittest
 
-from okapy.dicomconverter.converter import ExtractorConverter, NiftiConverter
+from okapy.dicomconverter.converter import ExtractorConverter
 
 
 class TestOkapy(unittest.TestCase):
-    def test_extractor(self):
+    def test_extractor1(self):
 
         # input_path = '/home/val/Documents/check_hecktor_anna_tmp/HN-CHUS-047'
         # input_path = '/home/val/Documents/check_hecktor_anna_tmp/P9'
@@ -16,6 +16,14 @@ class TestOkapy(unittest.TestCase):
         # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
         # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
         extraction_params = "/home/val/python_wkspce/okapy/parameters/defaults/defaults.yaml"
+        converter = ExtractorConverter.from_params(extraction_params)
+        result = converter(input_path, labels=["GTVt", "GTVn"])
+        print(result)
+
+    def test_extractor2(self):
+
+        input_path = "/mnt/nas4/datasets/ToReadme/HECKTOR/training/dicom/HN-HMR-029"
+        extraction_params = "/home/val/python_wkspce/okapy/parameters/defaults/defaults_pyradiomics_only.yaml"
         converter = ExtractorConverter.from_params(extraction_params)
         result = converter(input_path, labels=["GTVt", "GTVn"])
         print(result)
