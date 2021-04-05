@@ -154,18 +154,13 @@ class ReferenceFrame():
 
 
 class Volume():
-    def __init__(
-        self,
-        np_image=None,
-        reference_frame=None,
-        modality=None,
-    ):
+    def __init__(self, np_image=None, reference_frame=None, dicom_header=None):
         self.np_image = np_image
         self.reference_frame = reference_frame
-        self.modality = modality
+        self.dicom_header = dicom_header
 
-    # def __getattr__(self, attr):
-    #     return getattr(self.reference_frame, attr)
+    def __getattr__(self, name):
+        return getattr(self.dicom_header, name)
 
     def astype(self, dtype):
         self.np_image = self.np_image.astype(dtype)
@@ -174,7 +169,7 @@ class Volume():
     def zeros_like(self):
         return Volume(
             np_image=np.zeros_like(self.np_image),
-            modality=self.modality,
+            dicom_header=self.dicom_header,
             reference_frame=copy(self.reference_frame),
         )
 
@@ -225,24 +220,38 @@ class Volume():
         sitk_image.SetSpacing(self.reference_frame.voxel_spacing)
         sitk_image.SetOrigin(self.reference_frame.origin)
         sitk_image.SetDirection(
-            self.reference_frame.coordinate_matrix[:3, :3].flatten('F') /
-            np.repeat(self.reference_frame.voxel_spacing, 3))
+            self.reference_frame.coordinate_matrix[:3, :3].flatten() /
+            np.tile(self.reference_frame.voxel_spacing, 3))
         return sitk_image
 
 
 class VolumeMask(Volume):
-    def __init__(self, *args, label=None, reference_modality=None, **kwargs):
+    def __init__(self,
+                 *args,
+                 label=None,
+                 reference_dicom_header=None,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         self.np_image[self.np_image != 0] = 1
-        self.reference_modality = reference_modality
+        self.reference_dicom_header = reference_dicom_header
         self.label = label
 
     def zeros_like(self):
         return VolumeMask(np_image=np.zeros_like(self.np_image),
                           reference_frame=copy(self.reference_frame),
-                          reference_modality=self.reference_modality,
-                          modality=self.modality,
+                          reference_dicom_header=self.reference_dicom_header,
+                          dicom_header=self.dicom_header,
                           label=self.label)
+
+    def __getattr__(self, name):
+        if "reference_" in name:
+            if self.reference_dicom_header:
+                return getattr(self.reference_dicom_header,
+                               name.replace("reference_", ""))
+            else:
+                return None
+        else:
+            return getattr(self.dicom_header, name)
 
     @property
     def bb_vx(self):
@@ -308,7 +317,9 @@ class VolumeMask(Volume):
             return VolumeMask(
                 np_image=np_image,
                 reference_frame=reference_frame,
-                name=self.name,
+                reference_dicom_header=self.reference_dicom_header,
+                label=self.label,
+                dicom_header=self.dicom_header,
             )
 
         else:

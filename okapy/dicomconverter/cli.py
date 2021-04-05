@@ -26,12 +26,11 @@ def main(input_directory, output_filepath, list_labels, extension, spacing,
     if not os.path.exists(output_filepath):
         os.makedirs(output_filepath)
 
-    converter = Converter(output_filepath,
-                          padding=padding,
+    converter = Converter(padding=padding,
                           resampling_spacing=spacing,
                           list_labels=list_labels,
                           extension=extension)
-    result = converter(input_directory)
+    result = converter(input_directory, output_filepath)
     print(result)
 
 

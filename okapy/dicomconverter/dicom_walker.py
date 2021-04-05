@@ -2,50 +2,14 @@
 TODO: Is it better to create a class for just the header and another for the
 files?
 '''
-import os
-from os.path import join
-from string import Template
+from pathlib import Path
 
-import SimpleITK as sitk
+from tqdm import tqdm
 import pydicom as pdcm
 from pydicom.errors import InvalidDicomError
 
-from okapy.dicomconverter.dicom_file import Study
-
-
-class DicomHeader():
-    def __init__(self,
-                 patient_id=None,
-                 study_instance_uid=None,
-                 study_date=None,
-                 series_instance_uid=None,
-                 modality=None):
-        self.patient_id = patient_id
-        self.study_instance_uid = study_instance_uid
-        self.study_date = study_date
-        self.series_instance_uid = series_instance_uid
-        self.modality = modality
-
-    def __str__(self):
-        return ('PatientID: {}, StudyInstanceUID: {}, SeriesInstanceUID: {},'
-                ' Modality: {}'.format(self.patient_id,
-                                       self.study_instance_uid,
-                                       self.series_instance_uid,
-                                       self.modality))
-
-    def __eq__(self, dcm_header):
-        '''
-        Could be written more efficiently with a function like dir()
-        for another time
-        '''
-        if isinstance(dcm_header, DicomHeader):
-            return (
-                self.patient_id == dcm_header.patient_id
-                and self.study_instance_uid == dcm_header.study_instance_uid
-                and self.series_instance_uid == dcm_header.series_instance_uid
-                and self.modality == dcm_header.modality)
-        else:
-            return False
+from okapy.dicomconverter.study import Study
+from okapy.dicomconverter.dicom_header import DicomHeader
 
 
 class DicomFile():
@@ -70,34 +34,47 @@ class DicomWalker():
         headers and sort them
         '''
         dicom_files = list()
-        for (dirpath, dirnames, filenames) in os.walk(input_dirpath):
-            for filename in filenames:
-                try:
-                    data = pdcm.dcmread(join(dirpath, filename),
-                                        stop_before_pixels=True)
-                except InvalidDicomError:
-                    print('This file {} is not recognised as DICOM'.format(
-                        filename))
-                    continue
-                try:
-                    modality = data.Modality
-                except AttributeError:
-                    print('not reading the DICOMDIR')
-                    continue
+        files = [f for f in Path(input_dirpath).rglob("*") if f.is_file()]
+        # to test wether a slice appear multiple times
+        for file in tqdm(files, desc="Walkin through all the files"):
+            try:
+                data = pdcm.filereader.dcmread(str(file.resolve()),
+                                               specific_tags=[
+                                                   "PatientID",
+                                                   "StudyInstanceUID",
+                                                   "StudyDate",
+                                                   "SeriesInstanceUID",
+                                                   "Modality",
+                                                   "SeriesNumber",
+                                                   "InstanceNumber",
+                                               ])
 
-                dicom_header = DicomHeader(
-                    patient_id=data.PatientID,
-                    study_instance_uid=data.StudyInstanceUID,
-                    study_date=data.StudyDate,
-                    series_instance_uid=data.SeriesInstanceUID,
-                    modality=modality)
-                dicom_files.append(
-                    DicomFile(dicom_header=dicom_header,
-                              path=join(dirpath, filename)))
+            except InvalidDicomError:
+                print('This file {} is not recognised as DICOM'.format(
+                    file.name))
+                continue
+            try:
+                modality = data.Modality
+            except AttributeError:
+                print('not reading the DICOMDIR')
+                continue
+
+            dicom_header = DicomHeader(
+                patient_id=data.get("PatientID", -1),
+                study_instance_uid=data.get("StudyInstanceUID", -1),
+                study_date=data.get("StudyDate", -1),
+                series_instance_uid=data.get("SeriesInstanceUID", -1),
+                series_number=data.get("SeriesNumber", -1),
+                instance_number=data.get("InstanceNumber", -1),
+                image_type=data.get("ImageType", ["-1"]),
+                modality=modality)
+            dicom_files.append(
+                DicomFile(dicom_header=dicom_header, path=str(file.resolve())))
 
         dicom_files.sort(key=lambda x: (
-            x.dicom_header.patient_id, x.dicom_header.study_instance_uid, x.
-            dicom_header.modality, x.dicom_header.series_instance_uid, x.path))
+            x.dicom_header.study_instance_uid, x.dicom_header.modality, x.
+            dicom_header.series_instance_uid, x.dicom_header.instance_number, x
+            .dicom_header.patient_id))
         return dicom_files
 
     def _get_studies(self, dicom_files):
@@ -108,10 +85,9 @@ class DicomWalker():
         '''
         im_dicom_files = list()
         studies = list()
-        dcm_header = DicomHeader()
+        previous_dcm_header = DicomHeader()
 
         previous_study_uid = None
-
         for i, f in enumerate(dicom_files):
             # When the image changeschanges we store it as a whole
             current_study_uid = f.dicom_header.study_instance_uid
@@ -120,8 +96,9 @@ class DicomWalker():
                                       study_date=f.dicom_header.study_date,
                                       patient_id=f.dicom_header.patient_id)
 
-            if i > 0 and not f.dicom_header == dicom_files[i - 1].dicom_header:
-                current_study.append_dicom_files(im_dicom_files, dcm_header)
+            if i > 0 and not f.dicom_header.same_serie_as(previous_dcm_header):
+                current_study.append_dicom_files(im_dicom_files,
+                                                 previous_dcm_header)
                 im_dicom_files = list()
 
             if i > 0 and not (current_study_uid == previous_study_uid):
@@ -130,11 +107,13 @@ class DicomWalker():
                                       study_date=f.dicom_header.study_date,
                                       patient_id=f.dicom_header.patient_id)
 
-            im_dicom_files.append(f)
-            dcm_header = f.dicom_header
-            previous_study_uid = f.dicom_header.study_instance_uid
+            # Only keeping files that are different
+            if f.dicom_header != previous_dcm_header:
+                im_dicom_files.append(f)
+                previous_dcm_header = f.dicom_header
+                previous_study_uid = f.dicom_header.study_instance_uid
 
-        current_study.append_dicom_files(im_dicom_files, dcm_header)
+        current_study.append_dicom_files(im_dicom_files, previous_dcm_header)
         studies.append(current_study)
         return studies
 
