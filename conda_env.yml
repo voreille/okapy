@@ -5,11 +5,17 @@ channels:
     - conda-forge
     - radiomics
 dependencies:
+    - python=3.7
     - pydicom
     - scikit-image
     - scipy
     - numpy
-    - pyradiomics
+    - pyradiomics=3.0.1
     - pandas
     - matplotlib
     - SimpleITK
+    - openpyxl
+    - tqdm
+    - pip
+    - pip:
+          - pydicom-seg
