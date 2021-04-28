@@ -23,11 +23,13 @@ class OkapyExtractors():
         self.default_extractor = FeatureExtractorPyradiomics()
         for modality, sub_dict in params.items():
             self.feature_extractors[modality] = list()
-            for extractor_type, list_params in sub_dict.items():
+            for extractor_type, list_extractors in sub_dict.items():
                 self.feature_extractors[modality].extend([
                     create_extractor(modality=modality,
                                      extractor_type=extractor_type,
-                                     params=p) for p in list_params
+                                     name=extractor_name,
+                                     params=params)
+                    for extractor_name, params in list_extractors.items()
                 ])
 
     def __call__(self, image, mask, modality=None):
@@ -40,14 +42,14 @@ class OkapyExtractors():
         return results
 
 
-def create_extractor(modality=None, extractor_type="pyradiomics", params=None):
+def create_extractor(modality=None, name="", extractor_type="pyradiomics", params=None):
     if extractor_type == "pyradiomics":
         if modality == 'PT':
-            return FeatureExtractorPyradiomicsPT(params)
+            return FeatureExtractorPyradiomicsPT(name=name, params=params)
         else:
-            return FeatureExtractorPyradiomics(params)
+            return FeatureExtractorPyradiomics(name=name, params=params)
     elif extractor_type == "riesz":
-        return RieszFeatureExtractor(params)
+        return RieszFeatureExtractor(name=name, params=params)
 
     else:
         raise ValueError(f"The type {extractor_type} is not recongised")
