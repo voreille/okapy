@@ -50,6 +50,7 @@ class TestOkapy(unittest.TestCase):
             "/mnt/nas2/data/Personal/Vincent/brain_mets/1A0B5C8D1E0F0/SERIES-6-CT/"
         )
         output_path_im = '/home/val/Documents/output_okapy/image_test1.nii.gz'
+        output_path_ct = '/home/val/Documents/output_okapy/ct_test1.nii.gz'
         output_path_mask = '/home/val/Documents/output_okapy/mask_test1.nii.gz'
         image_dcm_paths = [str(f.resolve()) for f in image_path.rglob("*")]
         mask_dcm_paths = [str(f.resolve()) for f in mask_path.rglob("*")]
@@ -58,41 +59,45 @@ class TestOkapy(unittest.TestCase):
         slices = [pdcm.filereader.dcmread(dcm) for dcm in mask_dcm_paths]
         mask_file = get_mask_file(slices[0], ct_dcm_paths)
         print(mask_file.labels)
-        sitk_mask = mask_file.get_volume(mask_file.labels[0]).sitk_image
+        sitk_mask = mask_file.get_volume("Brain").sitk_image
         sitk.WriteImage(sitk_mask, output_path_mask)
 
         slices = [pdcm.filereader.dcmread(dcm) for dcm in image_dcm_paths]
         sitk_image = get_sitk_image(slices)
         sitk.WriteImage(sitk_image, output_path_im)
 
-    def test_converter(self):
-        """
-        The walker must extract all the MR and also all the VOIs with their
-        label in the name of the file and resample at 0.75 mm
-        """
+        slices = [pdcm.filereader.dcmread(dcm) for dcm in ct_dcm_paths]
+        sitk_image = get_sitk_image(slices)
+        sitk.WriteImage(sitk_image, output_path_ct)
 
-        # input_path = '/home/val/Documents/check_hecktor_anna_tmp/HN-CHUS-047'
-        # input_path = '/home/val/Documents/check_hecktor_anna_tmp/P9'
-        # input_path = '/home/val/python_wkspce/lcnn_radiomic/data/raw/Head-Neck-PET-CT/DICOM/HN-CHUS-047'
-        # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
-        input_path = '/home/val/python_wkspce/lymphangitis3.0/data/raw/PatientLC_51'
-        # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
-        # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
-        # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
-        output_path = '/home/val/Documents/output_okapy'
-        converter = NiftiConverter(output_folder=output_path,
-                                   list_labels=['GTV L', 'GTV N', 'GTV T'],
-                                   resampling_spacing=(0.75, 0.75, 0.75))
-        result = converter(input_path)
-        print(result)
+    # def test_converter(self):
+    #     """
+    #     The walker must extract all the MR and also all the VOIs with their
+    #     label in the name of the file and resample at 0.75 mm
+    #     """
 
-    # def test_dicomfilemr(self):
-    #     input_path = Path(
-    #         '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/dicoms/')
-    #     dcm_paths = [str(k.resolve()) for k in input_path.rglob('*.dcm')]
-    #     dicom_mr = DicomFileMR(dicom_paths=dcm_paths)
-    #     volume = dicom_mr.get_volume()
-    #     assert True
+    #     # input_path = '/home/val/Documents/check_hecktor_anna_tmp/HN-CHUS-047'
+    #     # input_path = '/home/val/Documents/check_hecktor_anna_tmp/P9'
+    #     # input_path = '/home/val/python_wkspce/lcnn_radiomic/data/raw/Head-Neck-PET-CT/DICOM/HN-CHUS-047'
+    #     # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
+    #     input_path = '/home/val/python_wkspce/lymphangitis3.0/data/raw/PatientLC_51'
+    #     # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
+    #     # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
+    #     # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
+    #     output_path = '/home/val/Documents/output_okapy'
+    #     converter = NiftiConverter(output_folder=output_path,
+    #                                list_labels=['GTV L', 'GTV N', 'GTV T'],
+    #                                resampling_spacing=(0.75, 0.75, 0.75))
+    #     result = converter(input_path)
+    #     print(result)
+
+    # # def test_dicomfilemr(self):
+    # #     input_path = Path(
+    # #         '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/dicoms/')
+    # #     dcm_paths = [str(k.resolve()) for k in input_path.rglob('*.dcm')]
+    # #     dicom_mr = DicomFileMR(dicom_paths=dcm_paths)
+    # #     volume = dicom_mr.get_volume()
+    # #     assert True
 
     def test_ref_frame(self):
         orientation = [0, 1, 0, 0, 0, -1]

@@ -50,6 +50,15 @@ class DicomFileBase():
     def get(cls, name: str):
         return DicomFileBase._registry[name]
 
+    @classmethod
+    def from_dicom_paths(cls, dicom_paths):
+        if isinstance(dicom_paths[0], FileDataset):
+            modality = dicom_paths[0].Modality
+        else:
+            modality = pdcm.filereader.dcmread(
+                dicom_paths[0], stop_before_pixels=True).Modality
+        return DicomFileBase._registry[modality](dicom_paths=dicom_paths)
+
     def __init__(
             self,
             dicom_header=None,
