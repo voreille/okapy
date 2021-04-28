@@ -6,7 +6,8 @@ preprocessing:
 feature_extraction:
   CT:
     pyradiomics:
-      - imageType:
+      original:
+        imageType:
           Original: {}
         featureClass:
           shape:
@@ -40,7 +41,8 @@ feature_extraction:
           voxelArrayShift: 1000
           label: 1
 
-      - imageType:
+      log:
+        imageType:
           LoG:
             sigma: [1.0, 2.0, 3.0, 4.0, 5.0] # If you include sigma values >5, remember to also increase the padDistance.
 
@@ -53,7 +55,8 @@ feature_extraction:
           label: 1
   PT:
     pyradiomics:
-      - imageType:
+      original:
+        imageType:
           Original: {}
         featureClass:
           shape:
@@ -87,7 +90,8 @@ feature_extraction:
           voxelArrayShift: 0
           label: 1
 
-      - imageType:
+      log:
+        imageType:
           LoG:
             sigma: [1.0, 2.0, 3.0, 4.0, 5.0] # If you include sigma values >5, remember to also increase the padDistance.
 

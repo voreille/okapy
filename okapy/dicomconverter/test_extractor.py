@@ -20,13 +20,13 @@ class TestOkapy(unittest.TestCase):
         result = converter(input_path, labels=["GTVt", "GTVn"])
         print(result)
 
-    def test_extractor2(self):
+    # def test_extractor2(self):
 
-        input_path = "/mnt/nas4/datasets/ToReadme/HECKTOR/training/dicom/HN-HMR-029"
-        extraction_params = "/home/val/python_wkspce/okapy/parameters/defaults/defaults_pyradiomics_only.yaml"
-        converter = ExtractorConverter.from_params(extraction_params)
-        result = converter(input_path, labels=["GTVt", "GTVn"])
-        print(result)
+    #     input_path = "/mnt/nas4/datasets/ToReadme/HECKTOR/training/dicom/HN-HMR-029"
+    #     extraction_params = "/home/val/python_wkspce/okapy/parameters/defaults/defaults_pyradiomics_only.yaml"
+    #     converter = ExtractorConverter.from_params(extraction_params)
+    #     result = converter(input_path, labels=["GTVt", "GTVn"])
+    #     print(result)
 
 
 if __name__ == '__main__':

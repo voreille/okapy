@@ -23,11 +23,13 @@ class OkapyExtractors():
         self.default_extractor = FeatureExtractorPyradiomics()
         for modality, sub_dict in params.items():
             self.feature_extractors[modality] = list()
-            for extractor_type, list_params in sub_dict.items():
+            for extractor_type, list_extractors in sub_dict.items():
                 self.feature_extractors[modality].extend([
                     create_extractor(modality=modality,
                                      extractor_type=extractor_type,
-                                     params=p) for p in list_params
+                                     name=extractor_name,
+                                     params=params)
+                    for extractor_name, params in list_extractors.items()
                 ])
 
     def __call__(self, image, mask, modality=None):
@@ -40,14 +42,14 @@ class OkapyExtractors():
         return results
 
 
-def create_extractor(modality=None, extractor_type="pyradiomics", params=None):
+def create_extractor(modality=None, name="", extractor_type="pyradiomics", params=None):
     if extractor_type == "pyradiomics":
         if modality == 'PT':
-            return FeatureExtractorPyradiomicsPT(params)
+            return FeatureExtractorPyradiomicsPT(name=name, params=params)
         else:
-            return FeatureExtractorPyradiomics(params)
+            return FeatureExtractorPyradiomics(name=name, params=params)
     elif extractor_type == "riesz":
-        return RieszFeatureExtractor(params)
+        return RieszFeatureExtractor(name=name, params=params)
 
     else:
         raise ValueError(f"The type {extractor_type} is not recongised")
@@ -85,8 +87,9 @@ def check_image(image):
 
 class FeatureExtractor(ABC):
     @abstractmethod
-    def __init__(self, params=None):
-        pass
+    def __init__(self, name="", params=None):
+        self.name = name
+        self.params = params
 
     @abstractmethod
     def __call__(self, image, mask):
@@ -94,9 +97,10 @@ class FeatureExtractor(ABC):
 
 
 class FeatureExtractorPyradiomics(FeatureExtractor):
-    def __init__(self, params=None):
-        self.params = params
-        self.radiomics_extractor = RadiomicsFeatureExtractor(params)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.radiomics_extractor = RadiomicsFeatureExtractor(
+            kwargs.get("params"))
 
     def __call__(self, image_path, mask_path, **kwargs):
         image = check_image(image_path)
@@ -106,8 +110,8 @@ class FeatureExtractorPyradiomics(FeatureExtractor):
 
 
 class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
-    def __init__(self, params=None):
-        super().__init__(params=params)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     @staticmethod
     def translate_radiomics_output(results):
@@ -199,8 +203,8 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
 
 
 class RieszFeatureExtractor(FeatureExtractor):
-    def __init__(self, params):
-        self.params = params
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def __call__(self, images_path, labels_path):
         completed_matlab_process = subprocess.run(
