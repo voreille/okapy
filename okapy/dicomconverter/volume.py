@@ -9,10 +9,31 @@ TODO: Add check of the bounding_box, if it goes beyond the image domain
 '''
 
 from copy import copy
+from itertools import product
 
 import numpy as np
 from scipy import ndimage
 import SimpleITK as sitk
+
+
+def correct_bb(bb):
+    bb_corrected = np.zeros((6, ))
+    bb_corrected[:3] = np.minimum(bb[:3], bb[3:])
+    bb_corrected[3:] = np.maximum(bb[:3], bb[3:])
+    return bb_corrected
+
+
+def get_bb_diagonal_frame(mask, resampling_spacing=(1, 1, 1)):
+    bb_vx = mask.bb_vx
+    points = [
+        np.array([pr, pc, ps]) for pr, pc, ps in product(bb_vx[:3], bb_vx[3:])
+    ]
+    projected_points = np.stack(
+        [mask.reference_frame.vx_to_mm(p) for p in points], axis=-1)
+    bb_diag = np.zeros((6, ))
+    bb_diag[:3] = np.min(projected_points, axis=-1)
+    bb_diag[3:] = np.max(projected_points, axis=-1)
+    return bb_diag
 
 
 class ReferenceFrame():
@@ -39,6 +60,17 @@ class ReferenceFrame():
             self.orientation = orientation
             self.pixel_spacing = pixel_spacing
             self.shape = np.array(shape)
+
+    @staticmethod
+    def get_diagonal_reference_frame(
+            pixel_spacing=(1, 1, 1),
+            origin=(0, 0, 0),
+            shape=None,
+    ):
+        matrix = np.eye(4)
+        matrix[:3, :3] = matrix[:3, :3] * pixel_spacing
+        matrix[:3, 3] = origin
+        return ReferenceFrame(coordinate_matrix=matrix, shape=shape)
 
     @staticmethod
     def compute_coordinate_matrix(origin=None,
@@ -90,18 +122,23 @@ class ReferenceFrame():
         return np.linalg.inv(self.coordinate_matrix)
 
     @property
-    def bounding_box(self):
-        return np.array(
+    def domain(self):
+        bb = np.array(
             [*self.vx_to_mm([0, 0, 0]), *self.vx_to_mm(self.shape - 1)])
+        return correct_bb(bb)
 
-    def bounding_box_intersection(self, bb):
-        bb_vx_1 = self.mm_to_vx(bb[:3])
-        bb_vx_2 = self.mm_to_vx(bb[3:])
-        bb_vx = np.zeros((6, ))
-        bb_vx[0:3] = np.maximum([0, 0, 0], bb_vx_1)
-        bb_vx[3:] = np.minimum(
-            [self.shape[0] - 1, self.shape[1] - 1, self.shape[2] - 1], bb_vx_2)
-        return np.array([*self.vx_to_mm(bb_vx[:3]), *self.vx_to_mm(bb_vx[3:])])
+    @property
+    def bb(self):
+        points = [
+            np.array([pr, pc, ps])
+            for pr, pc, ps in product(*zip([0, 0, 0], self.shape - 1))
+        ]
+        projected_points = np.stack([self.vx_to_mm(p) for p in points],
+                                    axis=-1)
+        bb_diag = np.zeros((6, ))
+        bb_diag[:3] = np.min(projected_points, axis=-1)
+        bb_diag[3:] = np.max(projected_points, axis=-1)
+        return bb_diag
 
     def direction_vector(self, vx_vector):
         v = self.vx_to_mm(vx_vector) - self.vx_to_mm([0, 0, 0])
@@ -141,8 +178,10 @@ class ReferenceFrame():
         # You need to add one since the last pixel of the bb is in the domain
         if bb is None:
             bb = self.bounding_box
+
         output_shape = np.ceil(
-            (bb[3:] - bb[:3]) / new_voxel_spacing).astype(int)
+            np.linalg.inv(self.coordinate_matrix[:3, :3]) @ (bb[3:] - bb[:3]) /
+            new_voxel_spacing).astype(int)
         new_coordinate_matrix = np.zeros((4, 4))
         new_coordinate_matrix[:3, :3] = (self.coordinate_matrix[:3, :3] /
                                          self.voxel_spacing *
@@ -172,46 +211,6 @@ class Volume():
             dicom_header=self.dicom_header,
             reference_frame=copy(self.reference_frame),
         )
-
-    def _check_resampling_spacing(self, resampling_vx_spacing):
-        if len(resampling_vx_spacing) == 3:
-            cond = True
-            for i in range(3):
-                cond *= (self.reference_frame.voxel_spacing[i] ==
-                         resampling_vx_spacing[i])
-        else:
-            cond = False
-
-        return cond
-
-    def _get_resampled_np(self, resampling_vx_spacing, bounding_box, order=3):
-        new_reference_frame = self.reference_frame.get_new_reference_frame(
-            bounding_box, resampling_vx_spacing)
-        matrix = np.dot(self.reference_frame.inv_coordinate_matrix,
-                        new_reference_frame.coordinate_matrix)
-
-        np_image = ndimage.affine_transform(
-            self.np_image,
-            matrix[:3, :3],
-            offset=matrix[:3, 3],
-            mode='mirror',
-            order=order,
-            output_shape=new_reference_frame.shape)
-
-        return np_image, new_reference_frame
-
-    def resample(self, resampling_vx_spacing, bounding_box, order=3):
-        """
-        Resample the 3D volume to the resampling_vx_spacing according to
-        the bounding_boc in cm (x1, y1, z1, x2, y2, z2)
-        """
-        if not self._check_resampling_spacing(resampling_vx_spacing):
-
-            np_image, reference_frame = self._get_resampled_np(
-                resampling_vx_spacing, bounding_box, order)
-
-            self.np_image = np_image
-            self.reference_frame = reference_frame
 
     @property
     def sitk_image(self):
@@ -267,63 +266,17 @@ class VolumeMask(Volume):
 
     @property
     def bb(self):
-        indices = np.where(self.np_image != 0)
-        return np.array([
-            *self.reference_frame.vx_to_mm(
-                [np.min(indices[0]),
-                 np.min(indices[1]),
-                 np.min(indices[2])]),
-            *self.reference_frame.vx_to_mm(
-                [np.max(indices[0]),
-                 np.max(indices[1]),
-                 np.max(indices[2])]),
-        ])
-
-    def padded_bb(self, padding):
-        bb = self.bb
-        bb[:3] = bb[:3] - padding
-        bb[3:] = bb[3:] + padding
-        return bb
-
-    def bb_union(self, bb, padding=0):
-        bb_vx_1 = self.reference_frame.mm_to_vx(bb[:3])
-        bb_vx_2 = self.reference_frame.mm_to_vx(bb[3:])
         bb_vx = self.bb_vx
-        bb_vx[0:3] = np.minimum(bb_vx[0:3], bb_vx_1)
-        bb_vx[3:] = np.maximum(bb_vx[3:], bb_vx_2)
-        return np.array([
-            *(self.reference_frame.vx_to_mm(bb_vx[:3]) - padding),
-            *(self.reference_frame.vx_to_mm(bb_vx[3:]) + padding)
-        ])
-
-    def resample(self, resampling_vx_spacing, bounding_box, order=1):
-        super().resample(resampling_vx_spacing=resampling_vx_spacing,
-                         bounding_box=bounding_box,
-                         order=order)
-        self.np_image[self.np_image > 0.5] = 1
-        self.np_image[self.np_image < 0.5] = 0
-
-    def get_resampled_volume(self,
-                             resampling_vx_spacing,
-                             bounding_box,
-                             order=1):
-        if not self._check_resampling_spacing(resampling_vx_spacing):
-
-            np_image, reference_frame = self._get_resampled_np(
-                resampling_vx_spacing, bounding_box, order=order)
-            np_image[np_image > 0.5] = 1
-            np_image[np_image < 0.5] = 0
-
-            return VolumeMask(
-                np_image=np_image,
-                reference_frame=reference_frame,
-                reference_dicom_header=self.reference_dicom_header,
-                label=self.label,
-                dicom_header=self.dicom_header,
-            )
-
-        else:
-            return self
+        points = [
+            np.array([pr, pc, ps])
+            for pr, pc, ps in product(*zip(bb_vx[:3], bb_vx[3:]))
+        ]
+        projected_points = np.stack(
+            [self.reference_frame.vx_to_mm(p) for p in points], axis=-1)
+        bb_diag = np.zeros((6, ))
+        bb_diag[:3] = np.min(projected_points, axis=-1)
+        bb_diag[3:] = np.max(projected_points, axis=-1)
+        return bb_diag
 
 
 class VolumeProcessor():
@@ -354,13 +307,25 @@ class MRStandardizer(VolumeProcessor):
 
 
 class BasicResampler(VolumeProcessor):
-    def __init__(self, resampling_spacing=(1, 1, 1), order=3):
+    def __init__(self,
+                 resampling_spacing=(1, 1, 1),
+                 order=3,
+                 mode="mirror",
+                 cval=0):
         self.resampling_spacing = resampling_spacing
         self.order = order
+        self.mode = mode
+        self.cval = cval
 
     def process(self, volume, bounding_box):
-        new_reference_frame = volume.reference_frame.get_new_reference_frame(
-            bounding_box, self.resampling_spacing)
+        bounding_box = np.array(bounding_box)
+        output_shape = np.ceil((bounding_box[3:] - bounding_box[:3]) /
+                               self.resampling_spacing).astype(int)
+        new_reference_frame = ReferenceFrame.get_diagonal_reference_frame(
+            pixel_spacing=self.resampling_spacing,
+            origin=bounding_box[:3],
+            shape=output_shape,
+        )
         matrix = np.dot(volume.reference_frame.inv_coordinate_matrix,
                         new_reference_frame.coordinate_matrix)
 
@@ -368,8 +333,9 @@ class BasicResampler(VolumeProcessor):
             volume.np_image,
             matrix[:3, :3],
             offset=matrix[:3, 3],
-            mode='mirror',
+            mode=self.mode,
             order=self.order,
+            cval=self.cval,
             output_shape=new_reference_frame.shape)
 
         v = volume.zeros_like()
@@ -379,8 +345,8 @@ class BasicResampler(VolumeProcessor):
 
 
 class MaskResampler(BasicResampler):
-    def __init__(self, *args, threshold=0.5, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, *args, threshold=0.5, mode="constant", **kwargs):
+        super().__init__(*args, mode=mode, **kwargs)
         self.t = threshold
 
     def threshold(self, volume):

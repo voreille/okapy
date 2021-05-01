@@ -355,7 +355,8 @@ class SegFile(MaskFile, name="SEG"):
             dcm = pdcm.dcmread(self.dicom_paths[0])
         self.raw_volume = pydicom_seg.SegmentReader().read(dcm)
         coordinate_matrix = np.zeros((4, 4))
-        coordinate_matrix[:3, :3] = self.raw_volume.direction
+        coordinate_matrix[:3, :3] = self.raw_volume.direction * np.tile(
+            self.raw_volume.spacing, [3, 1])
         coordinate_matrix[:3, 3] = self.raw_volume.origin
         coordinate_matrix[3, 3] = 1
         self._reference_frame = ReferenceFrame(

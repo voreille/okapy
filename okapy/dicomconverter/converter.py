@@ -18,6 +18,22 @@ from okapy.dicomconverter.volume_processor import IdentityProcessor
 from okapy.featureextractor.featureextractor import OkapyExtractors
 
 
+def bb_union(bbs):
+    out = np.array([np.inf, np.inf, np.inf, -np.inf, -np.inf, -np.inf])
+    for bb in bbs:
+        out[:3] = np.minimum(out[:3], bb[:3])
+        out[3:] = np.maximum(out[3:], bb[3:])
+    return out
+
+
+def bb_intersection(bbs):
+    out = np.array([-np.inf, -np.inf, -np.inf, np.inf, np.inf, np.inf])
+    for bb in bbs:
+        out[:3] = np.maximum(out[:3], bb[:3])
+        out[3:] = np.minimum(out[3:], bb[3:])
+    return out
+
+
 class VolumeResult():
     def __init__(self, study, volume, path):
         self.study_instance_uid = study.study_instance_uid
@@ -92,16 +108,13 @@ class BaseConverter():
         return masks_list
 
     def get_bounding_box(self, masks_list, volumes_list):
-        bb = masks_list[0].bb
-        for mask in masks_list:
-            bb = mask.bb_union(bb)
+        bb = bb_union([mask.bb for mask in masks_list])
 
         bb[:3] = bb[:3] - self.padding
         bb[3:] = bb[3:] + self.padding
 
-        for v in volumes_list:
-            bb = v.reference_frame.bounding_box_intersection(bb)
-        return bb
+        return bb_intersection([v.reference_frame.bb
+                                for v in volumes_list] + [bb])
 
     def get_path(self, volume, is_mask=False):
         if is_mask:
@@ -319,6 +332,6 @@ class ExtractorConverter(BaseConverter):
         except Exception as e:
             rmtree(self.output_folder, True)
             self.output_folder = None
-            print(e)
+            raise e
 
         return results_df
