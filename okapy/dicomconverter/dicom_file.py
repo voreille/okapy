@@ -16,26 +16,8 @@ import pandas as pd
 
 from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
 from okapy.dicomconverter.dicom_header import DicomHeader
-
-
-class OkapyException(Exception):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-
-class EmptyContourException(OkapyException):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-
-class MissingWeightException(OkapyException):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-
-class PETUnitException(OkapyException):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+from okapy.exceptions import (EmptyContourException, MissingWeightException,
+                              PETUnitException)
 
 
 class DicomFileBase():

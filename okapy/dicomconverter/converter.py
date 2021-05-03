@@ -1,9 +1,8 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from pathlib import Path
 from itertools import product
 from tempfile import mkdtemp
 from shutil import rmtree
-from pandas.core.frame import DataFrame
 
 import yaml
 import numpy as np
@@ -16,6 +15,7 @@ from okapy.dicomconverter.dicom_file import (EmptyContourException,
 from okapy.dicomconverter.volume import BasicResampler, MaskResampler
 from okapy.dicomconverter.volume_processor import IdentityProcessor
 from okapy.featureextractor.featureextractor import OkapyExtractors
+from okapy.exceptions import MissingSegmentationException
 
 
 def bb_union(bbs):
@@ -259,6 +259,10 @@ class ExtractorConverter(BaseConverter):
 
     def process_study(self, study, results_df=None, labels=None):
         masks_list = self.extract_volume_of_interest(study, labels=labels)
+        if not masks_list:
+            raise MissingSegmentationException(
+                f"No segmentation found for study with"
+                f" StudyInstanceUID {study.study_instance_uid}")
         volumes_list = list()
         for f in study.volume_files:
             try:
