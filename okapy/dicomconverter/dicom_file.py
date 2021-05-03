@@ -355,7 +355,8 @@ class SegFile(MaskFile, name="SEG"):
             dcm = pdcm.dcmread(self.dicom_paths[0])
         self.raw_volume = pydicom_seg.SegmentReader().read(dcm)
         coordinate_matrix = np.zeros((4, 4))
-        coordinate_matrix[:3, :3] = self.raw_volume.direction
+        coordinate_matrix[:3, :3] = self.raw_volume.direction * np.tile(
+            self.raw_volume.spacing, [3, 1])
         coordinate_matrix[:3, 3] = self.raw_volume.origin
         coordinate_matrix[3, 3] = 1
         self._reference_frame = ReferenceFrame(
@@ -389,7 +390,6 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                  reference_frame=None,
                  **kwargs):
         super().__init__(*args, **kwargs)
-        self.contours = None
         self._reference_frame = reference_frame
         self._reference_image = reference_image
         self.reference_image_uid = None
@@ -432,17 +432,15 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
     def read(self):
         self._labels = list()
         if len(self.dicom_paths) > 1:
-            warnings.warn("there is multiple instances in the ")
-            multiple_instances = True
-        else:
-            multiple_instances = False
+            warnings.warn(
+                "there is multiple instances of the same RTSTRUCT file")
         if type(self.dicom_paths[0]) == FileDataset:
             self.slices = self.dicom_paths
         else:
             self.slices = [pdcm.read_file(p) for p in self.dicom_paths]
         self.reference_image_uid = RtstructFile.get_reference_image_uid(
             self.slices[0])
-        self.contours = {}
+        self.label_number_mapping = {}
         for dcm in self.slices:
             if (self.reference_image_uid !=
                     RtstructFile.get_reference_image_uid(dcm)):
@@ -455,32 +453,23 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                     i].ReferencedROINumber == roi_seq.ROINumber
 
                 label = roi_seq.ROIName
-                if multiple_instances:
-                    label += f"_instance_{dcm.InstanceNumber}"
 
-                try:
-                    self.contours[label] = [
-                        s.ContourData
-                        for s in dcm.ROIContourSequence[i].ContourSequence
-                    ]
-                except AttributeError:
-                    warnings.warn(f"{label} is empty")
-                    continue
-
+                self.label_number_mapping[label] = i
                 self._labels.append(label)
 
-    def get_volume(self, label):
-        if self.contours is None:
+    def _initialize(self):
+        if self._labels is None:
             self.read()
         if self._reference_frame is None:
             if self.reference_image.reference_frame is None:
                 self.reference_image.read()
             self._reference_frame = self.reference_image.reference_frame
 
+    def _compute_mask(self, contour_sequence):
         mask = np.zeros(self.reference_frame.shape, dtype=np.uint8)
-        cond_empty = True
-        for current in self.contours[label]:
-            cond_empty = False
+        for s in contour_sequence:
+            current = s.ContourData
+
             nodes = np.array(current).reshape((-1, 3))
             # assert np.amax(np.abs(np.diff(nodes[:, 2]))) == 0
             vx_indices = np.stack([
@@ -495,8 +484,18 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                     raise Exception("The RTSTRUCT file is compromised")
 
             mask[rr, cc, np.round(vx_indices[0, 2]).astype(int)] = 1
-        if cond_empty:
+        return mask
+
+    def get_volume(self, label):
+        self._initialize()
+        try:
+            contour_sequence = self.slices[0].ROIContourSequence[
+                self.label_number_mapping[label]].ContourSequence
+        except AttributeError:
+            warnings.warn(f"{label} is empty")
             raise EmptyContourException()
+
+        mask = self._compute_mask(contour_sequence)
 
         return VolumeMask(
             mask,
