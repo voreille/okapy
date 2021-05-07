@@ -3,18 +3,16 @@ import os
 import click
 import logging
 
-from okapy.dicomconverter.converter import Converter
+from okapy.dicomconverter.converter import NiftiConverter
 
 
 @click.command()
 @click.argument('input_directory', type=click.Path(exists=True))
 @click.option('-o', '--output_filepath', required=True, type=click.Path())
 @click.option('-l', '--list_labels', default=None, type=click.STRING)
-@click.option('-e', '--extension', default='nii.gz', type=click.STRING)
 @click.option('-s', '--spacing', default=-1, type=click.FLOAT)
 @click.option('-p', '--padding', default=-1, type=click.FLOAT)
-def main(input_directory, output_filepath, list_labels, extension, spacing,
-         padding):
+def main(input_directory, output_filepath, list_labels, spacing, padding):
     """
     Convert to dicom to the right format based on extension
     """
@@ -26,10 +24,11 @@ def main(input_directory, output_filepath, list_labels, extension, spacing,
     if not os.path.exists(output_filepath):
         os.makedirs(output_filepath)
 
-    converter = Converter(padding=padding,
-                          resampling_spacing=spacing,
-                          list_labels=list_labels,
-                          extension=extension)
+    converter = NiftiConverter(
+        padding=padding,
+        resampling_spacing=spacing,
+        list_labels=list_labels,
+    )
     result = converter(input_directory, output_filepath)
     print(result)
 

@@ -8,6 +8,7 @@ import yaml
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
+from tqdm import tqdm
 
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.dicom_file import (EmptyContourException,
@@ -154,11 +155,11 @@ class BaseConverter():
 class NiftiConverter(BaseConverter):
     def __init__(
         self,
-        output_folder,
+        output_folder=".",
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.output_folder = output_folder
+        self.output_folder = Path(output_folder).resolve()
 
     def process_study(self, study, output_folder=None):
         volume_results_list = list()
@@ -199,7 +200,7 @@ class NiftiConverter(BaseConverter):
 
         studies_list = self.dicom_walker(input_folder)
         result = list()
-        for study in studies_list:
+        for study in tqdm(studies_list):
             result.append(self.process_study(study, output_folder))
 
         return result

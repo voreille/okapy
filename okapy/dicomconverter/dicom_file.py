@@ -219,7 +219,8 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
                 except MissingWeightException:
                     continue
             if not weight_found:
-                warnings.warn("Estimation of patient weight by 75.0 kg")
+                warnings.warn(f"Estimation of patient weight by 75.0 kg"
+                              f" for patient {self.dicom_header.patient_id}")
                 patient_weight = 75.0
 
         return patient_weight
@@ -269,9 +270,11 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
             start_datetime = datetime.combine(scan_datetime.date(), start_time)
             decay_time = (scan_datetime - start_datetime).total_seconds()
         except KeyError:
-            warnings.warn("Estimation of time decay for SUV"
-                          " computation from average parameters")
             decay_time = 1.75 * 3600  # From Martin's code
+            warnings.warn(f"Estimation of time decay for SUV"
+                          f" for patient {self.dicom_header.patient_id}"
+                          f" computation from average parameters, "
+                          f"i.e. with an estimated decay time of {decay_time}")
 
         return decay_time
 
