@@ -4,6 +4,7 @@ from pydicom.dataset import FileDataset
 
 class DicomHeader():
     def __init__(self,
+                 patient_name=None,
                  patient_id=None,
                  study_instance_uid=None,
                  study_date=None,
@@ -12,6 +13,7 @@ class DicomHeader():
                  instance_number=None,
                  image_type=None,
                  modality=None):
+        self.patient_name = patient_name
         self.patient_id = patient_id
         self.study_instance_uid = study_instance_uid
         self.study_date = study_date

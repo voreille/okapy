@@ -3,6 +3,8 @@ from pathlib import Path
 from itertools import product
 from tempfile import mkdtemp
 from shutil import rmtree
+from multiprocessing import Pool
+import logging
 
 import yaml
 import numpy as np
@@ -17,6 +19,10 @@ from okapy.dicomconverter.volume import BasicResampler, MaskResampler
 from okapy.dicomconverter.volume_processor import IdentityProcessor
 from okapy.featureextractor.featureextractor import OkapyExtractors
 from okapy.exceptions import MissingSegmentationException
+
+log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+logging.basicConfig(level=logging.INFO, format=log_fmt)
+logger = logging.getLogger(__name__)
 
 
 def bb_union(bbs):
@@ -68,11 +74,12 @@ class BaseConverter():
                  volume_dtype=np.float32,
                  mask_dtype=np.uint32,
                  extension='nii.gz',
+                 cores=None,
                  converter_backend='sitk'):
-        self.padding = padding
+        self.padding = BaseConverter._check_padding(padding)
         self.list_labels = list_labels
         if dicom_walker is None:
-            self.dicom_walker = DicomWalker()
+            self.dicom_walker = DicomWalker(cores=cores)
         else:
             self.dicom_walker = dicom_walker
         if resampling_spacing == -1:
@@ -92,6 +99,21 @@ class BaseConverter():
         self.mask_dtype = mask_dtype
         self.extension = extension
         self.output_folder = None
+        self.cores = cores
+
+    @staticmethod
+    def _check_padding(padding):
+        if padding == "whole_image":
+            return padding
+        if not isinstance(padding, str):
+            if padding > 0.0:
+                return padding
+            else:
+                raise ValueError(
+                    "padding must be a positive float or 'whole_image'")
+        else:
+            raise ValueError(
+                "padding must be a positive float or 'whole_image'")
 
     def extract_volume_of_interest(self, study):
         masks_list = list()
@@ -117,7 +139,7 @@ class BaseConverter():
         return bb_intersection([v.reference_frame.bb
                                 for v in volumes_list] + [bb])
 
-    def get_path(self, volume, is_mask=False):
+    def get_path(self, volume, is_mask=False, ouput_folder=None):
         if is_mask:
             name = (
                 f"{volume.patient_id}__{volume.label.replace(' ', '_')}__"
@@ -126,13 +148,18 @@ class BaseConverter():
         else:
             name = (f"{volume.patient_id}__{volume.modality}__"
                     f"{volume.series_number}.{self.extension}")
-        return Path(self.output_folder) / name
+        if ouput_folder is None:
+            return Path(self.output_folder) / name
+        else:
+            return Path(ouput_folder) / name
 
-    def write(self, volume, is_mask=False, dtype=None):
+    def write(self, volume, is_mask=False, dtype=None, output_folder=None):
         if dtype:
             volume = volume.astype(dtype)
         counter = 0
-        path = self.get_path(volume, is_mask=is_mask)
+        path = self.get_path(volume,
+                             is_mask=is_mask,
+                             ouput_folder=output_folder)
         new_path = path
         while new_path.is_file():
             counter += 1
@@ -162,6 +189,8 @@ class NiftiConverter(BaseConverter):
         self.output_folder = Path(output_folder).resolve()
 
     def process_study(self, study, output_folder=None):
+        logger.debug(
+            f"Start of processing study for patient {study.patient_id}")
         volume_results_list = list()
         mask_results_list = list()
         masks_list = self.extract_volume_of_interest(study)
@@ -175,33 +204,41 @@ class NiftiConverter(BaseConverter):
 
         if self.padding != 'whole_image':
             bb = self.get_bounding_box(masks_list, volumes_list)
-        elif self.padding == 'whole_image':
+        else:
             # The image is not cropped
             bb = None
-        else:
-            raise ValueError(
-                "padding must be a positive integer or 'whole_image'")
         masks_list = map(lambda v: self.mask_processor(v, bb), masks_list)
         volumes_list = map(lambda v: self.volume_processor(v, bb),
                            volumes_list)
         for v in volumes_list:
-            path = self.write(v, is_mask=False, dtype=self.volume_dtype)
+            path = self.write(v,
+                              is_mask=False,
+                              dtype=self.volume_dtype,
+                              output_folder=output_folder)
             volume_results_list.append(VolumeResult(study, v, path))
 
         for v in masks_list:
-            path = self.write(v, is_mask=True, dtype=self.mask_dtype)
+            path = self.write(v,
+                              is_mask=True,
+                              dtype=self.mask_dtype,
+                              output_folder=output_folder)
             mask_results_list.append(MaskResult(study, v, path))
 
+        logger.debug(f"End of processing study for patient {study.patient_id}")
         return volume_results_list, mask_results_list
 
     def __call__(self, input_folder, output_folder=None):
-        if output_folder is None:
-            output_folder = self.output_folder
+        if output_folder is not None:
+            self.output_folder = output_folder
 
         studies_list = self.dicom_walker(input_folder)
-        result = list()
-        for study in tqdm(studies_list):
-            result.append(self.process_study(study, output_folder))
+        if self.cores:
+            with Pool(self.cores) as p:
+                result = p.map(self.process_study, studies_list)
+        else:
+            result = list()
+            for study in tqdm(studies_list):
+                result.append(self.process_study(study))
 
         return result
 
@@ -274,12 +311,9 @@ class ExtractorConverter(BaseConverter):
 
         if self.padding != 'whole_image':
             bb = self.get_bounding_box(masks_list, volumes_list)
-        elif self.padding == 'whole_image':
+        else:
             # The image is not cropped
             bb = None
-        else:
-            raise ValueError(
-                "padding must be a positive integer or 'whole_image'")
         masks_list = list(map(lambda v: self.mask_processor(v, bb),
                               masks_list))
         volumes_list = list(
