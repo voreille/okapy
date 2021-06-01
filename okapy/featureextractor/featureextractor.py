@@ -11,6 +11,8 @@ import numpy as np
 import SimpleITK as sitk
 from radiomics.featureextractor import RadiomicsFeatureExtractor
 
+import os
+
 
 class OkapyExtractors():
     def __init__(self, params_path):
@@ -203,6 +205,15 @@ class RieszFeatureExtractor(FeatureExtractor):
         self.params = params
 
     def __call__(self, images_path, labels_path):
+        env_matlab = os.environ.copy()
+        path_MCR_HOME=Path('/usr/local/MATLAB/MATLAB_Runtime/v97/')
+        paths_LD_LIBRARY_PATH=[path_MCR_HOME.joinpath('runtime/glnxa64').as_posix(),
+                               path_MCR_HOME.joinpath('bin/glnxa64').as_posix(),
+                               path_MCR_HOME.joinpath('sys/os/glnxa64').as_posix(),
+                               path_MCR_HOME.joinpath('extern/bin/glnxa64').as_posix()]
+        env_matlab['MCR_HOME'] = path_MCR_HOME.as_posix()
+        env_matlab['LD_LIBRARY_PATH'] = ':'.join(paths_LD_LIBRARY_PATH)
+        path_repo = Path('/home/daniel/repositories/okapy/')
         completed_matlab_process = subprocess.run(
             [
                 "okapy/featureextractor/matlab_bin/RieszExtractor",
@@ -211,6 +222,8 @@ class RieszFeatureExtractor(FeatureExtractor):
             ],
             stdout=subprocess.PIPE,
             encoding="utf-8",
+            env = env_matlab,
+            cwd = path_repo.as_posix()
         )
         print("MATLAB STDOUT!!!!!!!!!!!!!!")
         output = completed_matlab_process.stdout

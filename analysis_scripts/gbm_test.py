@@ -9,6 +9,16 @@ from shutil import rmtree
 import numpy as np
 import copy
 import itertools
+import tempfile
+
+
+
+geometryTolerance = 1E-3
+sitk.ProcessObject.SetGlobalDefaultCoordinateTolerance(geometryTolerance)
+sitk.ProcessObject.SetGlobalDefaultDirectionTolerance(geometryTolerance)
+
+
+
 def merge_segmentation_labels(input_img, label_map={}):
     """
     label_map: {<target value 1>: [<val to change 1>, <val to change 2>, ...],
@@ -23,8 +33,8 @@ def merge_segmentation_labels(input_img, label_map={}):
     out_img.SetSpacing(input_img.GetSpacing())
     out_img.SetDirection(input_img.GetDirection())
     out_img.SetOrigin(input_img.GetOrigin())
+    del out_img_np, img_np
     return out_img
-
 
 def create_label_permutations(label_list):
     labels_combinations = []
@@ -64,6 +74,7 @@ def reorient_image(path_img, orientation='LPS', outpath=None, data_type=None):
     if data_type:
         img_reoriented = sitk.Cast(img_reoriented, data_type)
     sitk.WriteImage(img_reoriented, outpath.as_posix())
+    del img, img_reoriented
     return path_img
 
 def convert_dcm_dir_nii_okapy(path_to_dcm_dir, path_to_nii, glob_str='*.dcm'):
@@ -74,11 +85,14 @@ def convert_dcm_dir_nii_okapy(path_to_dcm_dir, path_to_nii, glob_str='*.dcm'):
     path_to_nii = pl.Path(path_to_nii)
     path_to_nii.parent.mkdir(exist_ok=True, parents=True)
     sitk.WriteImage(dcm_sitk, path_to_nii.as_posix())
+    del dcm_volume, dcm_sitk, dcm
 
 def extract_features_roi(okapy_extractor, path_to_img, path_to_mask, attribute_dict={}):
     results_df = pd.DataFrame()
     path_to_img = pl.Path(path_to_img)
     path_to_mask = pl.Path(path_to_mask)
+    print(path_to_mask, path_to_img)
+    #result = okapy_extractor.default_extractor.__call__(path_to_img.as_posix(), path_to_mask.as_posix())
     result = okapy_extractor(path_to_img.as_posix(), path_to_mask.as_posix())
     for key, val in result.items():
         if "diagnostics" in key or ("glcm" in key
@@ -90,36 +104,28 @@ def extract_features_roi(okapy_extractor, path_to_img, path_to_mask, attribute_d
         results_df = results_df.append(attribute_dict_int, ignore_index=True)
     return results_df
 
-def extract_features_dcmdir_segmentation_pair(okapy_extractor, path_to_dcm_imgs, path_to_segmentation, tmp_dir,
-                                                attribute_dict={}):
+def extract_features_dcmdir_segmentation_pair(okapy_extractor, path_to_dcm_imgs, path_to_segmentation,
+                                              attribute_dict={}, tmp_dir_base=None):
     path_to_dcm_imgs = pl.Path(path_to_dcm_imgs)
     path_to_segmentation = pl.Path(path_to_segmentation)
-    tmp_dir = pl.Path(tmp_dir)
-    if tmp_dir.exists():
-        rmtree(tmp_dir)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-
-    # == Fix up segmentation
-    seg_path = tmp_dir.joinpath('label_ROIs_LPS.nii')
-    reorient_image(seg_path_orig, 'LPS', outpath=seg_path, data_type=sitk.sitkUInt8)
-
-    # == convert dicom to nii using okapy
-    dcm_img_path = tmp_dir.joinpath('dcm_image_okapy.nii.gz')
-    convert_dcm_dir_nii_okapy(dcm_path, dcm_img_path)
-
-    # == define ROI label combinations
-    mask_path_dict = create_masks(seg_path)
-    results_df = pd.DataFrame()
-    for roi_name, path_to_mask in mask_path_dict.items():
-        attribute_dict_int = {
-            "VOI": roi_name
-        }
-        attribute_dict_int.update(attribute_dict)
-        results_df_tmp = extract_features_roi(okapy_extractor, dcm_img_path, path_to_mask, attribute_dict=attribute_dict_int)
-        results_df = results_df.append(results_df_tmp, ignore_index=True)
-
-    if tmp_dir.exists():
-        rmtree(tmp_dir)
+    with tempfile.TemporaryDirectory(dir=tmp_dir_base) as directory_name:
+        tmp_dir = pl.Path(directory_name)
+        # == Fix up segmentation
+        seg_path = tmp_dir.joinpath('label_ROIs_LPS.nii')
+        reorient_image(path_to_segmentation, 'LPS', outpath=seg_path, data_type=sitk.sitkUInt8)
+        # == convert dicom to nii using okapy
+        dcm_img_path = tmp_dir.joinpath('dcm_image_okapy.nii.gz')
+        convert_dcm_dir_nii_okapy(path_to_dcm_imgs, dcm_img_path)
+        # == define ROI label combinations
+        mask_path_dict = create_masks(seg_path)
+        results_df = pd.DataFrame()
+        for roi_name, path_to_mask in mask_path_dict.items():
+            attribute_dict_int = {
+                "VOI": roi_name
+            }
+            attribute_dict_int.update(attribute_dict)
+            results_df_tmp = extract_features_roi(okapy_extractor, dcm_img_path, path_to_mask, attribute_dict=attribute_dict_int)
+            results_df = results_df.append(results_df_tmp, ignore_index=True)
     return results_df
 
 
@@ -141,35 +147,104 @@ def create_masks(path_to_mask):
         mask_path_selected = path_to_mask.parent.joinpath('%s.nii'%roi_name)
         sitk.WriteImage(sitk.Cast(mask_selected, sitk.sitkUInt8), mask_path_selected.as_posix())
         mask_path_dict[roi_name] = mask_path_selected.as_posix()
+    del mask, mask_np, mask_selected
     return mask_path_dict
 
 
 #== PATHS
-okapy_path = pl.Path('/Users/dabler/Documents/repositories/okapy')
-data_base_path  = okapy_path.joinpath('test_data/MR-okapi-test')
+#okapy_path = pl.Path('/Users/dabler/Documents/repositories/okapy')
+# okapy_path = pl.Path('/home/daniel/repositories/okapy')
+# #data_base_path  = okapy_path.joinpath('test_data/MR-okapi-test')
+# data_base_path = pl.Path("/home/daniel/Downloads/GBM-okapi-test/compilation")
+#
+# data_tmp_path   = data_base_path.joinpath('tmp')
+# dcm_path = data_base_path.joinpath('dcm-image')
+# seg_path_orig = data_base_path.joinpath('label_ROIs.nii')
+#
+# config_path = okapy_path.joinpath('analysis_scripts/gbm_test_config.yaml')
+# extr = OkapyExtractors(config_path.as_posix())
+#
+# patient_id = 1111
+# modality = 'MR-T1'
+# attribute_dict = {
+#     "patient_id": patient_id,
+#     "modality": modality
+# }
+#
+# # loop
+# # - modalities
+# # - resampling
+# # - normalization
+# # - labelmap smoothing
+#
+# results_df = extract_features_dcmdir_segmentation_pair(extr, dcm_path, seg_path_orig, data_tmp_path,
+#                                                            attribute_dict=attribute_dict)
+#
+#
+# import os
+# import pathlib as pl
+# env_matlab = {}
+# path_MCR_HOME=pl.Path('/usr/local/MATLAB/MATLAB_Runtime/v97/')
+# paths_LD_LIBRARY_PATH=[path_MCR_HOME.joinpath('runtime/glnxa64').as_posix(),
+#                        path_MCR_HOME.joinpath('bin/glnxa64').as_posix(),
+#                        path_MCR_HOME.joinpath('sys/os/glnxa64').as_posix(),
+#                        path_MCR_HOME.joinpath('extern/bin/glnxa64').as_posix()]
+# env_matlab['MCR_HOME'] = path_MCR_HOME.as_posix()
+# env_matlab['LD_LIBRARY_PATH'] = ':'.join(paths_LD_LIBRARY_PATH)
+#
+# env = {**os.environ, **env_matlab}
+# import subprocess
+# subprocess.run(["okapy/featureextractor/matlab_bin/RieszExtractor"], env=env)
 
-data_tmp_path   = data_base_path.joinpath('tmp')
-dcm_path = data_base_path.joinpath('dcm-image')
-seg_path_orig = data_base_path.joinpath('label_ROIs.nii')
+path_features = pl.Path('/home/daniel/mnt/ultrafast_home/data/TCIA-GBM_Bakas/features')
+path_files = path_features.joinpath('files_paths.xlsx')
+paths_df = pd.read_excel(path_files)
+paths_df_sel = paths_df[~paths_df.path_to_seg.isna()]
 
+results_df = pd.DataFrame()
+
+okapy_path = pl.Path('/home/daniel/repositories/okapy')
 config_path = okapy_path.joinpath('analysis_scripts/gbm_test_config.yaml')
 extr = OkapyExtractors(config_path.as_posix())
 
-patient_id = 1111
-modality = 'MR-T1'
-attribute_dict = {
-    "patient_id": patient_id,
-    "modality": modality
-}
+modality_map = {"T1w" : "path_to_T1",
+                "T1wPost" : "path_to_T1c",
+                "T2w" : "path_to_T2",
+                "T2FLAIR" : "path_to_FLAIR"}
 
-# loop
-# - modalities
-# - resampling
-# - normalization
-# - labelmap smoothing
+#modality_map = {"T1w" : "path_to_T1"}
 
-results_df = extract_features_dcmdir_segmentation_pair(extr, dcm_path, seg_path_orig, data_tmp_path,
-                                                           attribute_dict=attribute_dict)
+for index, row in paths_df_sel.iterrows():
+    attribute_dict = {    "patient_id": row.subject_id,
+                           "session" : row.session
+                      }
+    seg_path = row.path_to_seg
+    results_df_patient_session = pd.DataFrame()
+
+    for modality, path_attribute in modality_map.items():
+        print(" === Processing patient %s, session %s, modality %s"%(row.subject_id, row.session, modality))
+        path_to_dcm = row[path_attribute]
+        attribute_dict['modality'] = modality
+        try:
+            results_df_int = extract_features_dcmdir_segmentation_pair(extr, path_to_dcm, seg_path,
+                                                                       attribute_dict=attribute_dict,
+                                                                       tmp_dir_base=path_features)
+            results_df_patient_session = results_df_patient_session.append(results_df_int, ignore_index=True)
+        except Exception as e:
+            print(e)
+    if 'features_value' in results_df_patient_session.columns:
+        results_df_patient_session.feature_value = results_df_patient_session.feature_value.astype(float)
+    p_features_patient_session = path_features.joinpath('features_%s_%s.xlsx'%(row.subject_id, row.session))
+    results_df_patient_session.to_excel(p_features_patient_session.as_posix())
+
+    results_df = results_df.append(results_df_patient_session, ignore_index=True)
+
+p_features = path_features.joinpath('features.xlsx')
+results_df.to_excel(p_features.as_posix())
+
+results_df_indexed = results_df.set_index(['patient_id', 'session', 'modality', 'VOI', 'feature_name']).unstack(['VOI'])
+p_features_indexed = path_features.joinpath('features_indexed.xlsx')
+results_df_indexed.to_excel(p_features_indexed.as_posix())
 
 #
 # # == Fix up segmentation
@@ -202,10 +277,7 @@ results_df = extract_features_dcmdir_segmentation_pair(extr, dcm_path, seg_path_
 #     results_df = results_df.append(results_df_tmp, ignore_index=True)
 
 # reshape results
-results_df.feature_value = results_df.feature_value.astype(float)
-a = results_df.set_index(['patient_id', 'modality', 'VOI', 'feature_name']).unstack(['VOI'])
-p_features = data_base_path.joinpath('features.xlsx')
-a.to_excel(p_features.as_posix())
+
 
 
 
