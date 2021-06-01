@@ -19,6 +19,10 @@ logging.basicConfig(level=logging.INFO, format=log_fmt)
 logger = logging.getLogger(__name__)
 
 
+def is_approx_equal(x, y, tolerance=0.05):
+    return abs(x - y) <= tolerance
+
+
 class DicomFileBase():
     _registry = {}  # class var that store the different daughter
 
@@ -153,12 +157,13 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
         self.slices = slices
         self.orthogonal_positions = orthogonal_positions
+        self.apparent_n_slices = self._check_missing_slices()
         self._reference_frame = ReferenceFrame(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,
             pixel_spacing=slices[0].PixelSpacing,
-            shape=(*slices[0].pixel_array.shape, len(slices)))
+            shape=(*slices[0].pixel_array.shape, self.apparent_n_slices))
 
     def get_dicom_header_df(self):
         return pd.DataFrame.from_dict({
@@ -167,46 +172,48 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             'InstitutionName': [self.slices[0].InstitutionName],
         })
 
-    def _check_missing_slices(self, image):
-        def is_approx_equal(x, y, tolerance=0.05):
-            return abs(x - y) <= tolerance
+    def _check_missing_slices(self):
 
         slice_spacing = self.orthogonal_positions[
             1] - self.orthogonal_positions[0]
-        position_final_slice = (
-            len(self.slices) -
-            1) * slice_spacing + self.slices[0].ImagePositionPatient[2]
+        d_slices = np.array([
+            self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
+            for ind in range(len(self.slices) - 1)
+        ])
+        self.d_slices = d_slices
+        position_final_slice = self.orthogonal_positions[0] + np.sum(d_slices)
         if not is_approx_equal(position_final_slice,
-                               float(self.slices[-1].ImagePositionPatient[2])):
+                               self.orthogonal_positions[-1]):
             if (position_final_slice -
                     self.orthogonal_positions[-1]) / slice_spacing < 1.5:
-                #     # If only one slice is missing
-                #     diff = np.asarray([
-                #         not is_approx_equal(
-                #             float(self.orthogonal_positions[ind]) -
-                #             float(self.orthogonal_positions[ind - 1]) -
-                #             slice_spacing, 0)
-                #         for ind in range(1, len(self.orthogonal_positions))
-                #     ])
-                #     ind2interp = int(np.where(diff)[0])
-                #     new_slice = (image[:, :, ind2interp] +
-                #                  image[:, :, ind2interp + 1]) * 0.5
-                #     new_slice = new_slice[..., np.newaxis]
-                #     image = np.concatenate(
-                #         (image[..., :ind2interp], new_slice, image[...,
-                #                                                    ind2interp:]),
-                #         axis=2)
-                #     logger.warning(f"One slice is missing, we replaced "
-                #                    f"it by linear interpolation for patient"
-                #                    f"{self.dicom_header.patient_id}")
+                # If only one slice is missing
+                logger.warning(f"One slice is missing, we replaced "
+                               f"it by linear interpolation for patient"
+                               f"{self.dicom_header.patient_id}")
                 logger.warning(f"One slice is missing, "
                                f"for patient "
                                f"{self.dicom_header.patient_id}"
                                f" and modality "
                                f"{self.dicom_header.modality}")
+                apparent_n_slices = len(self.slices) + 1
             else:
                 raise RuntimeError('Multiple slices are missing')
+        else:
+            apparent_n_slices = len(self.slices)
 
+        return apparent_n_slices
+
+    def _interp_missing_slice(self, image):
+        mean_slice_spacing = np.mean(self.d_slices)
+        errors = np.abs(self.d_slices - mean_slice_spacing)
+        diff = np.asarray([e < 0.1 * mean_slice_spacing for e in errors])
+        ind2interp = int(np.where(diff)[0])
+        new_slice = (image[:, :, ind2interp] +
+                     image[:, :, ind2interp + 1]) * 0.5
+        new_slice = new_slice[..., np.newaxis]
+        image = np.concatenate(
+            (image[..., :ind2interp], new_slice, image[..., ind2interp:]),
+            axis=2)
         return image
 
     def get_volume(self):
@@ -214,7 +221,8 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             self.read()
         image = self.get_physical_values()
         image = np.transpose(image, (1, 0, 2))
-        image = self._check_missing_slices(image)
+        if self.apparent_n_slices != len(self.slices):
+            image = self._interp_missing_slice(image)
 
         return Volume(image,
                       reference_frame=copy(self.reference_frame),
