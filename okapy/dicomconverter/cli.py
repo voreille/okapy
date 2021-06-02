@@ -1,4 +1,3 @@
-from operator import mul
 import os
 
 import click
@@ -20,7 +19,6 @@ logger = logging.getLogger(__name__)
               type=click.STRING,
               multiple=True)
 @click.option('-s', '--spacing', default=-1, type=click.FLOAT)
-@click.option('-p', '--padding', default=-1, type=click.FLOAT)
 @click.option('-p', '--padding', default=-1, type=click.FLOAT)
 @click.option('-j', '--cores', default=None, type=click.INT)
 def main(input_directory, output_filepath, list_labels, spacing, padding,

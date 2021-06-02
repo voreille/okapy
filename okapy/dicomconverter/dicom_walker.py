@@ -49,27 +49,19 @@ class DicomWalker():
                                                "Modality",
                                                "SeriesNumber",
                                                "InstanceNumber",
+                                               "SeriesDate",
+                                               "SeriesTime",
                                            ])
 
         except InvalidDicomError:
             logger.debug(f"The file {str(file)} is not recognised as dicom")
             return None
-        try:
-            modality = data.Modality
-        except AttributeError:
+
+        if not hasattr(data, "Modality"):
             logger.debug(f"DICOMDIR are not read, filepath: {str(file)}")
             return None
 
-        dicom_header = DicomHeader(
-            patient_name=data.get("PatientName", -1),
-            patient_id=data.get("PatientID", -1),
-            study_instance_uid=data.get("StudyInstanceUID", -1),
-            study_date=data.get("StudyDate", -1),
-            series_instance_uid=data.get("SeriesInstanceUID", -1),
-            series_number=data.get("SeriesNumber", -1),
-            instance_number=data.get("InstanceNumber", -1),
-            image_type=data.get("ImageType", ["-1"]),
-            modality=modality)
+        dicom_header = DicomHeader.from_pydicom(data)
         return DicomFile(dicom_header=dicom_header, path=str(file.resolve()))
 
     def _walk(self, input_dirpath):
@@ -94,12 +86,10 @@ class DicomWalker():
             dicom_files = [f for f in dicom_files if f]
 
         logger.info("Parsing - END")
-        logger.info("Sorting the DICOM files")
         dicom_files.sort(key=lambda x: (
             x.dicom_header.study_instance_uid, x.dicom_header.modality, x.
             dicom_header.series_instance_uid, x.dicom_header.instance_number, x
             .dicom_header.patient_id))
-        logger.info("Sorting - END")
         return dicom_files
 
     def _get_studies(self, dicom_files):

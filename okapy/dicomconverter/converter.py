@@ -123,6 +123,10 @@ class BaseConverter():
             else:
                 label_intersection = list(
                     set(f.labels) & set(self.list_labels))
+                if len(label_intersection) == 0:
+                    logger.warning(
+                        f"The label(s) {self.list_labels} was/were"
+                        f" not found in the file {f.dicom_paths[0]}")
                 for label in label_intersection:
                     try:
                         masks_list.append(f.get_volume(label))
@@ -144,7 +148,9 @@ class BaseConverter():
             name = (
                 f"{volume.patient_id}__{volume.label.replace(' ', '_')}__"
                 f"{volume.modality}__{volume.series_number}__{volume.reference_modality}"
-                f"__{volume.reference_series_number}.{self.extension}")
+                f"__{volume.reference_series_number}__"
+                f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}.{self.extension}"
+            )
         else:
             name = (f"{volume.patient_id}__{volume.modality}__"
                     f"{volume.series_number}.{self.extension}")
