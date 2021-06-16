@@ -1,15 +1,10 @@
-"""
-TODO: Make it DRYer line 220
-"""
-
-import warnings
 from copy import copy
 from datetime import time, datetime
+import logging
 
 import numpy as np
 import pydicom as pdcm
 from pydicom.dataset import FileDataset
-from pydicom.tag import Tag
 import pydicom_seg
 from skimage.draw import polygon
 import pandas as pd
@@ -18,6 +13,14 @@ from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
 from okapy.dicomconverter.dicom_header import DicomHeader
 from okapy.exceptions import (EmptyContourException, MissingWeightException,
                               PETUnitException)
+
+log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+logging.basicConfig(level=logging.INFO, format=log_fmt)
+logger = logging.getLogger(__name__)
+
+
+def is_approx_equal(x, y, tolerance=0.05):
+    return abs(x - y) <= tolerance
 
 
 class DicomFileBase():
@@ -68,14 +71,12 @@ class DicomFileBase():
 
     @property
     def patient_weight(self):
-        if hasattr(self.slices[0], 'PatientsWeight'):
-            if self.slices[0].PatientWeight is not None:
-                patient_weight = float(self.slices[0].PatientsWeight)
-        else:
+        patient_weight = getattr(self.slices[0], "PatientWeight", None)
+        if patient_weight is None:
             raise MissingWeightException(
                 'Weight is missing in {}'.format(self))
 
-        return patient_weight
+        return float(patient_weight)
 
     @property
     def reference_frame(self):
@@ -132,6 +133,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         val, counts = np.unique(rows, return_counts=True)
         valcounts = list(zip(val, counts))
         valcounts.sort(key=lambda x: x[1])
+        val, counts = zip(*valcounts)
         ind2rm = [
             ind for ind in range(len(slices))
             if slices[ind].Columns in val[:-1]
@@ -154,12 +156,14 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             slices = [k for i, k in enumerate(slices) if i not in ind2rm]
 
         self.slices = slices
+        self.orthogonal_positions = orthogonal_positions
+        self.apparent_n_slices = self._check_missing_slices()
         self._reference_frame = ReferenceFrame(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,
             pixel_spacing=slices[0].PixelSpacing,
-            shape=(*slices[0].pixel_array.shape, len(slices)))
+            shape=(*slices[0].pixel_array.shape, self.apparent_n_slices))
 
     def get_dicom_header_df(self):
         return pd.DataFrame.from_dict({
@@ -168,11 +172,57 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             'InstitutionName': [self.slices[0].InstitutionName],
         })
 
+    def _check_missing_slices(self):
+
+        slice_spacing = self.orthogonal_positions[
+            1] - self.orthogonal_positions[0]
+        d_slices = np.array([
+            self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
+            for ind in range(len(self.slices) - 1)
+        ])
+        self.d_slices = d_slices
+        position_final_slice = self.orthogonal_positions[0] + np.sum(d_slices)
+        if not is_approx_equal(position_final_slice,
+                               self.orthogonal_positions[-1]):
+            if (position_final_slice -
+                    self.orthogonal_positions[-1]) / slice_spacing < 1.5:
+                # If only one slice is missing
+                logger.warning(f"One slice is missing, we replaced "
+                               f"it by linear interpolation for patient"
+                               f"{self.dicom_header.patient_id}")
+                logger.warning(f"One slice is missing, "
+                               f"for patient "
+                               f"{self.dicom_header.patient_id}"
+                               f" and modality "
+                               f"{self.dicom_header.modality}")
+                apparent_n_slices = len(self.slices) + 1
+            else:
+                raise RuntimeError('Multiple slices are missing')
+        else:
+            apparent_n_slices = len(self.slices)
+
+        return apparent_n_slices
+
+    def _interp_missing_slice(self, image):
+        mean_slice_spacing = np.mean(self.d_slices)
+        errors = np.abs(self.d_slices - mean_slice_spacing)
+        diff = np.asarray([e < 0.1 * mean_slice_spacing for e in errors])
+        ind2interp = int(np.where(diff)[0])
+        new_slice = (image[:, :, ind2interp] +
+                     image[:, :, ind2interp + 1]) * 0.5
+        new_slice = new_slice[..., np.newaxis]
+        image = np.concatenate(
+            (image[..., :ind2interp], new_slice, image[..., ind2interp:]),
+            axis=2)
+        return image
+
     def get_volume(self):
         if self.slices is None:
             self.read()
         image = self.get_physical_values()
         image = np.transpose(image, (1, 0, 2))
+        if self.apparent_n_slices != len(self.slices):
+            image = self._interp_missing_slice(image)
 
         return Volume(image,
                       reference_frame=copy(self.reference_frame),
@@ -219,7 +269,8 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
                 except MissingWeightException:
                     continue
             if not weight_found:
-                warnings.warn("Estimation of patient weight by 75.0 kg")
+                logger.warning(f"Estimation of patient weight by 75.0 kg"
+                               f" for patient {self.dicom_header.patient_id}")
                 patient_weight = 75.0
 
         return patient_weight
@@ -235,21 +286,28 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
         else:
             raise PETUnitException('The {} units is not handled'.format(units))
 
+    def _acquistion_datetime(self):
+        times = [
+            datetime.strptime(
+                s[0x00080022].value + s[0x00080032].value.split('.')[0],
+                "%Y%m%d%H%M%S") for s in self.slices
+        ]
+        times.sort()
+        return times[0]
+
     def _get_decay_time(self):
         s = self.slices[0]
-        acquisition_datetime = datetime.strptime(
-            s[Tag(0x00080022)].value + s[Tag(0x00080032)].value.split('.')[0],
-            "%Y%m%d%H%M%S")
+        acquisition_datetime = self._acquistion_datetime()
         serie_datetime = datetime.strptime(
-            s[Tag(0x00080021)].value + s[Tag(0x00080031)].value.split('.')[0],
+            s[0x00080021].value + s[0x00080031].value.split('.')[0],
             "%Y%m%d%H%M%S")
 
         try:
             if (serie_datetime <= acquisition_datetime) and (
                     serie_datetime > datetime(1950, 1, 1)):
                 scan_datetime = serie_datetime
-            else:
-                scan_datetime_value = s[Tag(0x0009100d)].value
+            elif 0x0009100d in s:
+                scan_datetime_value = s[0x0009100d].value
                 if isinstance(scan_datetime_value, bytes):
                     scan_datetime_str = scan_datetime_value.decode(
                         "utf-8").split('.')[0]
@@ -260,6 +318,8 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
                         "The value of scandatetime is not handled")
                 scan_datetime = datetime.strptime(scan_datetime_str,
                                                   "%Y%m%d%H%M%S")
+            else:
+                scan_datetime = acquisition_datetime
 
             start_time_str = s.RadiopharmaceuticalInformationSequence[
                 0].RadiopharmaceuticalStartTime
@@ -269,24 +329,28 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
             start_datetime = datetime.combine(scan_datetime.date(), start_time)
             decay_time = (scan_datetime - start_datetime).total_seconds()
         except KeyError:
-            warnings.warn("Estimation of time decay for SUV"
-                          " computation from average parameters")
             decay_time = 1.75 * 3600  # From Martin's code
-
+            logger.warning(
+                f"Estimation of time decay for SUV"
+                f" for patient {self.dicom_header.patient_id}"
+                f" computation from average parameters, "
+                f"i.e. with an estimated decay time of {decay_time} [s]")
+        logger.debug(f"Computed decay time for patient "
+                     f"{self.dicom_header.patient_name} is {decay_time} [s]")
         return decay_time
 
     def _get_suv_philips(self):
         image = list()
-        suv_scale_factor_tag = Tag(0x70531000)
         for s in self.slices:
-            im = (float(s.RescaleSlope) * s.pixel_array + float(
-                s.RescaleIntercept)) * float(s[suv_scale_factor_tag].value)
+            im = (float(s.RescaleSlope) * s.pixel_array +
+                  float(s.RescaleIntercept)) * float(s[0x70531000].value)
             image.append(im)
         return np.stack(image, axis=-1)
 
     def _get_suv_from_bqml(self, decay_time):
         # Get SUV from raw PET
         image = list()
+        patient_weight = self.patient_weight
         for s in self.slices:
             pet = float(s.RescaleSlope) * s.pixel_array + float(
                 s.RescaleIntercept)
@@ -297,7 +361,7 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
             decay = 2**(-decay_time / half_life)
             actual_activity = total_dose * decay
 
-            im = pet * self.patient_weight * 1000 / actual_activity
+            im = pet * patient_weight * 1000 / actual_activity
             image.append(im)
         return np.stack(image, axis=-1)
 
@@ -345,8 +409,8 @@ class SegFile(MaskFile, name="SEG"):
             coordinate_matrix=coordinate_matrix, shape=self.raw_volume.size)
         self._labels = list()
         for segment_number in self.raw_volume.available_segments:
-            label = self.raw_volume.segment_infos[segment_number][Tag(
-                0x620006)].value
+            label = self.raw_volume.segment_infos[segment_number][
+                0x620006].value
             self._labels.append(label)
             self.label_to_num[label] = segment_number
 
@@ -391,9 +455,11 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                     break
 
             if not found:
-                warnings.warn("The Reference image was not found for"
-                              " the RTSTRUCT {}. The CT image will be"
-                              " taken as reference.".format(str(self)))
+                logger.warning(
+                    f"The Reference image was not found for"
+                    f" the RTSTRUCT {str(self)}. The CT image will be"
+                    f" taken as reference.")
+
                 for f in self.study.volume_files:
                     if f.dicom_header.modality == 'CT':
                         self._reference_image = f
@@ -414,7 +480,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
     def read(self):
         self._labels = list()
         if len(self.dicom_paths) > 1:
-            warnings.warn(
+            logger.warning(
                 "there is multiple instances of the same RTSTRUCT file")
         if type(self.dicom_paths[0]) == FileDataset:
             self.slices = self.dicom_paths
@@ -474,7 +540,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             contour_sequence = self.slices[0].ROIContourSequence[
                 self.label_number_mapping[label]].ContourSequence
         except AttributeError:
-            warnings.warn(f"{label} is empty")
+            logger.warning(f"{label} is empty")
             raise EmptyContourException()
 
         mask = self._compute_mask(contour_sequence)

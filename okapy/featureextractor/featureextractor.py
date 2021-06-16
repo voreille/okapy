@@ -6,10 +6,19 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 import warnings
 import yaml
+import logging
 
 import numpy as np
 import SimpleITK as sitk
-from radiomics.featureextractor import RadiomicsFeatureExtractor
+
+log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+logging.basicConfig(level=logging.INFO, format=log_fmt)
+logger = logging.getLogger(__name__)
+
+try:
+    from radiomics.featureextractor import RadiomicsFeatureExtractor
+except ImportError:
+    logger.warning("Pyradiomics is not installed")
 
 
 class OkapyExtractors():
@@ -42,7 +51,10 @@ class OkapyExtractors():
         return results
 
 
-def create_extractor(modality=None, name="", extractor_type="pyradiomics", params=None):
+def create_extractor(modality=None,
+                     name="",
+                     extractor_type="pyradiomics",
+                     params=None):
     if extractor_type == "pyradiomics":
         if modality == 'PT':
             return FeatureExtractorPyradiomicsPT(name=name, params=params)

@@ -1,9 +1,11 @@
+from datetime import datetime
+
 import pydicom as pdcm
-from pydicom.dataset import FileDataset
 
 
 class DicomHeader():
     def __init__(self,
+                 patient_name=None,
                  patient_id=None,
                  study_instance_uid=None,
                  study_date=None,
@@ -11,7 +13,9 @@ class DicomHeader():
                  series_number=None,
                  instance_number=None,
                  image_type=None,
-                 modality=None):
+                 modality=None,
+                 series_datetime=None):
+        self.patient_name = patient_name
         self.patient_id = patient_id
         self.study_instance_uid = study_instance_uid
         self.study_date = study_date
@@ -20,14 +24,21 @@ class DicomHeader():
         self.instance_number = instance_number
         self.modality = modality
         self.image_type = image_type
+        self.series_datetime = series_datetime
 
     @staticmethod
     def from_file(file):
-        if type(file) == FileDataset:
-            data = file
-        else:
-            data = pdcm.filereader.dcmread(file, stop_before_pixels=True)
+        data = pdcm.filereader.dcmread(file, stop_before_pixels=True)
+        return DicomHeader.from_pydicom(data)
 
+    @staticmethod
+    def from_pydicom(data):
+        if hasattr(data, "SeriesDate") and hasattr(data, "SeriesTime"):
+            series_datetime = datetime.strptime(
+                data.SeriesDate + data.SeriesTime.split('.')[0],
+                "%Y%m%d%H%M%S")
+        else:
+            series_datetime = -1
         return DicomHeader(
             patient_id=data.get("PatientID", -1),
             study_instance_uid=data.get("StudyInstanceUID", -1),
@@ -37,6 +48,7 @@ class DicomHeader():
             instance_number=data.get("InstanceNumber", -1),
             modality=data.get("Modality", -1),
             image_type=data.get("ImageType", ["-1"]),
+            series_datetime=series_datetime,
         )
 
     def __str__(self):
@@ -59,7 +71,8 @@ class DicomHeader():
                 and self.modality == dcm_header.modality
                 and self.instance_number == dcm_header.instance_number
                 and self.series_number == dcm_header.series_number
-                and self.image_type == dcm_header.image_type)
+                and self.image_type == dcm_header.image_type
+                and self.series_datetime == dcm_header.series_datetime)
         else:
             return False
 
