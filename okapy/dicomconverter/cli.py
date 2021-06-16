@@ -21,16 +21,26 @@ logger = logging.getLogger(__name__)
 @click.option('-s', '--spacing', default=-1, type=click.FLOAT)
 @click.option('-p', '--padding', default=-1, type=click.FLOAT)
 @click.option('-j', '--cores', default=None, type=click.INT)
-def main(input_directory, output_filepath, list_labels, spacing, padding,
-         cores):
+@click.option('-n', '--naming', default=0, type=click.INT)
+def main(
+    input_directory,
+    output_filepath,
+    list_labels,
+    spacing,
+    padding,
+    cores,
+    naming,
+):
     """
     Convert to dicom to the right format based on extension
     """
     logger.info('Loading Dicom')
     if padding == -1:
         padding = "whole_image"
-    if list_labels is not None:
-        list_labels = list(list_labels)
+
+    list_labels = list(list_labels)
+    if len(list_labels) == 0:
+        list_labels = None
 
     if not os.path.exists(output_filepath):
         logger.info(f"Creating folder {output_filepath}")
@@ -41,6 +51,7 @@ def main(input_directory, output_filepath, list_labels, spacing, padding,
         resampling_spacing=spacing,
         list_labels=list_labels,
         cores=cores,
+        naming=naming,
     )
     _ = converter(input_directory, output_folder=output_filepath)
     logger.info("End of the conversion")

@@ -145,19 +145,45 @@ class BaseConverter():
 
     def get_path(self, volume, is_mask=False, ouput_folder=None):
         if is_mask:
-            name = (
+            name = self._get_name_mask(volume)
+        else:
+            name = self._get_name_volume(volume)
+        if ouput_folder is None:
+            return Path(self.output_folder) / name
+        else:
+            return Path(ouput_folder) / name
+
+    def _get_name_mask(self, volume):
+        if self.naming == 0:
+            return (f"{volume.patient_id}__{volume.label.replace(' ', '_')}__"
+                    f"{volume.modality}__{volume.reference_modality}"
+                    f".{self.extension}")
+
+        elif self.naming == 1:
+            return (
+                f"{volume.patient_id}__{volume.label.replace(' ', '_')}__"
+                f"{volume.modality}__{volume.series_number}__{volume.reference_modality}"
+                f"__{volume.reference_series_number}"
+                f".{self.extension}")
+
+        elif self.naming == 2:
+            return (
                 f"{volume.patient_id}__{volume.label.replace(' ', '_')}__"
                 f"{volume.modality}__{volume.series_number}__{volume.reference_modality}"
                 f"__{volume.reference_series_number}__"
                 f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}.{self.extension}"
             )
-        else:
-            name = (f"{volume.patient_id}__{volume.modality}__"
+
+    def _get_name_volume(self, volume):
+        if self.naming == 0:
+            return (f"{volume.patient_id}__{volume.modality}"
+                    f".{self.extension}")
+        elif self.naming == 1:
+            return (f"{volume.patient_id}__{volume.modality}__"
                     f"{volume.series_number}.{self.extension}")
-        if ouput_folder is None:
-            return Path(self.output_folder) / name
-        else:
-            return Path(ouput_folder) / name
+        elif self.naming == 2:
+            return (f"{volume.patient_id}__{volume.modality}__"
+                    f"{volume.series_number}.{self.extension}")
 
     def write(self, volume, is_mask=False, dtype=None, output_folder=None):
         if dtype:
@@ -189,10 +215,12 @@ class NiftiConverter(BaseConverter):
     def __init__(
         self,
         output_folder=".",
+        naming=0,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.output_folder = Path(output_folder).resolve()
+        self.naming = naming
 
     def process_study(self, study, output_folder=None):
         logger.debug(
