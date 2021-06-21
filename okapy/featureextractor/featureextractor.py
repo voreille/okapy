@@ -202,8 +202,10 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
         else:
             mask = mask_path
 
-        results = FeatureExtractorPyradiomicsPT.translate_radiomics_output(
-            self.radiomics_extractor.execute(image, mask, **kwargs))
+        # ROGER - Don't rename first order features anymore at the extraction level
+        # results = FeatureExtractorPyradiomicsPT.translate_radiomics_output(
+        #     self.radiomics_extractor.execute(image, mask, **kwargs))
+        results = self.radiomics_extractor.execute(image, mask, **kwargs)
 
         for threshold, relative in zip([0], [False]):
             results.update(
