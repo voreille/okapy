@@ -278,8 +278,9 @@ class NiftiConverter(BaseConverter):
 
 
 class ExtractorConverter(BaseConverter):
-    def __init__(self, extraction_params, results_format="long", **kwargs):
+    def __init__(self, extraction_params, results_format="long", naming=0, **kwargs):
         super().__init__(**kwargs)
+        self.naming = naming
         self.featureextractors = OkapyExtractors(extraction_params)
         self.output_folder = None
         self.results_format = ExtractorConverter._check_results_format(
