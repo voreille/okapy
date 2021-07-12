@@ -3,6 +3,11 @@ preprocessing:
   resampling_spacing: [1.0, 1.0, 1.0]
   order: 3
 
+result_format:
+  result_format: "long"
+  result_tags:
+    - "SeriesInstanceUID"
+
 feature_extraction:
   CT:
     pyradiomics:
@@ -136,7 +141,7 @@ feature_extraction:
 
         setting:
           normalize: true
-          normalizeScale: 100  # This allows you to use more or less the same bin width.
+          normalizeScale: 100 # This allows you to use more or less the same bin width.
           binWidth: 5
           voxelArrayShift: 300
           label: 1

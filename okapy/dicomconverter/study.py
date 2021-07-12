@@ -17,9 +17,9 @@ class Study():
         self.patient_id = patient_id
 
     def append_dicom_files(self, im_dicom_files, dcm_header):
-        if dcm_header.modality == 'RTSTRUCT' or dcm_header.modality == 'SEG':
+        if dcm_header.Modality == 'RTSTRUCT' or dcm_header.Modality == 'SEG':
             self.mask_files.append(
-                DicomFileBase.get(dcm_header.modality)(
+                DicomFileBase.get(dcm_header.Modality)(
                     dicom_header=dcm_header,
                     dicom_paths=[k.path for k in im_dicom_files],
                     study=self,
@@ -29,18 +29,18 @@ class Study():
             try:
 
                 self.volume_files.append(
-                    DicomFileBase.get(dcm_header.modality)(
+                    DicomFileBase.get(dcm_header.Modality)(
                         dicom_header=dcm_header,
                         dicom_paths=[k.path for k in im_dicom_files],
                         study=self,
                     ))
             except KeyError:
-                warnings.warn(f"This modality {dcm_header.modality} "
+                warnings.warn(f"This modality {dcm_header.Modality} "
                               f"is not supported")
         else:
             warnings.warn(f"single slice or 2D images are not supported. "
-                          f"Patient {dcm_header.patient_id}, "
-                          f"image number {dcm_header.series_number}")
+                          f"Patient {dcm_header.PatientID}, "
+                          f"image number {dcm_header.SeriesNumber}")
 
     def save(self, dir_path="./tmp/"):
         path = Path(dir_path)

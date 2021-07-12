@@ -1,30 +1,17 @@
 from datetime import datetime
+import re
 
 import pydicom as pdcm
 
 
+def camel_to_snake_case(str):
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', str)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+
 class DicomHeader():
-    def __init__(self,
-                 patient_name=None,
-                 patient_id=None,
-                 study_instance_uid=None,
-                 study_date=None,
-                 series_instance_uid=None,
-                 series_number=None,
-                 instance_number=None,
-                 image_type=None,
-                 modality=None,
-                 series_datetime=None):
-        self.patient_name = patient_name
-        self.patient_id = patient_id
-        self.study_instance_uid = study_instance_uid
-        self.study_date = study_date
-        self.series_instance_uid = series_instance_uid
-        self.series_number = series_number
-        self.instance_number = instance_number
-        self.modality = modality
-        self.image_type = image_type
-        self.series_datetime = series_datetime
+    def __init__(self, **kwargs):
+        self.dicom_data = kwargs
 
     @staticmethod
     def from_file(file):

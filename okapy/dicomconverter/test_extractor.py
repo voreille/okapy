@@ -29,14 +29,14 @@ class TestOkapy(unittest.TestCase):
         # input_path = '/mnt/nas4/datasets/ToReadme/ORL_RennesCHUV_Castelli/TEP_RENNES/P9'
         # input_path = '/home/val/python_wkspce/lymphangitis3.0/data/raw/PatientLC_51'
         # input_path = "/mnt/nas4/datasets/ToReadme/HECKTOR/training/dicom/HN-HMR-029"
-        input_path = "/home/val/Documents/test_okapy/TCGA-02-0009/DICOM"
+        input_path = "/mnt/nas4/datasets/ToReadme/HECKTOR/training/dicom/HN-CHUS-035"
         # input_path = "/home/val/Documents/test_okapy/dicom_without_seg/"
         # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
         # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
         # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
-        extraction_params = "/home/val/python_wkspce/okapy/parameters/defaults/defaults.yaml"
+        extraction_params = "/home/valentin/python_wkspce/okapy/parameters/defaults/defaults_pyradiomics_only.yaml"
         converter = ExtractorConverter.from_params(extraction_params)
-        result = converter(input_path, labels=None)
+        result = converter(input_path, labels=["GTVt"])
         print(result)
 
     # def test_extractor2(self):

@@ -41,14 +41,23 @@ def bb_intersection(bbs):
     return out
 
 
+class VolumeFile():
+    def __init__(self, path=None, dicom_header=None):
+        self.path = path
+        self.dicom_header = dicom_header
+
+    def __getattr__(self, name):
+        return getattr(self.dicom_header, name)
+
+
 class VolumeResult():
     def __init__(self, study, volume, path):
         self.study_instance_uid = study.study_instance_uid
         self.patient_id = study.patient_id
         self.study_date = study.study_date
-        self.modality = volume.modality
+        self.modality = volume.Modality
         self.series_instance_uid = volume.series_instance_uid
-        self.series_number = volume.series_number
+        self.series_number = volume.SeriesNumber
         self.path = path
 
     def __str__(self):
@@ -58,7 +67,7 @@ class VolumeResult():
 class MaskResult(VolumeResult):
     def __init__(self, study, volume, path):
         super().__init__(study, volume, path)
-        self.reference_modality = volume.reference_modality
+        self.reference_Modality = volume.reference_Modality
         self.label = volume.label
 
 
@@ -74,10 +83,12 @@ class BaseConverter():
                  volume_dtype=np.float32,
                  mask_dtype=np.uint32,
                  extension='nii.gz',
+                 naming=0,
                  cores=None,
                  converter_backend='sitk'):
         self.padding = BaseConverter._check_padding(padding)
         self.list_labels = list_labels
+        self.naming = naming
         if dicom_walker is None:
             self.dicom_walker = DicomWalker(cores=cores)
         else:
@@ -155,35 +166,34 @@ class BaseConverter():
 
     def _get_name_mask(self, volume):
         if self.naming == 0:
-            return (f"{volume.patient_id}__{volume.label.replace(' ', '_')}__"
-                    f"{volume.modality}__{volume.reference_modality}"
+            return (f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
+                    f"{volume.Modality}__{volume.reference_Modality}"
                     f".{self.extension}")
 
         elif self.naming == 1:
             return (
-                f"{volume.patient_id}__{volume.label.replace(' ', '_')}__"
-                f"{volume.modality}__{volume.series_number}__{volume.reference_modality}"
-                f"__{volume.reference_series_number}"
+                f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
+                f"{volume.Modality}__{volume.SeriesNumber}__{volume.reference_Modality}"
+                f"__{volume.reference_SeriesNumber}"
                 f".{self.extension}")
 
         elif self.naming == 2:
             return (
-                f"{volume.patient_id}__{volume.label.replace(' ', '_')}__"
-                f"{volume.modality}__{volume.series_number}__{volume.reference_modality}"
-                f"__{volume.reference_series_number}__"
-                f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}.{self.extension}"
-            )
+                f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
+                f"{volume.Modality}__{volume.SeriesNumber}__{volume.reference_Modality}"
+                f"__{volume.reference_SeriesNumber}__"
+                f".{self.extension}")
 
     def _get_name_volume(self, volume):
         if self.naming == 0:
-            return (f"{volume.patient_id}__{volume.modality}"
+            return (f"{volume.PatientID}__{volume.Modality}"
                     f".{self.extension}")
         elif self.naming == 1:
-            return (f"{volume.patient_id}__{volume.modality}__"
-                    f"{volume.series_number}.{self.extension}")
+            return (f"{volume.PatientID}__{volume.Modality}__"
+                    f"{volume.SeriesNumber}.{self.extension}")
         elif self.naming == 2:
-            return (f"{volume.patient_id}__{volume.modality}__"
-                    f"{volume.series_number}.{self.extension}")
+            return (f"{volume.PatientID}__{volume.Modality}__"
+                    f"{volume.SeriesNumber}.{self.extension}")
 
     def write(self, volume, is_mask=False, dtype=None, output_folder=None):
         if dtype:
@@ -200,7 +210,7 @@ class BaseConverter():
                 str(counter) + ')' + '.' + self.extension)
         if self.converter_backend == 'sitk':
             sitk.WriteImage(volume.sitk_image, str(new_path.resolve()))
-        return path
+        return VolumeFile(path=path, dicom_header=volume.dicom_header)
 
     @abstractmethod
     def process_study(self, study, output_folder=None):
@@ -215,12 +225,10 @@ class NiftiConverter(BaseConverter):
     def __init__(
         self,
         output_folder=".",
-        naming=0,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.output_folder = Path(output_folder).resolve()
-        self.naming = naming
 
     def process_study(self, study, output_folder=None):
         logger.debug(
@@ -245,18 +253,19 @@ class NiftiConverter(BaseConverter):
         volumes_list = map(lambda v: self.volume_processor(v, bb),
                            volumes_list)
         for v in volumes_list:
-            path = self.write(v,
-                              is_mask=False,
-                              dtype=self.volume_dtype,
-                              output_folder=output_folder)
-            volume_results_list.append(VolumeResult(study, v, path))
+            volume_file = self.write(v,
+                                     is_mask=False,
+                                     dtype=self.volume_dtype,
+                                     output_folder=output_folder)
+            volume_results_list.append(VolumeResult(study, v,
+                                                    volume_file.path))
 
         for v in masks_list:
-            path = self.write(v,
-                              is_mask=True,
-                              dtype=self.mask_dtype,
-                              output_folder=output_folder)
-            mask_results_list.append(MaskResult(study, v, path))
+            volume_file = self.write(v,
+                                     is_mask=True,
+                                     dtype=self.mask_dtype,
+                                     output_folder=output_folder)
+            mask_results_list.append(MaskResult(study, v, volume_file.path))
 
         logger.debug(f"End of processing study for patient {study.patient_id}")
         return volume_results_list, mask_results_list
@@ -278,19 +287,27 @@ class NiftiConverter(BaseConverter):
 
 
 class ExtractorConverter(BaseConverter):
-    def __init__(self, extraction_params, results_format="long", **kwargs):
+    def __init__(self,
+                 extraction_params,
+                 result_format="long",
+                 result_tags=None,
+                 **kwargs):
         super().__init__(**kwargs)
         self.featureextractors = OkapyExtractors(extraction_params)
         self.output_folder = None
-        self.results_format = ExtractorConverter._check_results_format(
-            results_format)
+        self.result_format = ExtractorConverter._check_result_format(
+            result_format)
+        if result_tags:
+            self.result_tags = result_tags
+        else:
+            self.result_tags = []
 
     @staticmethod
-    def _check_results_format(results_format):
-        if results_format not in ["long", "multiindex"]:
-            raise ValueError(f"The format {results_format} for the argument "
-                             f"results_format is not supported.")
-        return results_format
+    def _check_result_format(result_format):
+        if result_format not in ["long", "multiindex"]:
+            raise ValueError(f"The format {result_format} for the argument "
+                             f"result_format is not supported.")
+        return result_format
 
     @staticmethod
     def from_params(params_path):
@@ -301,10 +318,11 @@ class ExtractorConverter(BaseConverter):
                 params = yaml.safe_load(f)
 
         return ExtractorConverter(params["feature_extraction"],
+                                  **params["result_format"],
                                   **params["preprocessing"])
 
     def get_empty_results_df(self):
-        if self.results_format == "mutltiindex":
+        if self.result_format == "mutltiindex":
             return pd.DataFrame(
                 index=pd.MultiIndex(levels=[[], []],
                                     codes=[[], []],
@@ -312,7 +330,7 @@ class ExtractorConverter(BaseConverter):
                 columns=pd.MultiIndex(levels=[[], []],
                                       codes=[[], []],
                                       names=["modality", "features"]))
-        elif self.results_format == "long":
+        elif self.result_format == "long":
             return pd.DataFrame()
 
     def extract_volume_of_interest(self, study, labels=None):
@@ -353,7 +371,7 @@ class ExtractorConverter(BaseConverter):
         volumes_list = list(
             map(lambda v: self.volume_processor(v, bb), volumes_list))
 
-        modalities_list = list(map(lambda v: v.modality, volumes_list))
+        modalities_list = list(map(lambda v: v.Modality, volumes_list))
         labels_list = list(map(lambda v: v.label, masks_list))
         volumes_list = list(
             map(
@@ -370,24 +388,32 @@ class ExtractorConverter(BaseConverter):
                 zip(volumes_list, modalities_list),
                 zip(masks_list, labels_list),
         ):
-            result = self.featureextractors(volume, mask, modality=modality)
+            result = self.featureextractors(volume.path,
+                                            mask.path,
+                                            modality=modality)
             for key, val in result.items():
                 if "diagnostics" in key or ("glcm" in key
                                             and "original" not in key):
                     continue
-                if self.results_format == "multiindex":
+                if self.result_format == "multiindex":
                     results_df.loc[(study.patient_id, label),
                                    (modality, key)] = val
-                elif self.results_format == "long":
+                elif self.result_format == "long":
+                    result_dict = {
+                        "patient_id": study.patient_id,
+                        "modality": modality,
+                        "VOI": label,
+                        "feature_name": key,
+                        "feature_value": val,
+                    }
+                    result_dict.update({
+                        key: getattr(volume, key)
+                        for key in self.result_tags
+                    })
                     results_df = results_df.append(
-                        {
-                            "patient_id": study.patient_id,
-                            "modality": modality,
-                            "VOI": label,
-                            "feature_name": key,
-                            "feature_value": val,
-                        },
-                        ignore_index=True)
+                        result_dict,
+                        ignore_index=True,
+                    )
 
         return results_df
 

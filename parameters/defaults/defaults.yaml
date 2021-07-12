@@ -3,6 +3,11 @@ preprocessing:
   resampling_spacing: [1.0, 1.0, 1.0]
   order: 3
 
+result_format:
+  result_format: "long"
+  result_tags:
+    - "SeriesInstanceUID"
+
 feature_extraction:
   CT:
     pyradiomics:
