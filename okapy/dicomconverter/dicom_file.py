@@ -7,10 +7,8 @@ import pydicom as pdcm
 from pydicom.dataset import FileDataset
 import pydicom_seg
 from skimage.draw import polygon
-import pandas as pd
 
 from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
-from okapy.dicomconverter.dicom_header import DicomHeader
 from okapy.exceptions import (EmptyContourException, MissingWeightException,
                               PETUnitException)
 
@@ -65,8 +63,14 @@ class DicomFileBase():
 
     @property
     def dicom_header(self):
-        if self._dicom_header is None:
-            self._dicom_header = DicomHeader.from_file(self.dicom_paths[0])
+        if self._dicom_header is None and not type(
+                self.dicom_paths[0]) == FileDataset:
+            self._dicom_header = pdcm.read_file(self.dicom_paths[0],
+                                                stop_before_pixels=True)
+        elif self._dicom_header is None and type(
+                self.dicom_paths[0]) == FileDataset:
+            self._dicom_header = self.dicom_paths[0]
+
         return self._dicom_header
 
     @property
@@ -165,13 +169,6 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             pixel_spacing=slices[0].PixelSpacing,
             shape=(*slices[0].pixel_array.shape, self.apparent_n_slices))
 
-    def get_dicom_header_df(self):
-        return pd.DataFrame.from_dict({
-            'Manufacturer': [self.slices[0].Manufacturer],
-            'ManufacturerModelName': [self.slices[0].ManufacturerModelName],
-            'InstitutionName': [self.slices[0].InstitutionName],
-        })
-
     def _check_missing_slices(self):
 
         slice_spacing = self.orthogonal_positions[
@@ -189,12 +186,12 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
                 # If only one slice is missing
                 logger.warning(f"One slice is missing, we replaced "
                                f"it by linear interpolation for patient"
-                               f"{self.dicom_header.patient_id}")
+                               f"{self.dicom_header.PatientID}")
                 logger.warning(f"One slice is missing, "
                                f"for patient "
-                               f"{self.dicom_header.patient_id}"
+                               f"{self.dicom_header.PatientID}"
                                f" and modality "
-                               f"{self.dicom_header.modality}")
+                               f"{self.dicom_header.Modality}")
                 apparent_n_slices = len(self.slices) + 1
             else:
                 raise RuntimeError('Multiple slices are missing')
@@ -270,7 +267,7 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
                     continue
             if not weight_found:
                 logger.warning(f"Estimation of patient weight by 75.0 kg"
-                               f" for patient {self.dicom_header.patient_id}")
+                               f" for patient {self.dicom_header.PatientID}")
                 patient_weight = 75.0
 
         return patient_weight
@@ -332,11 +329,11 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
             decay_time = 1.75 * 3600  # From Martin's code
             logger.warning(
                 f"Estimation of time decay for SUV"
-                f" for patient {self.dicom_header.patient_id}"
+                f" for patient {self.dicom_header.PatientID}"
                 f" computation from average parameters, "
                 f"i.e. with an estimated decay time of {decay_time} [s]")
         logger.debug(f"Computed decay time for patient "
-                     f"{self.dicom_header.patient_name} is {decay_time} [s]")
+                     f"{self.dicom_header.PatientName} is {decay_time} [s]")
         return decay_time
 
     def _get_suv_philips(self):
@@ -364,14 +361,6 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
             im = pet * patient_weight * 1000 / actual_activity
             image.append(im)
         return np.stack(image, axis=-1)
-
-    def get_dicom_header_df(self):
-        return pd.DataFrame.from_dict({
-            'Manufacturer': [self.slices[0].Manufacturer],
-            'ManufacturerModelName': [self.slices[0].ManufacturerModelName],
-            'Units': [self.slices[0].Units],
-            'InstitutionName': [self.slices[0].InstitutionName],
-        })
 
 
 class MaskFile(DicomFileBase, name="mask_base"):
@@ -449,7 +438,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             found = False
             for f in self.study.volume_files:
                 if (self.reference_image_uid ==
-                        f.dicom_header.series_instance_uid):
+                        f.dicom_header.SeriesInstanceUID):
                     self._reference_image = f
                     found = True
                     break
@@ -461,7 +450,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                     f" taken as reference.")
 
                 for f in self.study.volume_files:
-                    if f.dicom_header.modality == 'CT':
+                    if f.dicom_header.Modality == 'CT':
                         self._reference_image = f
         return self._reference_image
 

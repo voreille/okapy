@@ -49,9 +49,9 @@ class TestOkapy(unittest.TestCase):
         ct_path = Path(
             "/mnt/nas2/data/Personal/Vincent/brain_mets/1A0B5C8D1E0F0/SERIES-6-CT/"
         )
-        output_path_im = '/home/val/Documents/output_okapy/image_test1.nii.gz'
-        output_path_ct = '/home/val/Documents/output_okapy/ct_test1.nii.gz'
-        output_path_mask = '/home/val/Documents/output_okapy/mask_test1.nii.gz'
+        output_path_im = '/home/valentin/Documents/output_okapy/image_test1.nii.gz'
+        output_path_ct = '/home/valentin/Documents/output_okapy/ct_test1.nii.gz'
+        output_path_mask = '/home/valentin/Documents/output_okapy/mask_test1.nii.gz'
         image_dcm_paths = [str(f.resolve()) for f in image_path.rglob("*")]
         mask_dcm_paths = [str(f.resolve()) for f in mask_path.rglob("*")]
         ct_dcm_paths = [str(f.resolve()) for f in ct_path.rglob("*")]
