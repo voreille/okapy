@@ -75,9 +75,11 @@ class DicomWalker():
 
         logger.info("Parsing - END")
         dicom_files.sort(key=lambda x: (
-            x.dicom_header.StudyInstanceUID, x.dicom_header.Modality, x.
-            dicom_header.SeriesInstanceUID, x.dicom_header.InstanceNumber, x.
-            dicom_header.PatientID))
+            x.dicom_header.get('StudyInstanceUID'), x.dicom_header.get('Modality'), x.
+            dicom_header.get('SeriesInstanceUID'), x.dicom_header.get('InstanceNumber'), x.
+            dicom_header.get('PatientID')
+            )
+        )
         return dicom_files
 
     def _get_studies(self, dicom_files):
