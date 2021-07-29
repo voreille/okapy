@@ -161,44 +161,40 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
         self.slices = slices
         self.orthogonal_positions = orthogonal_positions
-        self.apparent_n_slices = self._check_missing_slices()
+        self.expected_n_slices = self._check_missing_slices()
         self._reference_frame = ReferenceFrame(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,
             pixel_spacing=slices[0].PixelSpacing,
-            shape=(*slices[0].pixel_array.shape, self.apparent_n_slices))
+            shape=(*slices[0].pixel_array.shape, self.expected_n_slices))
 
     def _check_missing_slices(self):
-
-        slice_spacing = self.orthogonal_positions[
-            1] - self.orthogonal_positions[0]
         d_slices = np.array([
             self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
             for ind in range(len(self.slices) - 1)
         ])
         self.d_slices = d_slices
-        position_final_slice = self.orthogonal_positions[0] + np.sum(d_slices)
-        if not is_approx_equal(position_final_slice,
-                               self.orthogonal_positions[-1]):
-            if (position_final_slice -
-                    self.orthogonal_positions[-1]) / slice_spacing < 1.5:
-                # If only one slice is missing
-                logger.warning(f"One slice is missing, we replaced "
-                               f"it by linear interpolation for patient"
-                               f"{self.dicom_header.PatientID}")
-                logger.warning(f"One slice is missing, "
-                               f"for patient "
-                               f"{self.dicom_header.PatientID}"
-                               f" and modality "
-                               f"{self.dicom_header.Modality}")
-                apparent_n_slices = len(self.slices) + 1
-            else:
-                raise RuntimeError('Multiple slices are missing')
+        slice_spacing = np.min(np.unique(d_slices))
+        condition_missing_slice = np.abs(d_slices - slice_spacing) > 0.05
+        n_missing_slices = np.sum(condition_missing_slice)
+        if n_missing_slices == 1:
+            # If only one slice is missing
+            logger.warning(f"One slice is missing, we replaced "
+                           f"it by linear interpolation for patient"
+                           f"{self.dicom_header.PatientID}")
+            logger.warning(f"One slice is missing, "
+                           f"for patient "
+                           f"{self.dicom_header.PatientID}"
+                           f" and modality "
+                           f"{self.dicom_header.Modality}")
+            expected_n_slices = len(self.slices) + 1
+        elif n_missing_slices > 1:
+            raise RuntimeError("Multiple slices are missing")
         else:
-            apparent_n_slices = len(self.slices)
+            expected_n_slices = len(self.slices)
 
-        return apparent_n_slices
+        return expected_n_slices
 
     def _interp_missing_slice(self, image):
         mean_slice_spacing = np.mean(self.d_slices)
@@ -218,7 +214,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             self.read()
         image = self.get_physical_values()
         image = np.transpose(image, (1, 0, 2))
-        if self.apparent_n_slices != len(self.slices):
+        if self.expected_n_slices != len(self.slices):
             image = self._interp_missing_slice(image)
 
         return Volume(image,
@@ -444,14 +440,15 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                     break
 
             if not found:
-                logger.warning(
-                    f"The Reference image was not found for"
-                    f" the RTSTRUCT {str(self)}. The CT image will be"
-                    f" taken as reference.")
+                self.study.volume_files.sort(
+                    key=lambda x: x.dicom_header.Modality)
 
-                for f in self.study.volume_files:
-                    if f.dicom_header.Modality == 'CT':
-                        self._reference_image = f
+                self._reference_image = self.study.volume_files[0]
+                logger.warning(f"The Reference image was not found for"
+                               f" the RTSTRUCT {str(self)}. The "
+                               f"{self._reference_image.dicom_header.Modality}"
+                               f" image will be"
+                               f" taken as reference.")
         return self._reference_image
 
     @property
