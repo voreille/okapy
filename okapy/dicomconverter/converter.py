@@ -56,7 +56,7 @@ class VolumeResult():
         self.patient_id = study.patient_id
         self.study_date = study.study_date
         self.modality = volume.Modality
-        self.series_instance_uid = volume.series_instance_uid
+        self.series_instance_uid = volume.SeriesInstanceUID
         self.series_number = volume.SeriesNumber
         self.path = path
 
@@ -90,7 +90,8 @@ class BaseConverter():
         self.list_labels = list_labels
         self.naming = naming
         if dicom_walker is None:
-            self.dicom_walker = DicomWalker(cores=cores)
+            self.dicom_walker = DicomWalker()
+            # self.dicom_walker = DicomWalker(cores=cores)
         else:
             self.dicom_walker = dicom_walker
         if resampling_spacing == -1:
@@ -171,17 +172,19 @@ class BaseConverter():
                     f".{self.extension}")
 
         elif self.naming == 1:
-            return (
-                f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
-                f"{volume.Modality}__{volume.SeriesNumber}__{volume.reference_Modality}"
-                f"__{volume.reference_SeriesNumber}"
-                f".{self.extension}")
+            return (f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
+                    f"{volume.Modality}__{volume.SeriesNumber}__"
+                    f"{volume.reference_Modality}"
+                    f"__{volume.reference_SeriesNumber}"
+                    f".{self.extension}")
 
         elif self.naming == 2:
             return (
                 f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
-                f"{volume.Modality}__{volume.SeriesNumber}__{volume.reference_Modality}"
+                f"{volume.Modality}__{volume.SeriesNumber}__"
+                f"{volume.reference_Modality}"
                 f"__{volume.reference_SeriesNumber}__"
+                f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}"
                 f".{self.extension}")
 
     def _get_name_volume(self, volume):
@@ -192,8 +195,11 @@ class BaseConverter():
             return (f"{volume.PatientID}__{volume.Modality}__"
                     f"{volume.SeriesNumber}.{self.extension}")
         elif self.naming == 2:
-            return (f"{volume.PatientID}__{volume.Modality}__"
-                    f"{volume.SeriesNumber}.{self.extension}")
+            return (
+                f"{volume.PatientID}__{volume.Modality}__"
+                f"{volume.SeriesNumber}__"
+                f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}"
+                f".{self.extension}")
 
     def write(self, volume, is_mask=False, dtype=None, output_folder=None):
         if dtype:
@@ -392,8 +398,7 @@ class ExtractorConverter(BaseConverter):
                                             mask.path,
                                             modality=modality)
             for key, val in result.items():
-                if "diagnostics" in key or ("glcm" in key
-                                            and "original" not in key):
+                if "diagnostics" in key:
                     continue
                 if self.result_format == "multiindex":
                     results_df.loc[(study.patient_id, label),

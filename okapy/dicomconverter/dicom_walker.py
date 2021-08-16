@@ -75,9 +75,12 @@ class DicomWalker():
 
         logger.info("Parsing - END")
         dicom_files.sort(key=lambda x: (
-            x.dicom_header.StudyInstanceUID, x.dicom_header.Modality, x.
-            dicom_header.SeriesInstanceUID, x.dicom_header.InstanceNumber, x.
-            dicom_header.PatientID))
+            x.dicom_header.StudyInstanceUID,
+            x.dicom_header.Modality,
+            x.dicom_header.SeriesInstanceUID,
+            x.dicom_header.get("InstanceNumber", "-1"),
+            x.dicom_header.PatientID,
+        ))
         return dicom_files
 
     def _get_studies(self, dicom_files):
@@ -108,7 +111,9 @@ class DicomWalker():
                 im_dicom_files = list()
 
             if i > 0 and not (current_study_uid == previous_study_uid):
-                studies.append(current_study)
+                # check if the study contains images, in case of lone RTSTRUCT
+                if len(current_study.volume_files) > 0:
+                    studies.append(current_study)
                 current_study = Study(study_instance_uid=current_study_uid,
                                       study_date=f.dicom_header.StudyDate,
                                       patient_id=f.dicom_header.PatientID)
@@ -120,7 +125,8 @@ class DicomWalker():
                 previous_study_uid = f.dicom_header.StudyInstanceUID
 
         current_study.append_dicom_files(im_dicom_files, previous_dcm_header)
-        studies.append(current_study)
+        if len(current_study.volume_files) > 0:
+            studies.append(current_study)
         return studies
 
     def __call__(self, input_dirpath=None):
