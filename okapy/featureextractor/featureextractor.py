@@ -41,13 +41,22 @@ class OkapyExtractors():
                     for extractor_name, params in list_extractors.items()
                 ])
 
+    @staticmethod
+    def _update_results(image, mask, extractor, results):
+        try:
+            results.update(extractor(image, mask))
+        except Exception as e:
+            logger.error(f"Features were not extracted for "
+                         f"extractor {extractor.name}, image {image} "
+                         f"and mask {mask}. The error message is {e}")
+
     def __call__(self, image, mask, modality=None):
         results = OrderedDict()
         for extractor in self.feature_extractors.get(modality,
                                                      [self.default_extractor]):
-            results.update(extractor(image, mask))
+            OkapyExtractors._update_results(image, mask, extractor, results)
         for extractor in self.feature_extractors.get("common", []):
-            results.update(extractor(image, mask))
+            OkapyExtractors._update_results(image, mask, extractor, results)
         return results
 
 

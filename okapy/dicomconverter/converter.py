@@ -398,8 +398,7 @@ class ExtractorConverter(BaseConverter):
                                             mask.path,
                                             modality=modality)
             for key, val in result.items():
-                if "diagnostics" in key or ("glcm" in key
-                                            and "original" not in key):
+                if "diagnostics" in key:
                     continue
                 if self.result_format == "multiindex":
                     results_df.loc[(study.patient_id, label),
