@@ -176,7 +176,8 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         ])
         self.d_slices = d_slices
         slice_spacing = np.min(np.unique(d_slices))
-        condition_missing_slice = np.abs(d_slices - slice_spacing) > 0.05
+        condition_missing_slice = (np.abs(d_slices - slice_spacing) >
+                                   0.05 * slice_spacing)
         n_missing_slices = np.sum(condition_missing_slice)
         if n_missing_slices == 1:
             # If only one slice is missing

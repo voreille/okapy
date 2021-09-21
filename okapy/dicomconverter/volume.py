@@ -198,14 +198,7 @@ class Volume():
         self.np_image = np_image
         self.reference_frame = reference_frame
         self.dicom_header = dicom_header
-        try:
-            self.series_datetime = datetime.strptime(
-                dicom_header.SeriesDate +
-                dicom_header.SeriesTime.split('.')[0],
-                "%Y%m%d%H%M%S",
-            )
-        except AttributeError:
-            self.series_datetime = None
+        self.series_datetime = dicom_header.series_datetime
 
     def __getattr__(self, name):
         return getattr(self.dicom_header, name)
