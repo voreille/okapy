@@ -1,6 +1,7 @@
 from copy import copy
 from datetime import time, datetime
 import logging
+from statistics import mode
 
 import numpy as np
 import pydicom as pdcm
@@ -175,8 +176,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             for ind in range(len(self.slices) - 1)
         ])
         self.d_slices = d_slices
-        counts = np.bincount(d_slices)
-        slice_spacing = np.argmax(counts)
+        slice_spacing = mode(d_slices)
         condition_missing_slice = (np.abs(d_slices - slice_spacing) >
                                    0.5 * slice_spacing)
         n_missing_slices = np.sum(condition_missing_slice)
