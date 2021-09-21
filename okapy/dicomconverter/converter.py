@@ -1,6 +1,7 @@
 from abc import abstractmethod
 from pathlib import Path
 from itertools import product
+from functools import partial
 from tempfile import mkdtemp
 from shutil import rmtree
 from multiprocessing import Pool
@@ -72,26 +73,28 @@ class MaskResult(VolumeResult):
 
 
 class BaseConverter():
-    def __init__(self,
-                 resampling_spacing=(1, 1, 1),
-                 order=3,
-                 padding=10,
-                 list_labels=None,
-                 dicom_walker=None,
-                 volume_processor=None,
-                 mask_processor=None,
-                 volume_dtype=np.float32,
-                 mask_dtype=np.uint32,
-                 extension='nii.gz',
-                 naming=0,
-                 cores=None,
-                 converter_backend='sitk'):
+    def __init__(
+        self,
+        resampling_spacing=(1, 1, 1),
+        order=3,
+        padding=10,
+        list_labels=None,
+        dicom_walker=None,
+        volume_processor=None,
+        mask_processor=None,
+        volume_dtype=np.float32,
+        mask_dtype=np.uint32,
+        extension='nii.gz',
+        naming=0,
+        cores=None,
+        converter_backend='sitk',
+    ):
         self.padding = BaseConverter._check_padding(padding)
         self.list_labels = list_labels
         self.naming = naming
         if dicom_walker is None:
-            self.dicom_walker = DicomWalker()
-            # self.dicom_walker = DicomWalker(cores=cores)
+            # self.dicom_walker = DicomWalker()
+            self.dicom_walker = DicomWalker(cores=cores)
         else:
             self.dicom_walker = dicom_walker
         if resampling_spacing == -1:
@@ -280,10 +283,12 @@ class NiftiConverter(BaseConverter):
         if output_folder is not None:
             self.output_folder = output_folder
 
-        studies_list = self.dicom_walker(input_folder)
+        studies_list = self.dicom_walker(input_folder, cores=self.cores)
         if self.cores:
             with Pool(self.cores) as p:
-                result = p.map(self.process_study, studies_list)
+                result = list(
+                    tqdm(p.imap(self.process_study, studies_list),
+                         total=len(studies_list)))
         else:
             result = list()
             for study in tqdm(studies_list):
@@ -296,17 +301,24 @@ class ExtractorConverter(BaseConverter):
     def __init__(self,
                  extraction_params,
                  result_format="long",
-                 result_tags=None,
+                 additional_dicom_tags=None,
                  **kwargs):
         super().__init__(**kwargs)
         self.featureextractors = OkapyExtractors(extraction_params)
         self.output_folder = None
         self.result_format = ExtractorConverter._check_result_format(
             result_format)
-        if result_tags:
-            self.result_tags = result_tags
-        else:
-            self.result_tags = []
+        self.dicom_walker.additional_dicom_tags = additional_dicom_tags
+        self._additional_dicom_tags = additional_dicom_tags
+
+    @property
+    def additional_dicom_tags(self):
+        return self._additional_dicom_tags
+
+    @additional_dicom_tags.setter
+    def additional_dicom_tags(self, tags):
+        self._additional_dicom_tags = tags
+        self.dicom_walker.additional_dicom_tags = tags
 
     @staticmethod
     def _check_result_format(result_format):
@@ -353,7 +365,7 @@ class ExtractorConverter(BaseConverter):
                         continue
         return masks_list
 
-    def process_study(self, study, results_df=None, labels=None):
+    def process_study(self, study, labels=None):
         masks_list = self.extract_volume_of_interest(study, labels=labels)
         if not masks_list:
             raise MissingSegmentationException(
@@ -387,8 +399,7 @@ class ExtractorConverter(BaseConverter):
             map(lambda v: self.write(v, is_mask=True, dtype=self.mask_dtype),
                 masks_list))
 
-        if results_df is None:
-            results_df = self.get_empty_results_df()
+        results_df = self.get_empty_results_df()
 
         for (volume, modality), (mask, label) in product(
                 zip(volumes_list, modalities_list),
@@ -412,8 +423,8 @@ class ExtractorConverter(BaseConverter):
                         "feature_value": val,
                     }
                     result_dict.update({
-                        key: getattr(volume, key)
-                        for key in self.result_tags
+                        k: getattr(volume.dicom_header, k)
+                        for k in self.additional_dicom_tags
                     })
                     results_df = results_df.append(
                         result_dict,
@@ -425,12 +436,19 @@ class ExtractorConverter(BaseConverter):
     def __call__(self, input_folder, labels=None):
         try:
             self.output_folder = mkdtemp()
-            studies_list = self.dicom_walker(input_folder)
-            results_df = self.get_empty_results_df()
-            for study in studies_list:
-                results_df = self.process_study(study,
-                                                results_df=results_df,
-                                                labels=labels)
+            studies_list = self.dicom_walker(input_folder, cores=self.cores)
+            if self.cores is None:
+                result_dfs = list()
+                for study in studies_list:
+                    result_dfs.append(self.process_study(study, labels=labels))
+            else:
+
+                with Pool(self.cores) as p:
+                    result_dfs = list(
+                        tqdm(p.imap(partial(self.process_study, labels=labels),
+                                    studies_list),
+                             total=len(studies_list)))
+
             rmtree(self.output_folder, True)
             self.output_folder = None
         except Exception as e:
@@ -438,4 +456,4 @@ class ExtractorConverter(BaseConverter):
             self.output_folder = None
             raise e
 
-        return results_df
+        return pd.concat(result_dfs, axis=0, ignore_index=True)

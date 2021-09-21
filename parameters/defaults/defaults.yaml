@@ -5,7 +5,7 @@ preprocessing:
 
 result_format:
   result_format: "long"
-  result_tags:
+  additional_dicom_tags:
     - "SeriesInstanceUID"
 
 feature_extraction:
