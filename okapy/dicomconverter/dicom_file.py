@@ -177,8 +177,14 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         ])
         self.d_slices = d_slices
         slice_spacing = mode(d_slices)
+        if slice_spacing==0:
+            raise RuntimeError("The most frequent slice spacing computed"
+            " is 0, probably due to multi-channel image (e.g. DWI).")
+        elif np.min(slice_spacing)==0:
+            raise RuntimeError("Some slices have the same position")
+
         condition_missing_slice = (np.abs(d_slices - slice_spacing) >
-                                   0.5 * slice_spacing)
+                                   0.9 * slice_spacing)
         n_missing_slices = np.sum(condition_missing_slice)
         if n_missing_slices == 1:
             # If only one slice is missing
