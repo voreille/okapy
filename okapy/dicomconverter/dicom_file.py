@@ -163,12 +163,14 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         self.slices = slices
         self.orthogonal_positions = orthogonal_positions
         self.expected_n_slices = self._check_missing_slices()
+        slice_shape = (slices[0].pixel_array.shape[1],
+                       slices[0].pixel_array.shape[0])
         self._reference_frame = ReferenceFrame(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,
             pixel_spacing=slices[0].PixelSpacing,
-            shape=(*slices[0].pixel_array.shape, self.expected_n_slices))
+            shape=slice_shape + (self.expected_n_slices, ))
 
     def _check_missing_slices(self):
         d_slices = np.array([
@@ -177,10 +179,11 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         ])
         self.d_slices = d_slices
         slice_spacing = mode(d_slices)
-        if slice_spacing==0:
-            raise RuntimeError("The most frequent slice spacing computed"
-            " is 0, probably due to multi-channel image (e.g. DWI).")
-        elif np.min(slice_spacing)==0:
+        if slice_spacing == 0:
+            raise RuntimeError(
+                "The most frequent slice spacing computed"
+                " is 0, probably due to multi-channel image (e.g. DWI).")
+        elif np.min(slice_spacing) == 0:
             raise RuntimeError("Some slices have the same position")
 
         condition_missing_slice = (np.abs(d_slices - slice_spacing) >
@@ -507,7 +510,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                 self.reference_image.read()
             self._reference_frame = self.reference_image.reference_frame
 
-    def _compute_mask(self, contour_sequence):
+    def _compute_mask(self, contour_sequence, label=""):
         mask = np.zeros(self.reference_frame.shape, dtype=np.uint8)
         for s in contour_sequence:
             current = s.ContourData
@@ -521,9 +524,11 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             ],
                                   axis=0)
             rr, cc = polygon(vx_indices[:, 0], vx_indices[:, 1])
-            if len(rr) > 0 and len(cc) > 0:
-                if np.max(rr) > 512 or np.max(cc) > 512:
-                    raise Exception("The RTSTRUCT file is compromised")
+            if (len(rr) < 0 and len(cc) < 0) or (np.max(rr) > mask.shape[0] or
+                                                 np.min(cc) > mask.shape[1]):
+                raise Exception(f"The RTSTRUCT file is compromised, "
+                                f"it seems that the contour with "
+                                f"label {label} is out of bound")
 
             mask[rr, cc, np.round(vx_indices[0, 2]).astype(int)] = 1
         return mask
@@ -537,7 +542,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             logger.warning(f"{label} is empty")
             raise EmptyContourException()
 
-        mask = self._compute_mask(contour_sequence)
+        mask = self._compute_mask(contour_sequence, label=label)
 
         return VolumeMask(
             mask,
