@@ -314,17 +314,23 @@ class BasicResampler(VolumeProcessor):
                  order=3,
                  mode="mirror",
                  cval=0):
-        self.resampling_spacing = resampling_spacing
+        self.resampling_spacing = np.array(resampling_spacing)
         self.order = order
         self.mode = mode
         self.cval = cval
 
     def process(self, volume, bounding_box):
+        original_spacing = volume.reference_frame.voxel_spacing
+        resampling_spacing = (original_spacing *
+                              (self.resampling_spacing <= 0) +
+                              self.resampling_spacing *
+                              (self.resampling_spacing > 0))
+
         bounding_box = np.array(bounding_box)
         output_shape = np.ceil((bounding_box[3:] - bounding_box[:3]) /
-                               self.resampling_spacing).astype(int)
+                               resampling_spacing).astype(int)
         new_reference_frame = ReferenceFrame.get_diagonal_reference_frame(
-            pixel_spacing=self.resampling_spacing,
+            pixel_spacing=resampling_spacing,
             origin=bounding_box[:3],
             shape=output_shape,
         )
