@@ -470,9 +470,12 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
 
     @staticmethod
     def get_reference_image_uid(dcm):
-        return (dcm.ReferencedFrameOfReferenceSequence[0].
+        try:
+            return (dcm.ReferencedFrameOfReferenceSequence[0].
                 RTReferencedStudySequence[0].RTReferencedSeriesSequence[0].
                 SeriesInstanceUID)
+        except IndexError as e:
+            raise RuntimeError("The RTSTRUCT has no valid ReferencedFrameOfReferenceSequence")
 
     def read(self):
         self._labels = list()

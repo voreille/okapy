@@ -225,6 +225,11 @@ class Volume():
             np.tile(self.reference_frame.voxel_spacing, 3))
         return sitk_image
 
+    def contains_bb(self, bb):
+        volume_bb = self.reference_frame.bb
+        return (np.all(volume_bb[:3] <= bb[:3])
+                and np.all(volume_bb[3:] >= bb[3:]))
+
 
 class VolumeMask(Volume):
     def __init__(self,
