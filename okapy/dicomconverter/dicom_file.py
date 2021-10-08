@@ -10,6 +10,7 @@ import pydicom_seg
 from skimage.draw import polygon
 
 from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
+from okapy.dicomconverter.dicom_header import DicomHeader
 from okapy.exceptions import (EmptyContourException, MissingWeightException,
                               PETUnitException)
 
@@ -44,17 +45,19 @@ class DicomFileBase():
         return DicomFileBase._registry[modality](dicom_paths=dicom_paths)
 
     def __init__(
-            self,
-            dicom_header=None,
-            dicom_paths=list(),
-            reference_frame=None,
-            study=None,
+        self,
+        dicom_header=None,
+        dicom_paths=list(),
+        reference_frame=None,
+        study=None,
+        additional_dicom_tags=None,
     ):
         self._dicom_header = dicom_header
         self.dicom_paths = dicom_paths
         self._reference_frame = reference_frame
         self.study = study
         self.slices = None
+        self.additional_dicom_tags = additional_dicom_tags
 
     def get_volume(self, *args):
         raise NotImplementedError('It is an abstract class')
@@ -66,11 +69,15 @@ class DicomFileBase():
     def dicom_header(self):
         if self._dicom_header is None and not type(
                 self.dicom_paths[0]) == FileDataset:
-            self._dicom_header = pdcm.read_file(self.dicom_paths[0],
-                                                stop_before_pixels=True)
+            self._dicom_header = DicomHeader.from_file(
+                self.dicom_paths[0],
+                additional_tags=self.additional_dicom_tags)
+
         elif self._dicom_header is None and type(
                 self.dicom_paths[0]) == FileDataset:
-            self._dicom_header = self.dicom_paths[0]
+            self._dicom_header = DicomHeader.from_pydicom(
+                self.dicom_paths[0],
+                additional_tags=self.additional_dicom_tags)
 
         return self._dicom_header
 
