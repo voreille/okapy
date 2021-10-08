@@ -71,9 +71,9 @@ class DicomHeader():
                 raise e
 
     @staticmethod
-    def from_file(file):
+    def from_file(file, additional_tags=None):
         data = pdcm.filereader.dcmread(file, stop_before_pixels=True)
-        return DicomHeader.from_pydicom(data)
+        return DicomHeader.from_pydicom(data, additional_tags=additional_tags)
 
     @staticmethod
     def from_pydicom(data, additional_tags=None):
