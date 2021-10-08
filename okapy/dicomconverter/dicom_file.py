@@ -217,7 +217,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
     def _interp_missing_slice(self, image):
         mean_slice_spacing = np.mean(self.d_slices)
         errors = np.abs(self.d_slices - mean_slice_spacing)
-        diff = np.asarray([e < 0.1 * mean_slice_spacing for e in errors])
+        diff = np.asarray([e > 0.5 * mean_slice_spacing for e in errors])
         ind2interp = int(np.where(diff)[0])
         new_slice = (image[:, :, ind2interp] +
                      image[:, :, ind2interp + 1]) * 0.5
@@ -477,9 +477,12 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
 
     @staticmethod
     def get_reference_image_uid(dcm):
-        return (dcm.ReferencedFrameOfReferenceSequence[0].
+        try:
+            return (dcm.ReferencedFrameOfReferenceSequence[0].
                 RTReferencedStudySequence[0].RTReferencedSeriesSequence[0].
                 SeriesInstanceUID)
+        except IndexError as e:
+            raise RuntimeError("The RTSTRUCT has no valid ReferencedFrameOfReferenceSequence")
 
     def read(self):
         self._labels = list()

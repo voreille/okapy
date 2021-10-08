@@ -2,6 +2,7 @@ from abc import abstractmethod
 from pathlib import Path
 from itertools import product
 from functools import partial
+from re import I
 from tempfile import mkdtemp
 from shutil import rmtree
 from multiprocessing import Pool
@@ -219,6 +220,7 @@ class BaseConverter():
                 str(counter) + ')' + '.' + self.extension)
         if self.converter_backend == 'sitk':
             sitk.WriteImage(volume.sitk_image, str(new_path.resolve()))
+
         return VolumeFile(path=path, dicom_header=volume.dicom_header)
 
     @abstractmethod
@@ -378,6 +380,15 @@ class ExtractorConverter(BaseConverter):
             except PETUnitException as e:
                 print(e)
                 continue
+
+        bb_mask = bb_union([mask.bb for mask in masks_list])
+
+        n_volumes = len(volumes_list)
+        volumes_list = [v for v in volumes_list if v.contains_bb(bb_mask)]
+        if n_volumes != len(volumes_list):
+            logger.debug(
+                f"{n_volumes - len(volumes_list)} image(s) was/were"
+                f" not discarded since they did not contain all the ROIs.")
 
         if self.padding != 'whole_image':
             bb = self.get_bounding_box(masks_list, volumes_list)
