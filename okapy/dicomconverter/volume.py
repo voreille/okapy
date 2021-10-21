@@ -192,6 +192,16 @@ class ReferenceFrame():
         return ReferenceFrame(coordinate_matrix=new_coordinate_matrix,
                               shape=output_shape)
 
+    def get_matching_grid_bb(self, bb):
+        or_vx = self.mm_to_vx(bb[:3])
+        origin = np.minimum(self.vx_to_mm(np.ceil(or_vx)),
+                            self.vx_to_mm(np.floor(or_vx)))
+
+        end_vx = self.mm_to_vx(bb[3:])
+        end = np.maximum(self.vx_to_mm(np.ceil(end_vx)),
+                         self.vx_to_mm(np.floor(end_vx)))
+        return np.concatenate([origin, end], axis=0)
+
 
 class Volume():
     def __init__(self, np_image=None, reference_frame=None, dicom_header=None):
@@ -325,6 +335,8 @@ class BasicResampler(VolumeProcessor):
         self.cval = cval
 
     def process(self, volume, bounding_box):
+        bounding_box = volume.reference_frame.get_matching_grid_bb(
+            bounding_box)
         original_spacing = volume.reference_frame.voxel_spacing
         resampling_spacing = (original_spacing *
                               (self.resampling_spacing <= 0) +

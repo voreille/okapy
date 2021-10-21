@@ -16,6 +16,17 @@ class Study():
         self.study_date = study_date
         self.patient_id = patient_id
 
+    def _is_volume_matched(self, v):
+        for m in self.mask_files:
+            if m.reference_image_uid == v.dicom_header.series_instance_uid:
+                return True
+        return False
+
+    def discard_unmatched_volumes(self):
+        self.volume_files = [
+            v for v in self.volume_files if self._is_volume_matched(v)
+        ]
+
     def append_dicom_files(self, im_dicom_files, dcm_header):
         if dcm_header.Modality == 'RTSTRUCT' or dcm_header.Modality == 'SEG':
             self.mask_files.append(

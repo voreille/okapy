@@ -425,6 +425,8 @@ class SegFile(MaskFile, name="SEG"):
         np_volume = np.transpose(
             self.raw_volume.segment_data(self.label_to_num[label]), trans)
 
+        # TODO: Match image with tag (0008, 1115)
+
         return VolumeMask(np_volume,
                           reference_frame=copy(self.reference_frame),
                           label=label,
@@ -441,8 +443,14 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         super().__init__(*args, **kwargs)
         self._reference_frame = reference_frame
         self._reference_image = reference_image
-        self.reference_image_uid = None
+        self._reference_image_uid = None
         self.error_list = list()
+
+    @property
+    def reference_image_uid(self):
+        if self._reference_image_uid is None:
+            self.read()
+        return self._reference_image_uid
 
     @property
     def reference_image(self):
@@ -479,10 +487,11 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
     def get_reference_image_uid(dcm):
         try:
             return (dcm.ReferencedFrameOfReferenceSequence[0].
-                RTReferencedStudySequence[0].RTReferencedSeriesSequence[0].
-                SeriesInstanceUID)
+                    RTReferencedStudySequence[0].RTReferencedSeriesSequence[0].
+                    SeriesInstanceUID)
         except IndexError as e:
-            raise RuntimeError("The RTSTRUCT has no valid ReferencedFrameOfReferenceSequence")
+            raise RuntimeError(
+                "The RTSTRUCT has no valid ReferencedFrameOfReferenceSequence")
 
     def read(self):
         self._labels = list()
@@ -493,7 +502,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             self.slices = self.dicom_paths
         else:
             self.slices = [pdcm.read_file(p) for p in self.dicom_paths]
-        self.reference_image_uid = RtstructFile.get_reference_image_uid(
+        self._reference_image_uid = RtstructFile.get_reference_image_uid(
             self.slices[0])
         self.label_number_mapping = {}
         for dcm in self.slices:
