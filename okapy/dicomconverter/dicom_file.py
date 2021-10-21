@@ -12,7 +12,7 @@ from skimage.draw import polygon
 from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
 from okapy.dicomconverter.dicom_header import DicomHeader
 from okapy.exceptions import (EmptyContourException, MissingWeightException,
-                              PETUnitException)
+                              NotHandledModality, PETUnitException)
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
@@ -33,7 +33,10 @@ class DicomFileBase():
 
     @classmethod
     def get(cls, name: str):
-        return DicomFileBase._registry[name]
+        try:
+            return DicomFileBase._registry[name]
+        except KeyError:
+            raise NotHandledModality(f"The modality {name} is not handled.")
 
     @classmethod
     def from_dicom_paths(cls, dicom_paths):
@@ -51,6 +54,7 @@ class DicomFileBase():
         reference_frame=None,
         study=None,
         additional_dicom_tags=None,
+        submodalities=False,
     ):
         self._dicom_header = dicom_header
         self.dicom_paths = dicom_paths
@@ -58,6 +62,15 @@ class DicomFileBase():
         self.study = study
         self.slices = None
         self.additional_dicom_tags = additional_dicom_tags
+        self.modality = dicom_header.Modality
+        if submodalities:
+            self.modality = self.modality + self._parse_submodalities()
+
+    def _parse_submodalities(self):
+        try:
+            return "_" + self.dicom_header.SeriesDescription.split(" --- ")[1]
+        except IndexError:
+            return ""
 
     def get_volume(self, *args):
         raise NotImplementedError('It is an abstract class')
@@ -228,7 +241,8 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
         return Volume(image,
                       reference_frame=copy(self.reference_frame),
-                      dicom_header=self.dicom_header)
+                      dicom_header=self.dicom_header,
+                      modality=self.modality)
 
 
 class DicomFileCT(DicomFileImageBase, name="CT"):
