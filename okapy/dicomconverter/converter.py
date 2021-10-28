@@ -298,6 +298,7 @@ class ExtractorConverter(BaseConverter):
             result_format)
         self.dicom_walker.additional_dicom_tags = additional_dicom_tags
         self._additional_dicom_tags = additional_dicom_tags
+        self.core = None  # TODO: fix multiprocessing
 
     @property
     def additional_dicom_tags(self):
