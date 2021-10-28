@@ -194,7 +194,12 @@ class ReferenceFrame():
 
 
 class Volume():
-    def __init__(self, np_image=None, reference_frame=None, dicom_header=None):
+    def __init__(self,
+                 np_image=None,
+                 reference_frame=None,
+                 modality=None,
+                 dicom_header=None):
+        self.modality = modality
         self.np_image = np_image
         self.reference_frame = reference_frame
         self.dicom_header = dicom_header
@@ -210,6 +215,7 @@ class Volume():
     def zeros_like(self):
         return Volume(
             np_image=np.zeros_like(self.np_image),
+            modality=self.modality,
             dicom_header=self.dicom_header,
             reference_frame=copy(self.reference_frame),
         )

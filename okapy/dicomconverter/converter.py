@@ -76,8 +76,6 @@ class MaskResult(VolumeResult):
 class BaseConverter():
     def __init__(
         self,
-        resampling_spacing=(1, 1, 1),
-        order=3,
         padding=10,
         list_labels=None,
         dicom_walker=None,
@@ -98,18 +96,8 @@ class BaseConverter():
             self.dicom_walker = DicomWalker(cores=cores)
         else:
             self.dicom_walker = dicom_walker
-        if resampling_spacing == -1:
-            if volume_processor is None:
-                self.volume_processor = IdentityProcessor()
-            if mask_processor is None:
-                self.mask_processor = IdentityProcessor()
-        else:
-            if volume_processor is None:
-                self.volume_processor = BasicResampler(
-                    resampling_spacing=resampling_spacing, order=order)
-            if mask_processor is None:
-                self.mask_processor = MaskResampler(
-                    resampling_spacing=resampling_spacing)
+        self.volume_processor = volume_processor
+        self.mask_processor = mask_processor
         self.converter_backend = converter_backend
         self.volume_dtype = volume_dtype
         self.mask_dtype = mask_dtype
@@ -301,17 +289,18 @@ class NiftiConverter(BaseConverter):
 
 class ExtractorConverter(BaseConverter):
     def __init__(self,
-                 extraction_params,
+                 okapy_extractors=None,
                  result_format="long",
                  additional_dicom_tags=None,
                  **kwargs):
         super().__init__(**kwargs)
-        self.featureextractors = OkapyExtractors(extraction_params)
+        self.okapy_extractors = okapy_extractors
         self.output_folder = None
         self.result_format = ExtractorConverter._check_result_format(
             result_format)
         self.dicom_walker.additional_dicom_tags = additional_dicom_tags
         self._additional_dicom_tags = additional_dicom_tags
+        self.core = None  # TODO: fix multiprocessing
 
     @property
     def additional_dicom_tags(self):
@@ -337,9 +326,33 @@ class ExtractorConverter(BaseConverter):
             with open(params_path, 'r') as f:
                 params = yaml.safe_load(f)
 
-        return ExtractorConverter(params["feature_extraction"],
-                                  **params["result_format"],
-                                  **params["preprocessing"])
+        additional_dicom_tags = params["general"].get("additional_dicom_tags",
+                                                      [])
+        dicom_walker = DicomWalker(
+            additional_dicom_tags=additional_dicom_tags,
+            submodalities=params["general"].get("submodalities", False),
+        )
+
+        params_vol_processing = params["volume_preprocessing"]
+        volume_processor = BasicResampler(
+            resampling_spacing=params_vol_processing.get(
+                "resampling_spacing", None),
+            order=params_vol_processing.get("order", 1))
+
+        mask_processor = BasicResampler(
+            resampling_spacing=params_vol_processing.get(
+                "resampling_spacing", None),
+            order=params_vol_processing.get("order", 0))
+
+        okapy_extractors = OkapyExtractors(params["feature_extraction"])
+
+        return ExtractorConverter(
+            dicom_walker=dicom_walker,
+            volume_processor=volume_processor,
+            mask_processor=mask_processor,
+            okapy_extractors=okapy_extractors,
+            additional_dicom_tags=additional_dicom_tags,
+        )
 
     def get_empty_results_df(self):
         if self.result_format == "mutltiindex":
@@ -400,7 +413,7 @@ class ExtractorConverter(BaseConverter):
         volumes_list = list(
             map(lambda v: self.volume_processor(v, bb), volumes_list))
 
-        modalities_list = list(map(lambda v: v.Modality, volumes_list))
+        modalities_list = list(map(lambda v: v.modality, volumes_list))
         labels_list = list(map(lambda v: v.label, masks_list))
         volumes_list = list(
             map(
@@ -416,9 +429,9 @@ class ExtractorConverter(BaseConverter):
                 zip(volumes_list, modalities_list),
                 zip(masks_list, labels_list),
         ):
-            result = self.featureextractors(volume.path,
-                                            mask.path,
-                                            modality=modality)
+            result = self.okapy_extractors(volume.path,
+                                           mask.path,
+                                           modality=modality)
             for key, val in result.items():
                 if "diagnostics" in key:
                     continue
