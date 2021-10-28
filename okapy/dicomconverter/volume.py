@@ -10,7 +10,6 @@ TODO: Add check of the bounding_box, if it goes beyond the image domain
 
 from copy import copy
 from itertools import product
-from datetime import datetime
 
 import numpy as np
 from scipy import ndimage
