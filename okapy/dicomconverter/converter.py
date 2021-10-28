@@ -315,11 +315,8 @@ class ExtractorConverter(BaseConverter):
             result_format)
         self.dicom_walker.additional_dicom_tags = additional_dicom_tags
         self._additional_dicom_tags = additional_dicom_tags
-<<<<<<< HEAD
         self.core = None  # TODO: fix multiprocessing
-=======
         self.all_image_mask_combination = all_image_mask_combination
->>>>>>> ea6f151bea82a802ef3e7c3c4c29efb3e49e076e
 
     @property
     def additional_dicom_tags(self):
@@ -442,11 +439,6 @@ class ExtractorConverter(BaseConverter):
         volumes_list = list(
             map(lambda v: self.volume_processor(v, bb), volumes_list))
 
-<<<<<<< HEAD
-        modalities_list = list(map(lambda v: v.modality, volumes_list))
-        labels_list = list(map(lambda v: v.label, masks_list))
-=======
->>>>>>> ea6f151bea82a802ef3e7c3c4c29efb3e49e076e
         volumes_list = list(
             map(
                 lambda v: self.write(v, is_mask=False, dtype=self.volume_dtype
@@ -457,20 +449,10 @@ class ExtractorConverter(BaseConverter):
 
         results_df = self.get_empty_results_df()
 
-<<<<<<< HEAD
-        for (volume, modality), (mask, label) in product(
-                zip(volumes_list, modalities_list),
-                zip(masks_list, labels_list),
-        ):
+        for volume, mask in self._image_mask_pairs(volumes_list, masks_list):
             result = self.okapy_extractors(volume.path,
                                            mask.path,
-                                           modality=modality)
-=======
-        for volume, mask in self._image_mask_pairs(volumes_list, masks_list):
-            result = self.featureextractors(volume.path,
-                                            mask.path,
-                                            modality=volume.modality)
->>>>>>> ea6f151bea82a802ef3e7c3c4c29efb3e49e076e
+                                           modality=volume.modality)
             for key, val in result.items():
                 if "diagnostics" in key:
                     continue
