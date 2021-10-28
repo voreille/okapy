@@ -44,9 +44,15 @@ def bb_intersection(bbs):
 
 
 class VolumeFile():
-    def __init__(self, path=None, dicom_header=None):
+    def __init__(self,
+                 path=None,
+                 dicom_header=None,
+                 label=None,
+                 reference_dicom_header=None):
         self.path = path
         self.dicom_header = dicom_header
+        self.label = label
+        self.reference_dicom_header = reference_dicom_header
 
     def __getattr__(self, name):
         return getattr(self.dicom_header, name)
@@ -209,7 +215,15 @@ class BaseConverter():
         if self.converter_backend == 'sitk':
             sitk.WriteImage(volume.sitk_image, str(new_path.resolve()))
 
-        return VolumeFile(path=path, dicom_header=volume.dicom_header)
+        if is_mask:
+            return VolumeFile(
+                path=new_path,
+                dicom_header=volume.dicom_header,
+                label=volume.label,
+                reference_dicom_header=volume.reference_dicom_header,
+            )
+        else:
+            return VolumeFile(path=new_path, dicom_header=volume.dicom_header)
 
     @abstractmethod
     def process_study(self, study, output_folder=None):
@@ -292,6 +306,7 @@ class ExtractorConverter(BaseConverter):
                  okapy_extractors=None,
                  result_format="long",
                  additional_dicom_tags=None,
+                 all_image_mask_combination=False,
                  **kwargs):
         super().__init__(**kwargs)
         self.okapy_extractors = okapy_extractors
@@ -300,7 +315,11 @@ class ExtractorConverter(BaseConverter):
             result_format)
         self.dicom_walker.additional_dicom_tags = additional_dicom_tags
         self._additional_dicom_tags = additional_dicom_tags
+<<<<<<< HEAD
         self.core = None  # TODO: fix multiprocessing
+=======
+        self.all_image_mask_combination = all_image_mask_combination
+>>>>>>> ea6f151bea82a802ef3e7c3c4c29efb3e49e076e
 
     @property
     def additional_dicom_tags(self):
@@ -380,7 +399,17 @@ class ExtractorConverter(BaseConverter):
                         continue
         return masks_list
 
+    def _image_mask_pairs(self, images, masks):
+        if self.all_image_mask_combination:
+            return product(images, masks)
+        else:
+            return [(i, m) for i, m in product(images, masks)
+                    if i.series_instance_uid ==
+                    m.reference_dicom_header.series_instance_uid]
+
     def process_study(self, study, labels=None):
+        if not self.all_image_mask_combination:
+            study.discard_unmatched_volumes()
         masks_list = self.extract_volume_of_interest(study, labels=labels)
         if not masks_list:
             raise MissingSegmentationException(
@@ -413,8 +442,11 @@ class ExtractorConverter(BaseConverter):
         volumes_list = list(
             map(lambda v: self.volume_processor(v, bb), volumes_list))
 
+<<<<<<< HEAD
         modalities_list = list(map(lambda v: v.modality, volumes_list))
         labels_list = list(map(lambda v: v.label, masks_list))
+=======
+>>>>>>> ea6f151bea82a802ef3e7c3c4c29efb3e49e076e
         volumes_list = list(
             map(
                 lambda v: self.write(v, is_mask=False, dtype=self.volume_dtype
@@ -425,6 +457,7 @@ class ExtractorConverter(BaseConverter):
 
         results_df = self.get_empty_results_df()
 
+<<<<<<< HEAD
         for (volume, modality), (mask, label) in product(
                 zip(volumes_list, modalities_list),
                 zip(masks_list, labels_list),
@@ -432,17 +465,23 @@ class ExtractorConverter(BaseConverter):
             result = self.okapy_extractors(volume.path,
                                            mask.path,
                                            modality=modality)
+=======
+        for volume, mask in self._image_mask_pairs(volumes_list, masks_list):
+            result = self.featureextractors(volume.path,
+                                            mask.path,
+                                            modality=volume.modality)
+>>>>>>> ea6f151bea82a802ef3e7c3c4c29efb3e49e076e
             for key, val in result.items():
                 if "diagnostics" in key:
                     continue
                 if self.result_format == "multiindex":
-                    results_df.loc[(study.patient_id, label),
-                                   (modality, key)] = val
+                    results_df.loc[(study.patient_id, mask.label),
+                                   (volume.modality, key)] = val
                 elif self.result_format == "long":
                     result_dict = {
                         "patient_id": study.patient_id,
-                        "modality": modality,
-                        "VOI": label,
+                        "modality": volume.modality,
+                        "VOI": mask.label,
                         "feature_name": key,
                         "feature_value": val,
                     }
