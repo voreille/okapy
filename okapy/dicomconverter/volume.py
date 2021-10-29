@@ -10,7 +10,6 @@ TODO: Add check of the bounding_box, if it goes beyond the image domain
 
 from copy import copy
 from itertools import product
-from datetime import datetime
 
 import numpy as np
 from scipy import ndimage
@@ -287,80 +286,3 @@ class VolumeMask(Volume):
         return bb_diag
 
 
-class VolumeProcessor():
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-
-    def process(self, volume, *args, **kwargs):
-        raise NotImplementedError('abstract class')
-
-    def __call__(self, volume, *args, **kwargs):
-        return self.process(volume, *args, **kwargs)
-
-
-class IdentityProcessor(VolumeProcessor):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def process(self, volume, *args, **kwargs):
-        return volume
-
-
-class MRStandardizer(VolumeProcessor):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-    def process(self, volume, *args, **kwargs):
-        return super().process(volume, *args, **kwargs)
-
-
-class BasicResampler(VolumeProcessor):
-    def __init__(self,
-                 resampling_spacing=(1, 1, 1),
-                 order=3,
-                 mode="mirror",
-                 cval=0):
-        self.resampling_spacing = resampling_spacing
-        self.order = order
-        self.mode = mode
-        self.cval = cval
-
-    def process(self, volume, bounding_box):
-        bounding_box = np.array(bounding_box)
-        output_shape = np.ceil((bounding_box[3:] - bounding_box[:3]) /
-                               self.resampling_spacing).astype(int)
-        new_reference_frame = ReferenceFrame.get_diagonal_reference_frame(
-            pixel_spacing=self.resampling_spacing,
-            origin=bounding_box[:3],
-            shape=output_shape,
-        )
-        matrix = np.dot(volume.reference_frame.inv_coordinate_matrix,
-                        new_reference_frame.coordinate_matrix)
-
-        np_image = ndimage.affine_transform(
-            volume.np_image,
-            matrix[:3, :3],
-            offset=matrix[:3, 3],
-            mode=self.mode,
-            order=self.order,
-            cval=self.cval,
-            output_shape=new_reference_frame.shape)
-
-        v = volume.zeros_like()
-        v.np_image = np_image
-        v.reference_frame = new_reference_frame
-        return v
-
-
-class MaskResampler(BasicResampler):
-    def __init__(self, *args, threshold=0.5, mode="constant", **kwargs):
-        super().__init__(*args, mode=mode, **kwargs)
-        self.t = threshold
-
-    def threshold(self, volume):
-        volume.np_image[volume.np_image < self.t] = 0
-        volume.np_image[volume.np_image >= self.t] = 1
-        return volume
-
-    def process(self, volume, *args, **kwargs):
-        return self.threshold(super().process(volume, *args, **kwargs))
