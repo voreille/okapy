@@ -17,8 +17,7 @@ from tqdm import tqdm
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.dicom_file import (EmptyContourException,
                                              PETUnitException)
-from okapy.dicomconverter.volume import BasicResampler, MaskResampler
-from okapy.dicomconverter.volume_processor import IdentityProcessor
+from okapy.dicomconverter.volume_processor import VolumeProcessorStack
 from okapy.featureextractor.featureextractor import OkapyExtractors
 from okapy.exceptions import MissingSegmentationException
 
@@ -349,16 +348,11 @@ class ExtractorConverter(BaseConverter):
             submodalities=params["general"].get("submodalities", False),
         )
 
-        params_vol_processing = params["volume_preprocessing"]
-        volume_processor = BasicResampler(
-            resampling_spacing=params_vol_processing.get(
-                "resampling_spacing", None),
-            order=params_vol_processing.get("order", 1))
+        volume_processor = VolumeProcessorStack.from_params(
+            params["volume_preprocessing"])
 
-        mask_processor = BasicResampler(
-            resampling_spacing=params_vol_processing.get(
-                "resampling_spacing", None),
-            order=params_vol_processing.get("order", 0))
+        mask_processor = VolumeProcessorStack.from_params(
+            params["mask_preprocessing"])
 
         okapy_extractors = OkapyExtractors(params["feature_extraction"])
 
@@ -434,10 +428,11 @@ class ExtractorConverter(BaseConverter):
         else:
             # The image is not cropped
             bb = None
-        masks_list = list(map(lambda v: self.mask_processor(v, bb),
-                              masks_list))
+        masks_list = list(
+            map(lambda v: self.mask_processor(v, bounding_box=bb), masks_list))
         volumes_list = list(
-            map(lambda v: self.volume_processor(v, bb), volumes_list))
+            map(lambda v: self.volume_processor(v, bounding_box=bb),
+                volumes_list))
 
         volumes_list = list(
             map(
