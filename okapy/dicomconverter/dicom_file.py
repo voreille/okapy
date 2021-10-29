@@ -404,18 +404,53 @@ class MaskFile(DicomFileBase, name="mask_base"):
 
 
 class SegFile(MaskFile, name="SEG"):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, reference_image=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.raw_volume = None
         self.label_to_num = dict()
+        self._reference_image = reference_image
+        self._reference_image_uid = None
         if len(self.dicom_paths) != 1:
             raise RuntimeError('SEG has more than one file')
+
+    @property
+    def reference_image_uid(self):
+        if self._reference_image_uid is None:
+            self.read()
+        return self._reference_image_uid
+
+    @property
+    def reference_image(self):
+        if self.reference_image_uid is None:
+            self.read()
+        if self._reference_image is None:
+            found = False
+            for f in self.study.volume_files:
+                if (self.reference_image_uid ==
+                        f.dicom_header.SeriesInstanceUID):
+                    self._reference_image = f
+                    found = True
+                    break
+
+            if not found:
+                self.study.volume_files.sort(
+                    key=lambda x: x.dicom_header.Modality)
+
+                self._reference_image = self.study.volume_files[0]
+                logger.warning(f"The Reference image was not found for"
+                               f" the RTSTRUCT {str(self)}. The "
+                               f"{self._reference_image.dicom_header.Modality}"
+                               f" image will be"
+                               f" taken as reference.")
+        return self._reference_image
 
     def read(self):
         if type(self.dicom_paths[0]) == FileDataset:
             dcm = self.dicom_paths[0]
         else:
             dcm = pdcm.dcmread(self.dicom_paths[0])
+        self._reference_image_uid = dcm.ReferencedSeriesSequence[
+            0].SeriesInstanceUID
         self.raw_volume = pydicom_seg.SegmentReader().read(dcm)
         coordinate_matrix = np.zeros((4, 4))
         coordinate_matrix[:3, :3] = self.raw_volume.direction * np.tile(
@@ -441,11 +476,12 @@ class SegFile(MaskFile, name="SEG"):
 
         # TODO: Match image with tag (0008, 1115)
 
-        return VolumeMask(np_volume,
-                          reference_frame=copy(self.reference_frame),
-                          label=label,
-                          reference_dicom_header=None,
-                          dicom_header=self.dicom_header)
+        return VolumeMask(
+            np_volume,
+            reference_frame=copy(self.reference_frame),
+            label=label,
+            reference_dicom_header=self.reference_image.dicom_header,
+            dicom_header=self.dicom_header)
 
 
 class RtstructFile(MaskFile, name="RTSTRUCT"):

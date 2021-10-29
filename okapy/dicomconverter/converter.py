@@ -46,9 +46,11 @@ class VolumeFile():
     def __init__(self,
                  path=None,
                  dicom_header=None,
+                 modality=None,
                  label=None,
                  reference_dicom_header=None):
         self.path = path
+        self.modality = modality
         self.dicom_header = dicom_header
         self.label = label
         self.reference_dicom_header = reference_dicom_header
@@ -218,11 +220,14 @@ class BaseConverter():
             return VolumeFile(
                 path=new_path,
                 dicom_header=volume.dicom_header,
+                modality=volume.modality,
                 label=volume.label,
                 reference_dicom_header=volume.reference_dicom_header,
             )
         else:
-            return VolumeFile(path=new_path, dicom_header=volume.dicom_header)
+            return VolumeFile(path=new_path,
+                              modality=volume.modality,
+                              dicom_header=volume.dicom_header)
 
     @abstractmethod
     def process_study(self, study, output_folder=None):
