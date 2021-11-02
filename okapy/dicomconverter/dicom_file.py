@@ -1,6 +1,7 @@
 from copy import copy
 from datetime import time, datetime
 import logging
+from statistics import mode
 
 import numpy as np
 import pydicom as pdcm
@@ -9,8 +10,9 @@ import pydicom_seg
 from skimage.draw import polygon
 
 from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
+from okapy.dicomconverter.dicom_header import DicomHeader
 from okapy.exceptions import (EmptyContourException, MissingWeightException,
-                              PETUnitException)
+                              NotHandledModality, PETUnitException)
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
@@ -31,29 +33,44 @@ class DicomFileBase():
 
     @classmethod
     def get(cls, name: str):
-        return DicomFileBase._registry[name]
+        try:
+            return DicomFileBase._registry[name]
+        except KeyError:
+            raise NotHandledModality(f"The modality {name} is not handled.")
 
-    @classmethod
-    def from_dicom_paths(cls, dicom_paths):
+    @staticmethod
+    def from_dicom_paths(dicom_paths):
         if isinstance(dicom_paths[0], FileDataset):
             modality = dicom_paths[0].Modality
         else:
             modality = pdcm.filereader.dcmread(
                 dicom_paths[0], stop_before_pixels=True).Modality
-        return DicomFileBase._registry[modality](dicom_paths=dicom_paths)
+        return DicomFileBase.get(modality)(dicom_paths=dicom_paths)
 
     def __init__(
-            self,
-            dicom_header=None,
-            dicom_paths=list(),
-            reference_frame=None,
-            study=None,
+        self,
+        dicom_header=None,
+        dicom_paths=list(),
+        reference_frame=None,
+        study=None,
+        additional_dicom_tags=None,
+        submodalities=False,
     ):
         self._dicom_header = dicom_header
         self.dicom_paths = dicom_paths
         self._reference_frame = reference_frame
         self.study = study
         self.slices = None
+        self.additional_dicom_tags = additional_dicom_tags
+        self.modality = dicom_header.Modality
+        if submodalities:
+            self.modality = self.modality + self._parse_submodalities()
+
+    def _parse_submodalities(self):
+        try:
+            return "_" + self.dicom_header.SeriesDescription.split(" --- ")[1]
+        except IndexError:
+            return ""
 
     def get_volume(self, *args):
         raise NotImplementedError('It is an abstract class')
@@ -65,11 +82,15 @@ class DicomFileBase():
     def dicom_header(self):
         if self._dicom_header is None and not type(
                 self.dicom_paths[0]) == FileDataset:
-            self._dicom_header = pdcm.read_file(self.dicom_paths[0],
-                                                stop_before_pixels=True)
+            self._dicom_header = DicomHeader.from_file(
+                self.dicom_paths[0],
+                additional_tags=self.additional_dicom_tags)
+
         elif self._dicom_header is None and type(
                 self.dicom_paths[0]) == FileDataset:
-            self._dicom_header = self.dicom_paths[0]
+            self._dicom_header = DicomHeader.from_pydicom(
+                self.dicom_paths[0],
+                additional_tags=self.additional_dicom_tags)
 
         return self._dicom_header
 
@@ -161,49 +182,55 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
         self.slices = slices
         self.orthogonal_positions = orthogonal_positions
-        self.apparent_n_slices = self._check_missing_slices()
+        self.d_slices = np.array([
+            self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
+            for ind in range(len(self.slices) - 1)
+        ])
+        self.slice_spacing = mode(self.d_slices)
+
+        self.expected_n_slices = self._check_missing_slices()
+        slice_shape = (slices[0].pixel_array.shape[1],
+                       slices[0].pixel_array.shape[0])
         self._reference_frame = ReferenceFrame(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,
             pixel_spacing=slices[0].PixelSpacing,
-            shape=(*slices[0].pixel_array.shape, self.apparent_n_slices))
+            shape=slice_shape + (self.expected_n_slices, ))
 
     def _check_missing_slices(self):
+        if self.slice_spacing == 0:
+            raise RuntimeError(
+                "The most frequent slice spacing computed"
+                " is 0, probably due to multi-channel image (e.g. DWI).")
+        elif np.min(self.slice_spacing) == 0:
+            raise RuntimeError("Some slices have the same position")
 
-        slice_spacing = self.orthogonal_positions[
-            1] - self.orthogonal_positions[0]
-        d_slices = np.array([
-            self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
-            for ind in range(len(self.slices) - 1)
-        ])
-        self.d_slices = d_slices
-        position_final_slice = self.orthogonal_positions[0] + np.sum(d_slices)
-        if not is_approx_equal(position_final_slice,
-                               self.orthogonal_positions[-1]):
-            if (position_final_slice -
-                    self.orthogonal_positions[-1]) / slice_spacing < 1.5:
-                # If only one slice is missing
-                logger.warning(f"One slice is missing, we replaced "
-                               f"it by linear interpolation for patient"
-                               f"{self.dicom_header.PatientID}")
-                logger.warning(f"One slice is missing, "
-                               f"for patient "
-                               f"{self.dicom_header.PatientID}"
-                               f" and modality "
-                               f"{self.dicom_header.Modality}")
-                apparent_n_slices = len(self.slices) + 1
-            else:
-                raise RuntimeError('Multiple slices are missing')
+        condition_missing_slice = (np.abs(self.d_slices - self.slice_spacing) >
+                                   0.9 * self.slice_spacing)
+        n_missing_slices = np.sum(condition_missing_slice)
+        if n_missing_slices == 1:
+            # If only one slice is missing
+            logger.warning(f"One slice is missing, we replaced "
+                           f"it by linear interpolation for patient"
+                           f"{self.dicom_header.PatientID}")
+            logger.warning(f"One slice is missing, "
+                           f"for patient "
+                           f"{self.dicom_header.PatientID}"
+                           f" and modality "
+                           f"{self.dicom_header.Modality}")
+            expected_n_slices = len(self.slices) + 1
+        elif n_missing_slices > 1:
+            raise RuntimeError("Multiple slices are missing")
         else:
-            apparent_n_slices = len(self.slices)
+            expected_n_slices = len(self.slices)
 
-        return apparent_n_slices
+        return expected_n_slices
 
     def _interp_missing_slice(self, image):
         mean_slice_spacing = np.mean(self.d_slices)
         errors = np.abs(self.d_slices - mean_slice_spacing)
-        diff = np.asarray([e < 0.1 * mean_slice_spacing for e in errors])
+        diff = np.asarray([e > 0.5 * mean_slice_spacing for e in errors])
         ind2interp = int(np.where(diff)[0])
         new_slice = (image[:, :, ind2interp] +
                      image[:, :, ind2interp + 1]) * 0.5
@@ -218,12 +245,13 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             self.read()
         image = self.get_physical_values()
         image = np.transpose(image, (1, 0, 2))
-        if self.apparent_n_slices != len(self.slices):
+        if self.expected_n_slices != len(self.slices):
             image = self._interp_missing_slice(image)
 
         return Volume(image,
                       reference_frame=copy(self.reference_frame),
-                      dicom_header=self.dicom_header)
+                      dicom_header=self.dicom_header,
+                      modality=self.modality)
 
 
 class DicomFileCT(DicomFileImageBase, name="CT"):
@@ -376,18 +404,53 @@ class MaskFile(DicomFileBase, name="mask_base"):
 
 
 class SegFile(MaskFile, name="SEG"):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, reference_image=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.raw_volume = None
         self.label_to_num = dict()
+        self._reference_image = reference_image
+        self._reference_image_uid = None
         if len(self.dicom_paths) != 1:
             raise RuntimeError('SEG has more than one file')
+
+    @property
+    def reference_image_uid(self):
+        if self._reference_image_uid is None:
+            self.read()
+        return self._reference_image_uid
+
+    @property
+    def reference_image(self):
+        if self.reference_image_uid is None:
+            self.read()
+        if self._reference_image is None:
+            found = False
+            for f in self.study.volume_files:
+                if (self.reference_image_uid ==
+                        f.dicom_header.SeriesInstanceUID):
+                    self._reference_image = f
+                    found = True
+                    break
+
+            if not found:
+                self.study.volume_files.sort(
+                    key=lambda x: x.dicom_header.Modality)
+
+                self._reference_image = self.study.volume_files[0]
+                logger.warning(f"The Reference image was not found for"
+                               f" the RTSTRUCT {str(self)}. The "
+                               f"{self._reference_image.dicom_header.Modality}"
+                               f" image will be"
+                               f" taken as reference.")
+        return self._reference_image
 
     def read(self):
         if type(self.dicom_paths[0]) == FileDataset:
             dcm = self.dicom_paths[0]
         else:
             dcm = pdcm.dcmread(self.dicom_paths[0])
+        self._reference_image_uid = dcm.ReferencedSeriesSequence[
+            0].SeriesInstanceUID
         self.raw_volume = pydicom_seg.SegmentReader().read(dcm)
         coordinate_matrix = np.zeros((4, 4))
         coordinate_matrix[:3, :3] = self.raw_volume.direction * np.tile(
@@ -411,11 +474,14 @@ class SegFile(MaskFile, name="SEG"):
         np_volume = np.transpose(
             self.raw_volume.segment_data(self.label_to_num[label]), trans)
 
-        return VolumeMask(np_volume,
-                          reference_frame=copy(self.reference_frame),
-                          label=label,
-                          reference_dicom_header=None,
-                          dicom_header=self.dicom_header)
+        # TODO: Match image with tag (0008, 1115)
+
+        return VolumeMask(
+            np_volume,
+            reference_frame=copy(self.reference_frame),
+            label=label,
+            reference_dicom_header=self.reference_image.dicom_header,
+            dicom_header=self.dicom_header)
 
 
 class RtstructFile(MaskFile, name="RTSTRUCT"):
@@ -427,8 +493,14 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         super().__init__(*args, **kwargs)
         self._reference_frame = reference_frame
         self._reference_image = reference_image
-        self.reference_image_uid = None
+        self._reference_image_uid = None
         self.error_list = list()
+
+    @property
+    def reference_image_uid(self):
+        if self._reference_image_uid is None:
+            self.read()
+        return self._reference_image_uid
 
     @property
     def reference_image(self):
@@ -444,14 +516,15 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                     break
 
             if not found:
-                logger.warning(
-                    f"The Reference image was not found for"
-                    f" the RTSTRUCT {str(self)}. The CT image will be"
-                    f" taken as reference.")
+                self.study.volume_files.sort(
+                    key=lambda x: x.dicom_header.Modality)
 
-                for f in self.study.volume_files:
-                    if f.dicom_header.Modality == 'CT':
-                        self._reference_image = f
+                self._reference_image = self.study.volume_files[0]
+                logger.warning(f"The Reference image was not found for"
+                               f" the RTSTRUCT {str(self)}. The "
+                               f"{self._reference_image.dicom_header.Modality}"
+                               f" image will be"
+                               f" taken as reference.")
         return self._reference_image
 
     @property
@@ -462,9 +535,13 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
 
     @staticmethod
     def get_reference_image_uid(dcm):
-        return (dcm.ReferencedFrameOfReferenceSequence[0].
-                RTReferencedStudySequence[0].RTReferencedSeriesSequence[0].
-                SeriesInstanceUID)
+        try:
+            return (dcm.ReferencedFrameOfReferenceSequence[0].
+                    RTReferencedStudySequence[0].RTReferencedSeriesSequence[0].
+                    SeriesInstanceUID)
+        except IndexError as e:
+            raise RuntimeError(
+                "The RTSTRUCT has no valid ReferencedFrameOfReferenceSequence")
 
     def read(self):
         self._labels = list()
@@ -475,7 +552,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             self.slices = self.dicom_paths
         else:
             self.slices = [pdcm.read_file(p) for p in self.dicom_paths]
-        self.reference_image_uid = RtstructFile.get_reference_image_uid(
+        self._reference_image_uid = RtstructFile.get_reference_image_uid(
             self.slices[0])
         self.label_number_mapping = {}
         for dcm in self.slices:
@@ -502,7 +579,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                 self.reference_image.read()
             self._reference_frame = self.reference_image.reference_frame
 
-    def _compute_mask(self, contour_sequence):
+    def _compute_mask(self, contour_sequence, label=""):
         mask = np.zeros(self.reference_frame.shape, dtype=np.uint8)
         for s in contour_sequence:
             current = s.ContourData
@@ -516,9 +593,11 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             ],
                                   axis=0)
             rr, cc = polygon(vx_indices[:, 0], vx_indices[:, 1])
-            if len(rr) > 0 and len(cc) > 0:
-                if np.max(rr) > 512 or np.max(cc) > 512:
-                    raise Exception("The RTSTRUCT file is compromised")
+            if (len(rr) < 0 and len(cc) < 0) or (np.max(rr) > mask.shape[0] or
+                                                 np.min(cc) > mask.shape[1]):
+                raise Exception(f"The RTSTRUCT file is compromised, "
+                                f"it seems that the contour with "
+                                f"label {label} is out of bound")
 
             mask[rr, cc, np.round(vx_indices[0, 2]).astype(int)] = 1
         return mask
@@ -532,7 +611,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             logger.warning(f"{label} is empty")
             raise EmptyContourException()
 
-        mask = self._compute_mask(contour_sequence)
+        mask = self._compute_mask(contour_sequence, label=label)
 
         return VolumeMask(
             mask,

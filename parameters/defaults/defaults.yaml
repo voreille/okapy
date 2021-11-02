@@ -1,12 +1,31 @@
-preprocessing:
+general:
   padding: 10
-  resampling_spacing: [1.0, 1.0, 1.0]
-  order: 3
-
-result_format:
+  submodalities: True
   result_format: "long"
-  result_tags:
+  additional_dicom_tags:
     - "SeriesInstanceUID"
+
+volume_preprocessing:
+  common:
+    bspline_resampler:
+      resampling_spacing: [1.0, 1.0, 1.0]
+      order: 3
+  CT:
+    standardizer:
+      threshold: 0.5
+  PET:
+    standardizer:
+      threshold: 0.5
+  PET_YO:
+    standardizer:
+      order: 3
+  default:
+
+mask_preprocessing:
+  default:
+    binary_bspline_resampler:
+      resampling_spacing: [1.0, 1.0, 1.0]
+      order: 3
 
 feature_extraction:
   CT:
@@ -158,8 +177,8 @@ feature_extraction:
           binWidth: 20
           voxelArrayShift: 1000
           label: 1
-  common:
-    riesz:
-      extractor0:
-        RieszOrder: 1
-        RieszScales: 4
+  # common:
+  #   riesz:
+  #     extractor0:
+  #       RieszOrder: 1
+  #       RieszScales: 4

@@ -1,6 +1,8 @@
 from abc import abstractmethod
 from pathlib import Path
 from itertools import product
+from functools import partial
+from re import I
 from tempfile import mkdtemp
 from shutil import rmtree
 from multiprocessing import Pool
@@ -15,8 +17,7 @@ from tqdm import tqdm
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.dicom_file import (EmptyContourException,
                                              PETUnitException)
-from okapy.dicomconverter.volume import BasicResampler, MaskResampler
-from okapy.dicomconverter.volume_processor import IdentityProcessor
+from okapy.dicomconverter.volume_processor import VolumeProcessorStack
 from okapy.featureextractor.featureextractor import OkapyExtractors
 from okapy.exceptions import MissingSegmentationException
 
@@ -42,9 +43,17 @@ def bb_intersection(bbs):
 
 
 class VolumeFile():
-    def __init__(self, path=None, dicom_header=None):
+    def __init__(self,
+                 path=None,
+                 dicom_header=None,
+                 modality=None,
+                 label=None,
+                 reference_dicom_header=None):
         self.path = path
+        self.modality = modality
         self.dicom_header = dicom_header
+        self.label = label
+        self.reference_dicom_header = reference_dicom_header
 
     def __getattr__(self, name):
         return getattr(self.dicom_header, name)
@@ -56,7 +65,7 @@ class VolumeResult():
         self.patient_id = study.patient_id
         self.study_date = study.study_date
         self.modality = volume.Modality
-        self.series_instance_uid = volume.series_instance_uid
+        self.series_instance_uid = volume.SeriesInstanceUID
         self.series_number = volume.SeriesNumber
         self.path = path
 
@@ -72,39 +81,30 @@ class MaskResult(VolumeResult):
 
 
 class BaseConverter():
-    def __init__(self,
-                 resampling_spacing=(1, 1, 1),
-                 order=3,
-                 padding=10,
-                 list_labels=None,
-                 dicom_walker=None,
-                 volume_processor=None,
-                 mask_processor=None,
-                 volume_dtype=np.float32,
-                 mask_dtype=np.uint32,
-                 extension='nii.gz',
-                 naming=0,
-                 cores=None,
-                 converter_backend='sitk'):
+    def __init__(
+        self,
+        padding=10,
+        list_labels=None,
+        dicom_walker=None,
+        volume_processor=None,
+        mask_processor=None,
+        volume_dtype=np.float32,
+        mask_dtype=np.uint32,
+        extension='nii.gz',
+        naming=0,
+        cores=None,
+        converter_backend='sitk',
+    ):
         self.padding = BaseConverter._check_padding(padding)
         self.list_labels = list_labels
         self.naming = naming
         if dicom_walker is None:
+            # self.dicom_walker = DicomWalker()
             self.dicom_walker = DicomWalker(cores=cores)
         else:
             self.dicom_walker = dicom_walker
-        if resampling_spacing == -1:
-            if volume_processor is None:
-                self.volume_processor = IdentityProcessor()
-            if mask_processor is None:
-                self.mask_processor = IdentityProcessor()
-        else:
-            if volume_processor is None:
-                self.volume_processor = BasicResampler(
-                    resampling_spacing=resampling_spacing, order=order)
-            if mask_processor is None:
-                self.mask_processor = MaskResampler(
-                    resampling_spacing=resampling_spacing)
+        self.volume_processor = volume_processor
+        self.mask_processor = mask_processor
         self.converter_backend = converter_backend
         self.volume_dtype = volume_dtype
         self.mask_dtype = mask_dtype
@@ -171,17 +171,19 @@ class BaseConverter():
                     f".{self.extension}")
 
         elif self.naming == 1:
-            return (
-                f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
-                f"{volume.Modality}__{volume.SeriesNumber}__{volume.reference_Modality}"
-                f"__{volume.reference_SeriesNumber}"
-                f".{self.extension}")
+            return (f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
+                    f"{volume.Modality}__{volume.SeriesNumber}__"
+                    f"{volume.reference_Modality}"
+                    f"__{volume.reference_SeriesNumber}"
+                    f".{self.extension}")
 
         elif self.naming == 2:
             return (
                 f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
-                f"{volume.Modality}__{volume.SeriesNumber}__{volume.reference_Modality}"
+                f"{volume.Modality}__{volume.SeriesNumber}__"
+                f"{volume.reference_Modality}"
                 f"__{volume.reference_SeriesNumber}__"
+                f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}"
                 f".{self.extension}")
 
     def _get_name_volume(self, volume):
@@ -192,8 +194,11 @@ class BaseConverter():
             return (f"{volume.PatientID}__{volume.Modality}__"
                     f"{volume.SeriesNumber}.{self.extension}")
         elif self.naming == 2:
-            return (f"{volume.PatientID}__{volume.Modality}__"
-                    f"{volume.SeriesNumber}.{self.extension}")
+            return (
+                f"{volume.PatientID}__{volume.Modality}__"
+                f"{volume.SeriesNumber}__"
+                f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}"
+                f".{self.extension}")
 
     def write(self, volume, is_mask=False, dtype=None, output_folder=None):
         if dtype:
@@ -210,7 +215,19 @@ class BaseConverter():
                 str(counter) + ')' + '.' + self.extension)
         if self.converter_backend == 'sitk':
             sitk.WriteImage(volume.sitk_image, str(new_path.resolve()))
-        return VolumeFile(path=path, dicom_header=volume.dicom_header)
+
+        if is_mask:
+            return VolumeFile(
+                path=new_path,
+                dicom_header=volume.dicom_header,
+                modality=volume.modality,
+                label=volume.label,
+                reference_dicom_header=volume.reference_dicom_header,
+            )
+        else:
+            return VolumeFile(path=new_path,
+                              modality=volume.modality,
+                              dicom_header=volume.dicom_header)
 
     @abstractmethod
     def process_study(self, study, output_folder=None):
@@ -274,10 +291,12 @@ class NiftiConverter(BaseConverter):
         if output_folder is not None:
             self.output_folder = output_folder
 
-        studies_list = self.dicom_walker(input_folder)
+        studies_list = self.dicom_walker(input_folder, cores=self.cores)
         if self.cores:
             with Pool(self.cores) as p:
-                result = p.map(self.process_study, studies_list)
+                result = list(
+                    tqdm(p.imap(self.process_study, studies_list),
+                         total=len(studies_list)))
         else:
             result = list()
             for study in tqdm(studies_list):
@@ -288,19 +307,29 @@ class NiftiConverter(BaseConverter):
 
 class ExtractorConverter(BaseConverter):
     def __init__(self,
-                 extraction_params,
+                 okapy_extractors=None,
                  result_format="long",
-                 result_tags=None,
+                 additional_dicom_tags=None,
+                 all_image_mask_combination=False,
                  **kwargs):
         super().__init__(**kwargs)
-        self.featureextractors = OkapyExtractors(extraction_params)
+        self.okapy_extractors = okapy_extractors
         self.output_folder = None
         self.result_format = ExtractorConverter._check_result_format(
             result_format)
-        if result_tags:
-            self.result_tags = result_tags
-        else:
-            self.result_tags = []
+        self.dicom_walker.additional_dicom_tags = additional_dicom_tags
+        self._additional_dicom_tags = additional_dicom_tags
+        self.core = None  # TODO: fix multiprocessing
+        self.all_image_mask_combination = all_image_mask_combination
+
+    @property
+    def additional_dicom_tags(self):
+        return self._additional_dicom_tags
+
+    @additional_dicom_tags.setter
+    def additional_dicom_tags(self, tags):
+        self._additional_dicom_tags = tags
+        self.dicom_walker.additional_dicom_tags = tags
 
     @staticmethod
     def _check_result_format(result_format):
@@ -317,9 +346,28 @@ class ExtractorConverter(BaseConverter):
             with open(params_path, 'r') as f:
                 params = yaml.safe_load(f)
 
-        return ExtractorConverter(params["feature_extraction"],
-                                  **params["result_format"],
-                                  **params["preprocessing"])
+        additional_dicom_tags = params["general"].get("additional_dicom_tags",
+                                                      [])
+        dicom_walker = DicomWalker(
+            additional_dicom_tags=additional_dicom_tags,
+            submodalities=params["general"].get("submodalities", False),
+        )
+
+        volume_processor = VolumeProcessorStack.from_params(
+            params["volume_preprocessing"])
+
+        mask_processor = VolumeProcessorStack.from_params(
+            params["mask_preprocessing"])
+
+        okapy_extractors = OkapyExtractors(params["feature_extraction"])
+
+        return ExtractorConverter(
+            dicom_walker=dicom_walker,
+            volume_processor=volume_processor,
+            mask_processor=mask_processor,
+            okapy_extractors=okapy_extractors,
+            additional_dicom_tags=additional_dicom_tags,
+        )
 
     def get_empty_results_df(self):
         if self.result_format == "mutltiindex":
@@ -347,7 +395,17 @@ class ExtractorConverter(BaseConverter):
                         continue
         return masks_list
 
-    def process_study(self, study, results_df=None, labels=None):
+    def _image_mask_pairs(self, images, masks):
+        if self.all_image_mask_combination:
+            return product(images, masks)
+        else:
+            return [(i, m) for i, m in product(images, masks)
+                    if i.series_instance_uid ==
+                    m.reference_dicom_header.series_instance_uid]
+
+    def process_study(self, study, labels=None):
+        if not self.all_image_mask_combination:
+            study.discard_unmatched_volumes()
         masks_list = self.extract_volume_of_interest(study, labels=labels)
         if not masks_list:
             raise MissingSegmentationException(
@@ -366,13 +424,12 @@ class ExtractorConverter(BaseConverter):
         else:
             # The image is not cropped
             bb = None
-        masks_list = list(map(lambda v: self.mask_processor(v, bb),
-                              masks_list))
+        masks_list = list(
+            map(lambda v: self.mask_processor(v, bounding_box=bb), masks_list))
         volumes_list = list(
-            map(lambda v: self.volume_processor(v, bb), volumes_list))
+            map(lambda v: self.volume_processor(v, bounding_box=bb),
+                volumes_list))
 
-        modalities_list = list(map(lambda v: v.Modality, volumes_list))
-        labels_list = list(map(lambda v: v.label, masks_list))
         volumes_list = list(
             map(
                 lambda v: self.write(v, is_mask=False, dtype=self.volume_dtype
@@ -381,34 +438,29 @@ class ExtractorConverter(BaseConverter):
             map(lambda v: self.write(v, is_mask=True, dtype=self.mask_dtype),
                 masks_list))
 
-        if results_df is None:
-            results_df = self.get_empty_results_df()
+        results_df = self.get_empty_results_df()
 
-        for (volume, modality), (mask, label) in product(
-                zip(volumes_list, modalities_list),
-                zip(masks_list, labels_list),
-        ):
-            result = self.featureextractors(volume.path,
-                                            mask.path,
-                                            modality=modality)
+        for volume, mask in self._image_mask_pairs(volumes_list, masks_list):
+            result = self.okapy_extractors(volume.path,
+                                           mask.path,
+                                           modality=volume.modality)
             for key, val in result.items():
-                if "diagnostics" in key or ("glcm" in key
-                                            and "original" not in key):
+                if "diagnostics" in key:
                     continue
                 if self.result_format == "multiindex":
-                    results_df.loc[(study.patient_id, label),
-                                   (modality, key)] = val
+                    results_df.loc[(study.patient_id, mask.label),
+                                   (volume.modality, key)] = val
                 elif self.result_format == "long":
                     result_dict = {
                         "patient_id": study.patient_id,
-                        "modality": modality,
-                        "VOI": label,
+                        "modality": volume.modality,
+                        "VOI": mask.label,
                         "feature_name": key,
                         "feature_value": val,
                     }
                     result_dict.update({
-                        key: getattr(volume, key)
-                        for key in self.result_tags
+                        k: getattr(volume.dicom_header, k)
+                        for k in self.additional_dicom_tags
                     })
                     results_df = results_df.append(
                         result_dict,
@@ -420,12 +472,19 @@ class ExtractorConverter(BaseConverter):
     def __call__(self, input_folder, labels=None):
         try:
             self.output_folder = mkdtemp()
-            studies_list = self.dicom_walker(input_folder)
-            results_df = self.get_empty_results_df()
-            for study in studies_list:
-                results_df = self.process_study(study,
-                                                results_df=results_df,
-                                                labels=labels)
+            studies_list = self.dicom_walker(input_folder, cores=self.cores)
+            if self.cores is None:
+                result_dfs = list()
+                for study in studies_list:
+                    result_dfs.append(self.process_study(study, labels=labels))
+            else:
+
+                with Pool(self.cores) as p:
+                    result_dfs = list(
+                        tqdm(p.imap(partial(self.process_study, labels=labels),
+                                    studies_list),
+                             total=len(studies_list)))
+
             rmtree(self.output_folder, True)
             self.output_folder = None
         except Exception as e:
@@ -433,4 +492,4 @@ class ExtractorConverter(BaseConverter):
             self.output_folder = None
             raise e
 
-        return results_df
+        return pd.concat(result_dfs, axis=0, ignore_index=True)

@@ -36,6 +36,11 @@ class TestOkapy(unittest.TestCase):
         # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
         extraction_params = "/home/valentin/python_wkspce/okapy/parameters/defaults/defaults_pyradiomics_only.yaml"
         converter = ExtractorConverter.from_params(extraction_params)
+        # converter.cores = 5
+        converter.cores = None
+        converter.additional_dicom_tags = [
+            "AcquisitionDate", "StudyInstanceUID"
+        ]
         result = converter(input_path, labels=["GTVt"])
         print(result)
 
