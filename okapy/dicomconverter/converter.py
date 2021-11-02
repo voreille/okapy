@@ -419,15 +419,6 @@ class ExtractorConverter(BaseConverter):
                 print(e)
                 continue
 
-        bb_mask = bb_union([mask.bb for mask in masks_list])
-
-        n_volumes = len(volumes_list)
-        volumes_list = [v for v in volumes_list if v.contains_bb(bb_mask)]
-        if n_volumes != len(volumes_list):
-            logger.debug(
-                f"{n_volumes - len(volumes_list)} image(s) was/were"
-                f" not discarded since they did not contain all the ROIs.")
-
         if self.padding != 'whole_image':
             bb = self.get_bounding_box(masks_list, volumes_list)
         else:
