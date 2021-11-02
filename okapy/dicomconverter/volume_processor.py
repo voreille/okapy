@@ -1,8 +1,56 @@
+import yaml
 import numpy as np
 from scipy import ndimage
 
+from okapy.dicomconverter.volume import ReferenceFrame
+
+
+class VolumeProcessorStack():
+    def __init__(self, stacks=None):
+        self.stacks = stacks
+
+    @staticmethod
+    def from_params(params_path):
+        if type(params_path) == dict:
+            params = params_path
+        else:
+            with open(params_path, 'r') as f:
+                params = yaml.safe_load(f)
+
+        stacks = {}
+        for key, params_stack in params.items():
+            stacks[key] = []
+            if params_stack is None:
+                params_stack = {}
+            for name, p in params_stack.items():
+                stacks[key].append(VolumeProcessor.get(name=name)(**p))
+
+        return VolumeProcessorStack(stacks=stacks)
+
+    def __call__(self, volume, **kwargs):
+        for processor in self.stacks.get("common", []):
+            volume = processor(volume, **kwargs)
+        for processor in self.stacks.get(volume.modality,
+                                         self.stacks["default"]):
+            volume = processor(volume, **kwargs)
+        return volume
+
 
 class VolumeProcessor():
+    _registry = {}  # class var that store the different daughter
+
+    def __init_subclass__(cls, name, **kwargs):
+        cls.name = name
+        VolumeProcessor._registry[name] = cls
+        super().__init_subclass__(**kwargs)
+
+    @classmethod
+    def get(cls, name: str):
+        try:
+            return VolumeProcessor._registry[name]
+        except KeyError:
+            raise ValueError(f"The VolumeProcessor {name} is not defined.")
+
     def __init__(self, *args, **kwargs):
         super().__init__()
 
@@ -13,7 +61,7 @@ class VolumeProcessor():
         return self.process(volume, *args, **kwargs)
 
 
-class IdentityProcessor(VolumeProcessor):
+class IdentityProcessor(VolumeProcessor, name="identity_processor"):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -21,25 +69,40 @@ class IdentityProcessor(VolumeProcessor):
         return volume
 
 
-class MRStandardizer(VolumeProcessor):
-    def __init__(self, *args, **kwargs):
+class Standardizer(VolumeProcessor, name="standardizer"):
+    def __init__(self, *args, threshold=0.0, **kwargs):
         super().__init__(*args, **kwargs)
+        self.threshold = threshold
 
-    def process(self, volume, bounding_box):
-        mean = np.mean(volume.np_image)
-        stdev = np.std(volume.np_image)
-        volume.np_image = (volume.np_image - mean / stdev)
+    def process(self, volume, **kwargs):
+        array = volume.np_image
+        mean = np.mean(array[array > self.threshold])
+        std = np.std(array[array > self.threshold])
+        array = (array - mean) / std
+        volume.np_image = array
         return volume
 
 
-class BasicResampler(VolumeProcessor):
-    def __init__(self, resampling_spacing=(1, 1, 1), order=3):
+class BSplineResampler(VolumeProcessor, name="bspline_resampler"):
+    def __init__(self,
+                 resampling_spacing=(1, 1, 1),
+                 order=3,
+                 mode="mirror",
+                 cval=0):
         self.resampling_spacing = resampling_spacing
         self.order = order
+        self.mode = mode
+        self.cval = cval
 
-    def process(self, volume, bounding_box):
-        new_reference_frame = volume.reference_frame.get_new_reference_frame(
-            bounding_box, self.resampling_spacing)
+    def process(self, volume, bounding_box=None, **kwargs):
+        bounding_box = np.array(bounding_box)
+        output_shape = np.ceil((bounding_box[3:] - bounding_box[:3]) /
+                               self.resampling_spacing).astype(int)
+        new_reference_frame = ReferenceFrame.get_diagonal_reference_frame(
+            pixel_spacing=self.resampling_spacing,
+            origin=bounding_box[:3],
+            shape=output_shape,
+        )
         matrix = np.dot(volume.reference_frame.inv_coordinate_matrix,
                         new_reference_frame.coordinate_matrix)
 
@@ -47,8 +110,9 @@ class BasicResampler(VolumeProcessor):
             volume.np_image,
             matrix[:3, :3],
             offset=matrix[:3, 3],
-            mode='mirror',
+            mode=self.mode,
             order=self.order,
+            cval=self.cval,
             output_shape=new_reference_frame.shape)
 
         v = volume.zeros_like()
@@ -57,9 +121,10 @@ class BasicResampler(VolumeProcessor):
         return v
 
 
-class MaskResampler(BasicResampler):
-    def __init__(self, *args, threshold=0.5, **kwargs):
-        super().__init__(*args, **kwargs)
+class BinaryBSplineResampler(BSplineResampler,
+                             name="binary_bspline_resampler"):
+    def __init__(self, *args, threshold=0.5, mode="constant", **kwargs):
+        super().__init__(*args, mode=mode, **kwargs)
         self.t = threshold
 
     def threshold(self, volume):

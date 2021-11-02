@@ -17,8 +17,7 @@ from tqdm import tqdm
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.dicom_file import (EmptyContourException,
                                              PETUnitException)
-from okapy.dicomconverter.volume import BasicResampler, MaskResampler
-from okapy.dicomconverter.volume_processor import IdentityProcessor
+from okapy.dicomconverter.volume_processor import VolumeProcessorStack
 from okapy.featureextractor.featureextractor import OkapyExtractors
 from okapy.exceptions import MissingSegmentationException
 
@@ -47,9 +46,11 @@ class VolumeFile():
     def __init__(self,
                  path=None,
                  dicom_header=None,
+                 modality=None,
                  label=None,
                  reference_dicom_header=None):
         self.path = path
+        self.modality = modality
         self.dicom_header = dicom_header
         self.label = label
         self.reference_dicom_header = reference_dicom_header
@@ -82,8 +83,6 @@ class MaskResult(VolumeResult):
 class BaseConverter():
     def __init__(
         self,
-        resampling_spacing=(1, 1, 1),
-        order=3,
         padding=10,
         list_labels=None,
         dicom_walker=None,
@@ -104,18 +103,8 @@ class BaseConverter():
             self.dicom_walker = DicomWalker(cores=cores)
         else:
             self.dicom_walker = dicom_walker
-        if resampling_spacing == -1:
-            if volume_processor is None:
-                self.volume_processor = IdentityProcessor()
-            if mask_processor is None:
-                self.mask_processor = IdentityProcessor()
-        else:
-            if volume_processor is None:
-                self.volume_processor = BasicResampler(
-                    resampling_spacing=resampling_spacing, order=order)
-            if mask_processor is None:
-                self.mask_processor = MaskResampler(
-                    resampling_spacing=resampling_spacing)
+        self.volume_processor = volume_processor
+        self.mask_processor = mask_processor
         self.converter_backend = converter_backend
         self.volume_dtype = volume_dtype
         self.mask_dtype = mask_dtype
@@ -231,11 +220,14 @@ class BaseConverter():
             return VolumeFile(
                 path=new_path,
                 dicom_header=volume.dicom_header,
+                modality=volume.modality,
                 label=volume.label,
                 reference_dicom_header=volume.reference_dicom_header,
             )
         else:
-            return VolumeFile(path=new_path, dicom_header=volume.dicom_header)
+            return VolumeFile(path=new_path,
+                              modality=volume.modality,
+                              dicom_header=volume.dicom_header)
 
     @abstractmethod
     def process_study(self, study, output_folder=None):
@@ -315,18 +307,19 @@ class NiftiConverter(BaseConverter):
 
 class ExtractorConverter(BaseConverter):
     def __init__(self,
-                 extraction_params,
+                 okapy_extractors=None,
                  result_format="long",
                  additional_dicom_tags=None,
                  all_image_mask_combination=False,
                  **kwargs):
         super().__init__(**kwargs)
-        self.featureextractors = OkapyExtractors(extraction_params)
+        self.okapy_extractors = okapy_extractors
         self.output_folder = None
         self.result_format = ExtractorConverter._check_result_format(
             result_format)
         self.dicom_walker.additional_dicom_tags = additional_dicom_tags
         self._additional_dicom_tags = additional_dicom_tags
+        self.core = None  # TODO: fix multiprocessing
         self.all_image_mask_combination = all_image_mask_combination
 
     @property
@@ -353,9 +346,28 @@ class ExtractorConverter(BaseConverter):
             with open(params_path, 'r') as f:
                 params = yaml.safe_load(f)
 
-        return ExtractorConverter(params["feature_extraction"],
-                                  **params["result_format"],
-                                  **params["preprocessing"])
+        additional_dicom_tags = params["general"].get("additional_dicom_tags",
+                                                      [])
+        dicom_walker = DicomWalker(
+            additional_dicom_tags=additional_dicom_tags,
+            submodalities=params["general"].get("submodalities", False),
+        )
+
+        volume_processor = VolumeProcessorStack.from_params(
+            params["volume_preprocessing"])
+
+        mask_processor = VolumeProcessorStack.from_params(
+            params["mask_preprocessing"])
+
+        okapy_extractors = OkapyExtractors(params["feature_extraction"])
+
+        return ExtractorConverter(
+            dicom_walker=dicom_walker,
+            volume_processor=volume_processor,
+            mask_processor=mask_processor,
+            okapy_extractors=okapy_extractors,
+            additional_dicom_tags=additional_dicom_tags,
+        )
 
     def get_empty_results_df(self):
         if self.result_format == "mutltiindex":
@@ -421,10 +433,11 @@ class ExtractorConverter(BaseConverter):
         else:
             # The image is not cropped
             bb = None
-        masks_list = list(map(lambda v: self.mask_processor(v, bb),
-                              masks_list))
+        masks_list = list(
+            map(lambda v: self.mask_processor(v, bounding_box=bb), masks_list))
         volumes_list = list(
-            map(lambda v: self.volume_processor(v, bb), volumes_list))
+            map(lambda v: self.volume_processor(v, bounding_box=bb),
+                volumes_list))
 
         volumes_list = list(
             map(
@@ -437,9 +450,9 @@ class ExtractorConverter(BaseConverter):
         results_df = self.get_empty_results_df()
 
         for volume, mask in self._image_mask_pairs(volumes_list, masks_list):
-            result = self.featureextractors(volume.path,
-                                            mask.path,
-                                            modality=volume.modality)
+            result = self.okapy_extractors(volume.path,
+                                           mask.path,
+                                           modality=volume.modality)
             for key, val in result.items():
                 if "diagnostics" in key:
                     continue

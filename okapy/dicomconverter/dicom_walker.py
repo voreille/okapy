@@ -30,10 +30,12 @@ class DicomWalker():
         input_dirpath=None,
         cores=None,
         additional_dicom_tags=None,
+        submodalities=False,
     ):
         self.input_dirpath = input_dirpath
         self.cores = cores
         self.additional_dicom_tags = additional_dicom_tags
+        self.submodalities = submodalities
 
     def _parse_file(self, file):
         try:
@@ -100,7 +102,8 @@ class DicomWalker():
             if i == 0:
                 current_study = Study(study_instance_uid=current_study_uid,
                                       study_date=f.dicom_header.StudyDate,
-                                      patient_id=f.dicom_header.PatientID)
+                                      patient_id=f.dicom_header.PatientID,
+                                      submodalities=self.submodalities)
 
             if i > 0 and not (f.dicom_header.SeriesInstanceUID
                               == previous_dcm_header.SeriesInstanceUID and
@@ -115,7 +118,8 @@ class DicomWalker():
                     studies.append(current_study)
                 current_study = Study(study_instance_uid=current_study_uid,
                                       study_date=f.dicom_header.StudyDate,
-                                      patient_id=f.dicom_header.PatientID)
+                                      patient_id=f.dicom_header.PatientID,
+                                      submodalities=self.submodalities)
 
             # Only keeping files that are different
             if f.dicom_header != previous_dcm_header:

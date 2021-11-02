@@ -12,7 +12,7 @@ from skimage.draw import polygon
 from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
 from okapy.dicomconverter.dicom_header import DicomHeader
 from okapy.exceptions import (EmptyContourException, MissingWeightException,
-                              PETUnitException)
+                              NotHandledModality, PETUnitException)
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
@@ -33,16 +33,19 @@ class DicomFileBase():
 
     @classmethod
     def get(cls, name: str):
-        return DicomFileBase._registry[name]
+        try:
+            return DicomFileBase._registry[name]
+        except KeyError:
+            raise NotHandledModality(f"The modality {name} is not handled.")
 
-    @classmethod
-    def from_dicom_paths(cls, dicom_paths):
+    @staticmethod
+    def from_dicom_paths(dicom_paths):
         if isinstance(dicom_paths[0], FileDataset):
             modality = dicom_paths[0].Modality
         else:
             modality = pdcm.filereader.dcmread(
                 dicom_paths[0], stop_before_pixels=True).Modality
-        return DicomFileBase._registry[modality](dicom_paths=dicom_paths)
+        return DicomFileBase.get(modality)(dicom_paths=dicom_paths)
 
     def __init__(
         self,
@@ -51,6 +54,7 @@ class DicomFileBase():
         reference_frame=None,
         study=None,
         additional_dicom_tags=None,
+        submodalities=False,
     ):
         self._dicom_header = dicom_header
         self.dicom_paths = dicom_paths
@@ -58,6 +62,15 @@ class DicomFileBase():
         self.study = study
         self.slices = None
         self.additional_dicom_tags = additional_dicom_tags
+        self.modality = dicom_header.Modality
+        if submodalities:
+            self.modality = self.modality + self._parse_submodalities()
+
+    def _parse_submodalities(self):
+        try:
+            return "_" + self.dicom_header.SeriesDescription.split(" --- ")[1]
+        except IndexError:
+            return ""
 
     def get_volume(self, *args):
         raise NotImplementedError('It is an abstract class')
@@ -237,7 +250,8 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
         return Volume(image,
                       reference_frame=copy(self.reference_frame),
-                      dicom_header=self.dicom_header)
+                      dicom_header=self.dicom_header,
+                      modality=self.modality)
 
 
 class DicomFileCT(DicomFileImageBase, name="CT"):
@@ -390,18 +404,53 @@ class MaskFile(DicomFileBase, name="mask_base"):
 
 
 class SegFile(MaskFile, name="SEG"):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, reference_image=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.raw_volume = None
         self.label_to_num = dict()
+        self._reference_image = reference_image
+        self._reference_image_uid = None
         if len(self.dicom_paths) != 1:
             raise RuntimeError('SEG has more than one file')
+
+    @property
+    def reference_image_uid(self):
+        if self._reference_image_uid is None:
+            self.read()
+        return self._reference_image_uid
+
+    @property
+    def reference_image(self):
+        if self.reference_image_uid is None:
+            self.read()
+        if self._reference_image is None:
+            found = False
+            for f in self.study.volume_files:
+                if (self.reference_image_uid ==
+                        f.dicom_header.SeriesInstanceUID):
+                    self._reference_image = f
+                    found = True
+                    break
+
+            if not found:
+                self.study.volume_files.sort(
+                    key=lambda x: x.dicom_header.Modality)
+
+                self._reference_image = self.study.volume_files[0]
+                logger.warning(f"The Reference image was not found for"
+                               f" the RTSTRUCT {str(self)}. The "
+                               f"{self._reference_image.dicom_header.Modality}"
+                               f" image will be"
+                               f" taken as reference.")
+        return self._reference_image
 
     def read(self):
         if type(self.dicom_paths[0]) == FileDataset:
             dcm = self.dicom_paths[0]
         else:
             dcm = pdcm.dcmread(self.dicom_paths[0])
+        self._reference_image_uid = dcm.ReferencedSeriesSequence[
+            0].SeriesInstanceUID
         self.raw_volume = pydicom_seg.SegmentReader().read(dcm)
         coordinate_matrix = np.zeros((4, 4))
         coordinate_matrix[:3, :3] = self.raw_volume.direction * np.tile(
@@ -427,11 +476,12 @@ class SegFile(MaskFile, name="SEG"):
 
         # TODO: Match image with tag (0008, 1115)
 
-        return VolumeMask(np_volume,
-                          reference_frame=copy(self.reference_frame),
-                          label=label,
-                          reference_dicom_header=None,
-                          dicom_header=self.dicom_header)
+        return VolumeMask(
+            np_volume,
+            reference_frame=copy(self.reference_frame),
+            label=label,
+            reference_dicom_header=self.reference_image.dicom_header,
+            dicom_header=self.dicom_header)
 
 
 class RtstructFile(MaskFile, name="RTSTRUCT"):
