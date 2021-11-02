@@ -169,6 +169,12 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
         self.slices = slices
         self.orthogonal_positions = orthogonal_positions
+        self.d_slices = np.array([
+            self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
+            for ind in range(len(self.slices) - 1)
+        ])
+        self.slice_spacing = mode(self.d_slices)
+
         self.expected_n_slices = self._check_missing_slices()
         slice_shape = (slices[0].pixel_array.shape[1],
                        slices[0].pixel_array.shape[0])
@@ -180,21 +186,15 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             shape=slice_shape + (self.expected_n_slices, ))
 
     def _check_missing_slices(self):
-        d_slices = np.array([
-            self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
-            for ind in range(len(self.slices) - 1)
-        ])
-        self.d_slices = d_slices
-        slice_spacing = mode(d_slices)
-        if slice_spacing == 0:
+        if self.slice_spacing == 0:
             raise RuntimeError(
                 "The most frequent slice spacing computed"
                 " is 0, probably due to multi-channel image (e.g. DWI).")
-        elif np.min(slice_spacing) == 0:
+        elif np.min(self.slice_spacing) == 0:
             raise RuntimeError("Some slices have the same position")
 
-        condition_missing_slice = (np.abs(d_slices - slice_spacing) >
-                                   0.9 * slice_spacing)
+        condition_missing_slice = (np.abs(self.d_slices - self.slice_spacing) >
+                                   0.9 * self.slice_spacing)
         n_missing_slices = np.sum(condition_missing_slice)
         if n_missing_slices == 1:
             # If only one slice is missing

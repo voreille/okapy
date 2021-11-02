@@ -37,6 +37,25 @@ def get_bb_diagonal_frame(mask, resampling_spacing=(1, 1, 1)):
     return bb_diag
 
 
+# class FlexibleReferenceFrame():
+#     def __init__(self,
+#                  slices_origin=None,
+#                  orientation=None,
+#                  pixel_spacing=None,
+#                  slice_shape=None):
+
+#         self.e_r = np.array(orientation[:3])
+#         self.e_c = np.array(orientation[3:])
+#         self.e_s = np.cross(orientation[:3], orientation[3:])
+#         self.slices_origin = np.stack(slices_origin, axis=-1)
+#         self.d_r = pixel_spacing[0]
+#         self.d_c = pixel_spacing[1]
+#         self.slice_shape = slice_shape
+
+#     def vx_to_mm(self, a):
+        # return (self.slices_origin[:,0] + self.e_r * self.d_r * a[0] + self.e_c * self.d_c * a[1])
+
+
 class ReferenceFrame():
     def __init__(self,
                  origin=None,
@@ -79,22 +98,30 @@ class ReferenceFrame():
                                   pixel_spacing=None,
                                   orientation=None,
                                   shape=None):
-        return np.array(
-            [[
+        n = np.cross(orientation[:3], orientation[3:])
+        slice_spacing = np.dot(
+            np.array(origin_last_slice) - np.array(origin), n) / (shape[2] - 1)
+        return np.array([
+            [
                 orientation[0] * pixel_spacing[0],
                 orientation[3] * pixel_spacing[1],
-                (origin_last_slice[0] - origin[0]) / (shape[2] - 1), origin[0]
+                n[0] * slice_spacing,
+                origin[0],
             ],
-             [
-                 orientation[1] * pixel_spacing[0],
-                 orientation[4] * pixel_spacing[1],
-                 (origin_last_slice[1] - origin[1]) / (shape[2] - 1), origin[1]
-             ],
-             [
-                 orientation[2] * pixel_spacing[0],
-                 orientation[5] * pixel_spacing[1],
-                 (origin_last_slice[2] - origin[2]) / (shape[2] - 1), origin[2]
-             ], [0, 0, 0, 1]])
+            [
+                orientation[1] * pixel_spacing[0],
+                orientation[4] * pixel_spacing[1],
+                n[1] * slice_spacing,
+                origin[1],
+            ],
+            [
+                orientation[2] * pixel_spacing[0],
+                orientation[5] * pixel_spacing[1],
+                n[2] * slice_spacing,
+                origin[2],
+            ],
+            [0, 0, 0, 1],
+        ])
 
     @property
     def coordinate_matrix(self):
