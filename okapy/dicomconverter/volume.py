@@ -10,6 +10,7 @@ TODO: Add check of the bounding_box, if it goes beyond the image domain
 
 from copy import copy
 from itertools import product
+from os import stat
 
 import numpy as np
 from scipy import ndimage
@@ -52,33 +53,41 @@ def get_bb_diagonal_frame(mask, resampling_spacing=(1, 1, 1)):
 #         self.slice_shape = slice_shape
 
 #     def vx_to_mm(self, a):
-        # return (self.slices_origin[:,0] + self.e_r * self.d_r * a[0] + self.e_c * self.d_c * a[1])
+# return (self.slices_origin[:,0] + self.e_r * self.d_r * a[0] + self.e_c * self.d_c * a[1])
 
 
 class ReferenceFrame():
-    def __init__(self,
-                 origin=None,
-                 origin_last_slice=None,
-                 orientation=None,
-                 pixel_spacing=None,
-                 coordinate_matrix=None,
-                 shape=None):
+    def __init__(
+        self,
+        origin=None,
+        origin_last_slice=None,
+        orientation=None,
+        pixel_spacing=None,
+        shape=None,
+    ):
         super().__init__()
-        if coordinate_matrix is not None:
-            self.origin = np.dot(coordinate_matrix, [0, 0, 0, 1])[:3]
-            self.origin_last_slice = np.dot(coordinate_matrix,
-                                            [0, 0, shape[2] - 1, 1])[:3]
-            self.pixel_spacing = (np.dot(coordinate_matrix, [1, 1, 1, 1]) -
-                                  np.dot(coordinate_matrix, [0, 0, 0, 1]))[:2]
-            self.orientation = (coordinate_matrix[:3, :2] /
-                                self.pixel_spacing).T.flatten()
-            self.shape = np.array(shape)
-        else:
-            self.origin = origin
-            self.origin_last_slice = origin_last_slice
-            self.orientation = orientation
-            self.pixel_spacing = pixel_spacing
-            self.shape = np.array(shape)
+        self.origin = origin
+        self.origin_last_slice = origin_last_slice
+        n = np.cross(orientation[:3], orientation[3:])
+        self.orientation_matrix = np.stack(
+            [orientation[:3], orientation[3:], n], axis=-1)
+        self.pixel_spacing = pixel_spacing
+        self.shape = np.array(shape)
+        self.slice_spacing = np.dot(
+            np.array(self.origin_last_slice) - np.array(self.origin),
+            n) / (self.shape[2] - 1)
+
+    @staticmethod
+    def from_coordinate_matrix(matrix, shape=None):
+        origin = np.dot(matrix, [0, 0, 0, 1])[:3]
+        origin_last_slice = np.dot(matrix, [0, 0, shape[2] - 1, 1])[:3]
+        pixel_spacing = ReferenceFrame.get_voxel_spacing(matrix)[:2]
+        orientation = (matrix[:3, :2] / pixel_spacing).T.flatten()
+        return ReferenceFrame(origin=origin,
+                              origin_last_slice=origin_last_slice,
+                              orientation=orientation,
+                              pixel_spacing=pixel_spacing,
+                              shape=shape)
 
     @staticmethod
     def get_diagonal_reference_frame(
@@ -89,60 +98,33 @@ class ReferenceFrame():
         matrix = np.eye(4)
         matrix[:3, :3] = matrix[:3, :3] * pixel_spacing
         matrix[:3, 3] = origin
-        return ReferenceFrame(coordinate_matrix=matrix, shape=shape)
+        return ReferenceFrame.from_coordinate_matrix(matrix, shape=shape)
 
     @staticmethod
-    def compute_coordinate_matrix(origin=None,
-                                  origin_last_slice=None,
-                                  pixel_spacing=None,
-                                  orientation=None,
-                                  shape=None):
-        n = np.cross(orientation[:3], orientation[3:])
-        slice_spacing = np.dot(
-            np.array(origin_last_slice) - np.array(origin), n) / (shape[2] - 1)
-        return np.array([
-            [
-                orientation[0] * pixel_spacing[0],
-                orientation[3] * pixel_spacing[1],
-                n[0] * slice_spacing,
-                origin[0],
-            ],
-            [
-                orientation[1] * pixel_spacing[0],
-                orientation[4] * pixel_spacing[1],
-                n[1] * slice_spacing,
-                origin[1],
-            ],
-            [
-                orientation[2] * pixel_spacing[0],
-                orientation[5] * pixel_spacing[1],
-                n[2] * slice_spacing,
-                origin[2],
-            ],
-            [0, 0, 0, 1],
-        ])
-
-    @property
-    def coordinate_matrix(self):
-        return ReferenceFrame.compute_coordinate_matrix(
-            origin=self.origin,
-            origin_last_slice=self.origin_last_slice,
-            pixel_spacing=self.pixel_spacing,
-            orientation=self.orientation,
-            shape=self.shape)
+    def get_voxel_spacing(coordinate_matrix):
+        delta_r = np.sqrt(
+            np.sum(((np.dot(coordinate_matrix, [1, 0, 0, 1]) -
+                     np.dot(coordinate_matrix, [0, 0, 0, 1]))[:3])**2))
+        delta_c = np.sqrt(
+            np.sum(((np.dot(coordinate_matrix, [0, 1, 0, 1]) -
+                     np.dot(coordinate_matrix, [0, 0, 0, 1]))[:3])**2))
+        delta_s = np.sqrt(
+            np.sum(((np.dot(coordinate_matrix, [0, 0, 1, 1]) -
+                     np.dot(coordinate_matrix, [0, 0, 0, 1]))[:3])**2))
+        return np.array([delta_r, delta_c, delta_s])
 
     @property
     def voxel_spacing(self):
-        delta_r = np.sqrt(
-            np.sum(((np.dot(self.coordinate_matrix, [1, 0, 0, 1]) -
-                     np.dot(self.coordinate_matrix, [0, 0, 0, 1]))[:3])**2))
-        delta_c = np.sqrt(
-            np.sum(((np.dot(self.coordinate_matrix, [0, 1, 0, 1]) -
-                     np.dot(self.coordinate_matrix, [0, 0, 0, 1]))[:3])**2))
-        delta_s = np.sqrt(
-            np.sum(((np.dot(self.coordinate_matrix, [0, 0, 1, 1]) -
-                     np.dot(self.coordinate_matrix, [0, 0, 0, 1]))[:3])**2))
-        return np.array([delta_r, delta_c, delta_s])
+        return np.array(
+            [self.pixel_spacing[0], self.pixel_spacing[1], self.slice_spacing])
+
+    @property
+    def coordinate_matrix(self):
+        matrix = np.zeros((4, 4))
+        matrix[:3, :3] = self.orientation_matrix * self.voxel_spacing
+        matrix[:3, 3] = self.origin
+        matrix[3, 3] = 1
+        return matrix
 
     @property
     def inv_coordinate_matrix(self):
@@ -215,8 +197,8 @@ class ReferenceFrame():
                                          new_voxel_spacing)
         new_coordinate_matrix[:3, 3] = bb[:3]
         new_coordinate_matrix[3, 3] = 1
-        return ReferenceFrame(coordinate_matrix=new_coordinate_matrix,
-                              shape=output_shape)
+        return ReferenceFrame.from_coordinate_matrix(new_coordinate_matrix,
+                                                     shape=output_shape)
 
     def get_matching_grid_bb(self, bb):
         or_vx = self.mm_to_vx(bb[:3])
@@ -229,14 +211,14 @@ class ReferenceFrame():
         return np.concatenate([origin, end], axis=0)
 
 
-class Volume():
+class VolumeBase():
     def __init__(self,
-                 np_image=None,
+                 array=None,
                  reference_frame=None,
                  modality=None,
                  dicom_header=None):
         self.modality = modality
-        self.np_image = np_image
+        self.array = array
         self.reference_frame = reference_frame
         self.dicom_header = dicom_header
         self.series_datetime = dicom_header.series_datetime
@@ -245,21 +227,16 @@ class Volume():
         return getattr(self.dicom_header, name)
 
     def astype(self, dtype):
-        self.np_image = self.np_image.astype(dtype)
+        self.array = self.array.astype(dtype)
         return self
 
     def zeros_like(self):
-        return Volume(
-            np_image=np.zeros_like(self.np_image),
-            modality=self.modality,
-            dicom_header=self.dicom_header,
-            reference_frame=copy(self.reference_frame),
-        )
+        raise NotImplementedError("This is an abstract class")
 
     @property
     def sitk_image(self):
         trans = (2, 1, 0)
-        sitk_image = sitk.GetImageFromArray(np.transpose(self.np_image, trans))
+        sitk_image = sitk.GetImageFromArray(np.transpose(self.array, trans))
         sitk_image.SetSpacing(self.reference_frame.voxel_spacing)
         sitk_image.SetOrigin(self.reference_frame.origin)
         sitk_image.SetDirection(
@@ -273,23 +250,43 @@ class Volume():
                 and np.all(volume_bb[3:] >= bb[3:]))
 
 
-class VolumeMask(Volume):
+class Volume(VolumeBase):
+    def __init__(self,
+                 array=None,
+                 reference_frame=None,
+                 modality=None,
+                 dicom_header=None):
+        super().__init__(array=array,
+                         reference_frame=reference_frame,
+                         modality=modality,
+                         dicom_header=dicom_header)
+
+    def zeros_like(self):
+        return Volume(
+            array=np.zeros_like(self.array),
+            modality=self.modality,
+            dicom_header=self.dicom_header,
+            reference_frame=copy(self.reference_frame),
+        )
+
+
+class BinaryVolume(VolumeBase):
     def __init__(self,
                  *args,
                  label=None,
                  reference_dicom_header=None,
                  **kwargs):
         super().__init__(*args, **kwargs)
-        self.np_image[self.np_image != 0] = 1
+        self.array[self.array != 0] = 1
         self.reference_dicom_header = reference_dicom_header
         self.label = label
 
     def zeros_like(self):
-        return VolumeMask(np_image=np.zeros_like(self.np_image),
-                          reference_frame=copy(self.reference_frame),
-                          reference_dicom_header=self.reference_dicom_header,
-                          dicom_header=self.dicom_header,
-                          label=self.label)
+        return BinaryVolume(array=np.zeros_like(self.array),
+                            reference_frame=copy(self.reference_frame),
+                            reference_dicom_header=self.reference_dicom_header,
+                            dicom_header=self.dicom_header,
+                            label=self.label)
 
     def __getattr__(self, name):
         if "reference_" in name:
@@ -303,7 +300,7 @@ class VolumeMask(Volume):
 
     @property
     def bb_vx(self):
-        indices = np.where(self.np_image != 0)
+        indices = np.where(self.array != 0)
         return np.array([
             np.min(indices[0]),
             np.min(indices[1]),
