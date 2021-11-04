@@ -9,7 +9,7 @@ from pydicom.dataset import FileDataset
 import pydicom_seg
 from skimage.draw import polygon
 
-from okapy.dicomconverter.volume import Volume, VolumeMask, ReferenceFrame
+from okapy.dicomconverter.volume import Volume, BinaryVolume, ReferenceFrame
 from okapy.dicomconverter.dicom_header import DicomHeader
 from okapy.exceptions import (EmptyContourException, MissingWeightException,
                               NotHandledModality, PETUnitException)
@@ -457,27 +457,29 @@ class SegFile(MaskFile, name="SEG"):
             self.raw_volume.spacing, [3, 1])
         coordinate_matrix[:3, 3] = self.raw_volume.origin
         coordinate_matrix[3, 3] = 1
-        self._reference_frame = ReferenceFrame(
-            coordinate_matrix=coordinate_matrix, shape=self.raw_volume.size)
         self._labels = list()
         for segment_number in self.raw_volume.available_segments:
             label = self.raw_volume.segment_infos[segment_number][
                 0x620006].value
             self._labels.append(label)
             self.label_to_num[label] = segment_number
+        shape = self.raw_volume.segment_data(segment_number).shape
+        shape = (shape[2], shape[1], shape[0])
+        self._reference_frame = ReferenceFrame.from_coordinate_matrix(
+            coordinate_matrix, shape=shape)
 
     def get_volume(self, label):
         if self.raw_volume is None:
             self.read()
 
         trans = (2, 1, 0)
-        np_volume = np.transpose(
+        array = np.transpose(
             self.raw_volume.segment_data(self.label_to_num[label]), trans)
 
         # TODO: Match image with tag (0008, 1115)
 
-        return VolumeMask(
-            np_volume,
+        return BinaryVolume(
+            array,
             reference_frame=copy(self.reference_frame),
             label=label,
             reference_dicom_header=self.reference_image.dicom_header,
@@ -613,7 +615,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
 
         mask = self._compute_mask(contour_sequence, label=label)
 
-        return VolumeMask(
+        return BinaryVolume(
             mask,
             reference_frame=self.reference_frame,
             reference_dicom_header=self.reference_image.dicom_header,

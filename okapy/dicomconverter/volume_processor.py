@@ -1,3 +1,4 @@
+from okapy.exceptions import MissingSegmentationException
 import yaml
 import numpy as np
 from scipy import ndimage
@@ -10,7 +11,7 @@ class VolumeProcessorStack():
         self.stacks = stacks
 
     @staticmethod
-    def from_params(params_path):
+    def from_params(params_path, mask_resampler=None):
         if type(params_path) == dict:
             params = params_path
         else:
@@ -23,7 +24,9 @@ class VolumeProcessorStack():
             if params_stack is None:
                 params_stack = {}
             for name, p in params_stack.items():
-                stacks[key].append(VolumeProcessor.get(name=name)(**p))
+                stacks[key].append(
+                    VolumeProcessor.get(name=name)(
+                        mask_resampler=mask_resampler, **p))
 
         return VolumeProcessorStack(stacks=stacks)
 
@@ -75,11 +78,42 @@ class Standardizer(VolumeProcessor, name="standardizer"):
         self.threshold = threshold
 
     def process(self, volume, **kwargs):
-        array = volume.np_image
+        array = volume.array
         mean = np.mean(array[array > self.threshold])
         std = np.std(array[array > self.threshold])
         array = (array - mean) / std
-        volume.np_image = array
+        volume.array = array
+        return volume
+
+
+class MaskedStandardizer(VolumeProcessor, name="masked_standardizer"):
+    def __init__(self, *args, mask_label="", mask_resampler=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mask_label = mask_label
+        if mask_resampler is None:
+            raise TypeError("mask_resamper cannot be None")
+        self.mask_resampler = mask_resampler
+
+    def _get_mask_array(self, mask_files, reference_frame=None):
+        mask = None
+        for f in mask_files:
+            if self.mask_label in f.labels:
+                mask = f.get_volume(self.mask_label)
+                break
+        if mask is None:
+            raise MissingSegmentationException(
+                f"The label was {self.mask_labe} was not found")
+        return self.mask_resampler(mask,
+                                   reference_frame=reference_frame).array != 0
+
+    def process(self, volume, mask_files=None, **kwargs):
+        array = volume.array
+        mask_array = self._get_mask_array(
+            mask_files, reference_frame=volume.reference_frame)
+        mean = np.mean(array[mask_array])
+        std = np.std(array[mask_array])
+        array = (array - mean) / std
+        volume.array = array
         return volume
 
 
@@ -88,26 +122,46 @@ class BSplineResampler(VolumeProcessor, name="bspline_resampler"):
                  resampling_spacing=(1, 1, 1),
                  order=3,
                  mode="mirror",
-                 cval=0):
+                 cval=0,
+                 **kwargs):
         self.resampling_spacing = resampling_spacing
         self.order = order
         self.mode = mode
         self.cval = cval
 
-    def process(self, volume, bounding_box=None, **kwargs):
+    def _get_new_reference_frame(self,
+                                 bounding_box=None,
+                                 resampling_spacing=None,
+                                 reference_frame=None):
+        if reference_frame is not None:
+            return reference_frame
+
+        if resampling_spacing is None:
+            resampling_spacing = self.resampling_spacing
         bounding_box = np.array(bounding_box)
         output_shape = np.ceil((bounding_box[3:] - bounding_box[:3]) /
-                               self.resampling_spacing).astype(int)
-        new_reference_frame = ReferenceFrame.get_diagonal_reference_frame(
-            pixel_spacing=self.resampling_spacing,
+                               resampling_spacing).astype(int)
+        return ReferenceFrame.get_diagonal_reference_frame(
+            pixel_spacing=resampling_spacing,
             origin=bounding_box[:3],
             shape=output_shape,
         )
+
+    def process(self,
+                volume,
+                bounding_box=None,
+                resampling_spacing=None,
+                reference_frame=None,
+                **kwargs):
+        new_reference_frame = self._get_new_reference_frame(
+            bounding_box=bounding_box,
+            resampling_spacing=resampling_spacing,
+            reference_frame=reference_frame)
         matrix = np.dot(volume.reference_frame.inv_coordinate_matrix,
                         new_reference_frame.coordinate_matrix)
 
-        np_image = ndimage.affine_transform(
-            volume.np_image,
+        array = ndimage.affine_transform(
+            volume.array,
             matrix[:3, :3],
             offset=matrix[:3, 3],
             mode=self.mode,
@@ -116,7 +170,7 @@ class BSplineResampler(VolumeProcessor, name="bspline_resampler"):
             output_shape=new_reference_frame.shape)
 
         v = volume.zeros_like()
-        v.np_image = np_image
+        v.array = array
         v.reference_frame = new_reference_frame
         return v
 
@@ -128,8 +182,8 @@ class BinaryBSplineResampler(BSplineResampler,
         self.t = threshold
 
     def threshold(self, volume):
-        volume.np_image[volume.np_image < self.t] = 0
-        volume.np_image[volume.np_image >= self.t] = 1
+        volume.array[volume.array < self.t] = 0
+        volume.array[volume.array >= self.t] = 1
         return volume
 
     def process(self, volume, *args, **kwargs):

@@ -1,8 +1,6 @@
 from abc import abstractmethod
 from pathlib import Path
-from itertools import product
 from functools import partial
-from re import I
 from tempfile import mkdtemp
 from shutil import rmtree
 from multiprocessing import Pool
@@ -15,31 +13,13 @@ import SimpleITK as sitk
 from tqdm import tqdm
 
 from okapy.dicomconverter.dicom_walker import DicomWalker
-from okapy.dicomconverter.dicom_file import (EmptyContourException,
-                                             PETUnitException)
 from okapy.dicomconverter.volume_processor import VolumeProcessorStack
+from okapy.dicomconverter.study import StudyProcessor
 from okapy.featureextractor.featureextractor import OkapyExtractors
-from okapy.exceptions import MissingSegmentationException
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
 logger = logging.getLogger(__name__)
-
-
-def bb_union(bbs):
-    out = np.array([np.inf, np.inf, np.inf, -np.inf, -np.inf, -np.inf])
-    for bb in bbs:
-        out[:3] = np.minimum(out[:3], bb[:3])
-        out[3:] = np.maximum(out[3:], bb[3:])
-    return out
-
-
-def bb_intersection(bbs):
-    out = np.array([-np.inf, -np.inf, -np.inf, np.inf, np.inf, np.inf])
-    for bb in bbs:
-        out[:3] = np.maximum(out[:3], bb[:3])
-        out[3:] = np.minimum(out[3:], bb[3:])
-    return out
 
 
 class VolumeFile():
@@ -59,41 +39,18 @@ class VolumeFile():
         return getattr(self.dicom_header, name)
 
 
-class VolumeResult():
-    def __init__(self, study, volume, path):
-        self.study_instance_uid = study.study_instance_uid
-        self.patient_id = study.patient_id
-        self.study_date = study.study_date
-        self.modality = volume.Modality
-        self.series_instance_uid = volume.SeriesInstanceUID
-        self.series_number = volume.SeriesNumber
-        self.path = path
-
-    def __str__(self):
-        return self.path
-
-
-class MaskResult(VolumeResult):
-    def __init__(self, study, volume, path):
-        super().__init__(study, volume, path)
-        self.reference_Modality = volume.reference_Modality
-        self.label = volume.label
-
-
 class BaseConverter():
     def __init__(
         self,
         padding=10,
         list_labels=None,
         dicom_walker=None,
-        volume_processor=None,
-        mask_processor=None,
+        study_processor=None,
         volume_dtype=np.float32,
         mask_dtype=np.uint32,
         extension='nii.gz',
         naming=0,
         cores=None,
-        converter_backend='sitk',
     ):
         self.padding = BaseConverter._check_padding(padding)
         self.list_labels = list_labels
@@ -103,9 +60,7 @@ class BaseConverter():
             self.dicom_walker = DicomWalker(cores=cores)
         else:
             self.dicom_walker = dicom_walker
-        self.volume_processor = volume_processor
-        self.mask_processor = mask_processor
-        self.converter_backend = converter_backend
+        self.study_processor = study_processor
         self.volume_dtype = volume_dtype
         self.mask_dtype = mask_dtype
         self.extension = extension
@@ -125,34 +80,6 @@ class BaseConverter():
         else:
             raise ValueError(
                 "padding must be a positive float or 'whole_image'")
-
-    def extract_volume_of_interest(self, study):
-        masks_list = list()
-        for f in study.mask_files:
-            if self.list_labels is None:
-                masks_list.extend([f.get_volume(label) for label in f.labels])
-            else:
-                label_intersection = list(
-                    set(f.labels) & set(self.list_labels))
-                if len(label_intersection) == 0:
-                    logger.warning(
-                        f"The label(s) {self.list_labels} was/were"
-                        f" not found in the file {f.dicom_paths[0]}")
-                for label in label_intersection:
-                    try:
-                        masks_list.append(f.get_volume(label))
-                    except EmptyContourException:
-                        continue
-        return masks_list
-
-    def get_bounding_box(self, masks_list, volumes_list):
-        bb = bb_union([mask.bb for mask in masks_list])
-
-        bb[:3] = bb[:3] - self.padding
-        bb[3:] = bb[3:] + self.padding
-
-        return bb_intersection([v.reference_frame.bb
-                                for v in volumes_list] + [bb])
 
     def get_path(self, volume, is_mask=False, ouput_folder=None):
         if is_mask:
@@ -213,8 +140,7 @@ class BaseConverter():
             new_path = path.with_name(
                 path.name.replace('.' + self.extension, '') + '(' +
                 str(counter) + ')' + '.' + self.extension)
-        if self.converter_backend == 'sitk':
-            sitk.WriteImage(volume.sitk_image, str(new_path.resolve()))
+        sitk.WriteImage(volume.sitk_image, str(new_path.resolve()))
 
         if is_mask:
             return VolumeFile(
@@ -248,44 +174,10 @@ class NiftiConverter(BaseConverter):
         self.output_folder = Path(output_folder).resolve()
 
     def process_study(self, study, output_folder=None):
-        logger.debug(
-            f"Start of processing study for patient {study.patient_id}")
-        volume_results_list = list()
-        mask_results_list = list()
-        masks_list = self.extract_volume_of_interest(study)
-        volumes_list = list()
-        for f in study.volume_files:
-            try:
-                volumes_list.append(f.get_volume())
-            except PETUnitException as e:
-                print(e)
-                continue
-
-        if self.padding != 'whole_image':
-            bb = self.get_bounding_box(masks_list, volumes_list)
-        else:
-            # The image is not cropped
-            bb = None
-        masks_list = map(lambda v: self.mask_processor(v, bb), masks_list)
-        volumes_list = map(lambda v: self.volume_processor(v, bb),
-                           volumes_list)
-        for v in volumes_list:
-            volume_file = self.write(v,
-                                     is_mask=False,
-                                     dtype=self.volume_dtype,
-                                     output_folder=output_folder)
-            volume_results_list.append(VolumeResult(study, v,
-                                                    volume_file.path))
-
-        for v in masks_list:
-            volume_file = self.write(v,
-                                     is_mask=True,
-                                     dtype=self.mask_dtype,
-                                     output_folder=output_folder)
-            mask_results_list.append(MaskResult(study, v, volume_file.path))
-
-        logger.debug(f"End of processing study for patient {study.patient_id}")
-        return volume_results_list, mask_results_list
+        raise NotImplementedError("the nifticonverter is not finalized")
+        # logger.debug(
+        #     f"Start of processing study for patient {study.patient_id}")
+        # return 0
 
     def __call__(self, input_folder, output_folder=None):
         if output_folder is not None:
@@ -321,6 +213,16 @@ class ExtractorConverter(BaseConverter):
         self._additional_dicom_tags = additional_dicom_tags
         self.core = None  # TODO: fix multiprocessing
         self.all_image_mask_combination = all_image_mask_combination
+        self._combine_segmentation = False
+
+    @property
+    def combine_segmentation(self):
+        return self._combine_segmentation
+
+    @combine_segmentation.setter
+    def combine_segmentation(self, cond):
+        self._additional_dicom_tags = cond
+        self.study_processor.combine_segmentation = cond
 
     @property
     def additional_dicom_tags(self):
@@ -353,104 +255,44 @@ class ExtractorConverter(BaseConverter):
             submodalities=params["general"].get("submodalities", False),
         )
 
-        volume_processor = VolumeProcessorStack.from_params(
-            params["volume_preprocessing"])
-
         mask_processor = VolumeProcessorStack.from_params(
             params["mask_preprocessing"])
+
+        volume_processor = VolumeProcessorStack.from_params(
+            params["volume_preprocessing"], mask_resampler=mask_processor)
+
+        study_processor = StudyProcessor(
+            volume_processor=volume_processor,
+            mask_processor=mask_processor,
+            padding=params["general"].get("padding", 10),
+            combine_segmentation=params["general"].get("combine_segmentation",
+                                                       False),
+        )
 
         okapy_extractors = OkapyExtractors(params["feature_extraction"])
 
         return ExtractorConverter(
             dicom_walker=dicom_walker,
-            volume_processor=volume_processor,
-            mask_processor=mask_processor,
+            study_processor=study_processor,
             okapy_extractors=okapy_extractors,
             additional_dicom_tags=additional_dicom_tags,
         )
 
-    def get_empty_results_df(self):
-        if self.result_format == "mutltiindex":
-            return pd.DataFrame(
-                index=pd.MultiIndex(levels=[[], []],
-                                    codes=[[], []],
-                                    names=["patient_id", "VOI"]),
-                columns=pd.MultiIndex(levels=[[], []],
-                                      codes=[[], []],
-                                      names=["modality", "features"]))
-        elif self.result_format == "long":
-            return pd.DataFrame()
-
-    def extract_volume_of_interest(self, study, labels=None):
-        masks_list = list()
-        for f in study.mask_files:
-            if labels is None:
-                masks_list.extend([f.get_volume(label) for label in f.labels])
-            else:
-                label_intersection = list(set(f.labels) & set(labels))
-                for label in label_intersection:
-                    try:
-                        masks_list.append(f.get_volume(label))
-                    except EmptyContourException:
-                        continue
-        return masks_list
-
-    def _image_mask_pairs(self, images, masks):
-        if self.all_image_mask_combination:
-            return product(images, masks)
-        else:
-            return [(i, m) for i, m in product(images, masks)
-                    if i.series_instance_uid ==
-                    m.reference_dicom_header.series_instance_uid]
-
     def process_study(self, study, labels=None):
-        if not self.all_image_mask_combination:
-            study.discard_unmatched_volumes()
-        masks_list = self.extract_volume_of_interest(study, labels=labels)
-        if not masks_list:
-            raise MissingSegmentationException(
-                f"No segmentation found for study with"
-                f" StudyInstanceUID {study.study_instance_uid}")
-        volumes_list = list()
-        for f in study.volume_files:
-            try:
-                volumes_list.append(f.get_volume())
-            except PETUnitException as e:
-                print(e)
-                continue
+        results_df = pd.DataFrame()
+        for volume, masks in self.study_processor(study, labels=labels):
+            volume = self.write(volume, output_folder=self.output_folder)
+            for mask in masks:
+                mask = self.write(mask,
+                                  is_mask=True,
+                                  output_folder=self.output_folder)
+                result = self.okapy_extractors(volume.path,
+                                               mask.path,
+                                               modality=volume.modality)
+                for key, val in result.items():
+                    if "diagnostics" in key:
+                        continue
 
-        if self.padding != 'whole_image':
-            bb = self.get_bounding_box(masks_list, volumes_list)
-        else:
-            # The image is not cropped
-            bb = None
-        masks_list = list(
-            map(lambda v: self.mask_processor(v, bounding_box=bb), masks_list))
-        volumes_list = list(
-            map(lambda v: self.volume_processor(v, bounding_box=bb),
-                volumes_list))
-
-        volumes_list = list(
-            map(
-                lambda v: self.write(v, is_mask=False, dtype=self.volume_dtype
-                                     ), volumes_list))
-        masks_list = list(
-            map(lambda v: self.write(v, is_mask=True, dtype=self.mask_dtype),
-                masks_list))
-
-        results_df = self.get_empty_results_df()
-
-        for volume, mask in self._image_mask_pairs(volumes_list, masks_list):
-            result = self.okapy_extractors(volume.path,
-                                           mask.path,
-                                           modality=volume.modality)
-            for key, val in result.items():
-                if "diagnostics" in key:
-                    continue
-                if self.result_format == "multiindex":
-                    results_df.loc[(study.patient_id, mask.label),
-                                   (volume.modality, key)] = val
-                elif self.result_format == "long":
                     result_dict = {
                         "patient_id": study.patient_id,
                         "modality": volume.modality,
