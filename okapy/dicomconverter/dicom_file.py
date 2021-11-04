@@ -186,12 +186,12 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
             for ind in range(len(self.slices) - 1)
         ])
-        self.slice_spacing = mode(self.d_slices)
+        self.slice_spacing = mode(np.round(self.d_slices, decimals=5))
 
         self.expected_n_slices = self._check_missing_slices()
         slice_shape = (slices[0].pixel_array.shape[1],
                        slices[0].pixel_array.shape[0])
-        self._reference_frame = ReferenceFrame(
+        self._reference_frame = ReferenceFrame.from_slice_info(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,

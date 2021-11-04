@@ -1,3 +1,5 @@
+from copy import copy
+
 from okapy.exceptions import MissingSegmentationException
 import yaml
 import numpy as np
@@ -103,8 +105,8 @@ class MaskedStandardizer(VolumeProcessor, name="masked_standardizer"):
         if mask is None:
             raise MissingSegmentationException(
                 f"The label was {self.mask_labe} was not found")
-        return self.mask_resampler(mask,
-                                   reference_frame=reference_frame).array != 0
+        return self.mask_resampler(
+            mask, new_reference_frame=reference_frame).array != 0
 
     def process(self, volume, mask_files=None, **kwargs):
         array = volume.array
@@ -119,44 +121,26 @@ class MaskedStandardizer(VolumeProcessor, name="masked_standardizer"):
 
 class BSplineResampler(VolumeProcessor, name="bspline_resampler"):
     def __init__(self,
-                 resampling_spacing=(1, 1, 1),
+                 resampling_spacing=None,
                  order=3,
                  mode="mirror",
                  cval=0,
+                 diagonalize_reference_frame=False,
                  **kwargs):
-        self.resampling_spacing = resampling_spacing
+        self.resampling_spacing = np.array(
+            resampling_spacing) if resampling_spacing is not None else None
         self.order = order
         self.mode = mode
         self.cval = cval
+        self.diagonalize_reference_frame = diagonalize_reference_frame
 
-    def _get_new_reference_frame(self,
-                                 bounding_box=None,
-                                 resampling_spacing=None,
-                                 reference_frame=None):
-        if reference_frame is not None:
-            return reference_frame
-
-        if resampling_spacing is None:
-            resampling_spacing = self.resampling_spacing
-        bounding_box = np.array(bounding_box)
-        output_shape = np.ceil((bounding_box[3:] - bounding_box[:3]) /
-                               resampling_spacing).astype(int)
-        return ReferenceFrame.get_diagonal_reference_frame(
-            pixel_spacing=resampling_spacing,
-            origin=bounding_box[:3],
-            shape=output_shape,
-        )
-
-    def process(self,
-                volume,
-                bounding_box=None,
-                resampling_spacing=None,
-                reference_frame=None,
-                **kwargs):
-        new_reference_frame = self._get_new_reference_frame(
-            bounding_box=bounding_box,
-            resampling_spacing=resampling_spacing,
-            reference_frame=reference_frame)
+    def process(self, volume, new_reference_frame=None, **kwargs):
+        new_reference_frame = copy(new_reference_frame)
+        if self.resampling_spacing is not None:
+            new_resampling_spacing = np.where(
+                self.resampling_spacing > 0, self.resampling_spacing,
+                volume.reference_frame.voxel_spacing)
+            new_reference_frame.voxel_spacing = new_resampling_spacing
         matrix = np.dot(volume.reference_frame.inv_coordinate_matrix,
                         new_reference_frame.coordinate_matrix)
 
