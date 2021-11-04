@@ -191,7 +191,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         self.expected_n_slices = self._check_missing_slices()
         slice_shape = (slices[0].pixel_array.shape[1],
                        slices[0].pixel_array.shape[0])
-        self._reference_frame = ReferenceFrame(
+        self._reference_frame = ReferenceFrame.from_slice_info(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,

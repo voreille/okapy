@@ -21,7 +21,6 @@ volume_preprocessing:
 mask_preprocessing:
   default:
     binary_bspline_resampler:
-      resampling_spacing: [1.0, 1.0, 1.0]
       order: 3
 
 feature_extraction:

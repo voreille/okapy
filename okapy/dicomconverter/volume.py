@@ -60,43 +60,57 @@ class ReferenceFrame():
     def __init__(
         self,
         origin=None,
+        orientation_matrix=None,
+        voxel_spacing=None,
+        last_point_coordinate=None,
+    ):
+        super().__init__()
+        self.origin = np.array(origin)
+        self.orientation_matrix = np.array(orientation_matrix)
+        self.voxel_spacing = np.array(voxel_spacing)
+        self.last_point_coordinate = np.array(last_point_coordinate)
+
+    @staticmethod
+    def from_slice_info(
+        origin=None,
         origin_last_slice=None,
         orientation=None,
         pixel_spacing=None,
         shape=None,
     ):
-        super().__init__()
-        self.origin = origin
-        self.origin_last_slice = origin_last_slice
         n = np.cross(orientation[:3], orientation[3:])
-        self.orientation_matrix = np.stack(
-            [orientation[:3], orientation[3:], n], axis=-1)
-        self.pixel_spacing = pixel_spacing
-        self.shape = np.array(shape)
-        self.slice_spacing = np.dot(
-            np.array(self.origin_last_slice) - np.array(self.origin),
-            n) / (self.shape[2] - 1)
+        orientation_matrix = np.stack([orientation[:3], orientation[3:], n],
+                                      axis=-1)
+        slice_spacing = np.dot(
+            np.array(origin_last_slice) - np.array(origin), n) / (shape[2] - 1)
+        voxel_spacing = np.concatenate([pixel_spacing, [slice_spacing]])
+        matrix = np.zeros((4, 4))
+        matrix[:3, :3] = orientation_matrix * voxel_spacing
+        matrix[:3, 3] = origin
+        matrix[3, 3] = 1
+        return ReferenceFrame.from_coordinate_matrix(matrix, shape=shape)
 
     @staticmethod
     def from_coordinate_matrix(matrix, shape=None):
         origin = np.dot(matrix, [0, 0, 0, 1])[:3]
-        origin_last_slice = np.dot(matrix, [0, 0, shape[2] - 1, 1])[:3]
-        pixel_spacing = ReferenceFrame.get_voxel_spacing(matrix)[:2]
-        orientation = (matrix[:3, :2] / pixel_spacing).T.flatten()
+        voxel_spacing = ReferenceFrame.get_voxel_spacing(matrix)
+        orientation_matrix = matrix[:3, :3] / voxel_spacing
+        last_point_coordinate = np.dot(matrix,
+                                       np.array(shape + (1, )) -
+                                       (1, 1, 1, 0))[:3]
         return ReferenceFrame(origin=origin,
-                              origin_last_slice=origin_last_slice,
-                              orientation=orientation,
-                              pixel_spacing=pixel_spacing,
-                              shape=shape)
+                              orientation_matrix=orientation_matrix,
+                              voxel_spacing=voxel_spacing,
+                              last_point_coordinate=last_point_coordinate)
 
     @staticmethod
     def get_diagonal_reference_frame(
-            pixel_spacing=(1, 1, 1),
+            voxel_spacing=(1, 1, 1),
             origin=(0, 0, 0),
             shape=None,
     ):
         matrix = np.eye(4)
-        matrix[:3, :3] = matrix[:3, :3] * pixel_spacing
+        matrix[:3, :3] = matrix[:3, :3] * voxel_spacing
         matrix[:3, 3] = origin
         return ReferenceFrame.from_coordinate_matrix(matrix, shape=shape)
 
@@ -114,17 +128,17 @@ class ReferenceFrame():
         return np.array([delta_r, delta_c, delta_s])
 
     @property
-    def voxel_spacing(self):
-        return np.array(
-            [self.pixel_spacing[0], self.pixel_spacing[1], self.slice_spacing])
-
-    @property
     def coordinate_matrix(self):
         matrix = np.zeros((4, 4))
         matrix[:3, :3] = self.orientation_matrix * self.voxel_spacing
         matrix[:3, 3] = self.origin
         matrix[3, 3] = 1
         return matrix
+
+    @property
+    def shape(self):
+        return np.ceil(self.mm_to_vx(
+            self.last_point_coordinate)).astype(int) + 1
 
     @property
     def inv_coordinate_matrix(self):
@@ -184,10 +198,6 @@ class ReferenceFrame():
         return np.dot(self.inv_coordinate_matrix, list(a) + [1])[:3]
 
     def get_new_reference_frame(self, bb, new_voxel_spacing):
-        # You need to add one since the last pixel of the bb is in the domain
-        if bb is None:
-            bb = self.bounding_box
-
         output_shape = np.ceil(
             np.linalg.inv(self.coordinate_matrix[:3, :3]) @ (bb[3:] - bb[:3]) /
             new_voxel_spacing).astype(int)
@@ -240,8 +250,8 @@ class VolumeBase():
         sitk_image.SetSpacing(self.reference_frame.voxel_spacing)
         sitk_image.SetOrigin(self.reference_frame.origin)
         sitk_image.SetDirection(
-            self.reference_frame.coordinate_matrix[:3, :3].flatten() /
-            np.tile(self.reference_frame.voxel_spacing, 3))
+            self.reference_frame.orientation_matrix.flatten())
+
         return sitk_image
 
     def contains_bb(self, bb):

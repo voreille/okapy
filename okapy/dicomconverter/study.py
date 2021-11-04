@@ -1,3 +1,5 @@
+from os import stat
+from itertools import product
 from pathlib import Path
 import warnings
 import pickle
@@ -6,6 +8,7 @@ import logging
 import numpy as np
 
 from okapy.dicomconverter.dicom_file import DicomFileBase
+from okapy.dicomconverter.volume import ReferenceFrame
 from okapy.exceptions import (EmptyContourException,
                               MissingSegmentationException, NotHandledModality,
                               PETUnitException)
@@ -116,13 +119,41 @@ class StudyProcessor():
                         continue
         return masks_list
 
-    def _get_bounding_box(self, volume, masks_list):
-        bb = bb_union([mask.bb for mask in masks_list])
+    @staticmethod
+    def _project_bb(bb_vx, reference_frame, new_reference_frame):
+        points = [
+            np.array([pr, pc, ps, 1])
+            for pr, pc, ps in product(*zip(bb_vx[:3], bb_vx[3:]))
+        ]
+        projection_matrix = np.dot(new_reference_frame.inv_coordinate_matrix,
+                                   reference_frame.coordinate_matrix)
+        projected_points = np.stack(
+            [np.dot(projection_matrix, p)[:3] for p in points], axis=-1)
+        bb_proj = np.zeros((6, ))
+        bb_proj[:3] = np.min(projected_points, axis=-1)
+        bb_proj[3:] = np.max(projected_points, axis=-1)
+        return bb_proj
 
-        bb[:3] = bb[:3] - self.padding
-        bb[3:] = bb[3:] + self.padding
+    def _get_new_reference_frame(self, volume, masks_list):
+        bb_vx = bb_union([
+            self._project_bb(mask.bb_vx, mask.reference_frame,
+                             volume.reference_frame) for mask in masks_list
+        ])
 
-        return bb_intersection([volume.reference_frame.bb, bb])
+        bb_vx[:3] = (bb_vx[:3] -
+                     self.padding / volume.reference_frame.voxel_spacing)
+        bb_vx[3:] = (bb_vx[3:] +
+                     self.padding / volume.reference_frame.voxel_spacing)
+
+        bb_volume = np.concatenate([[0, 0, 0], volume.reference_frame.shape])
+        bb_vx = bb_intersection([bb_volume, bb_vx])
+
+        return ReferenceFrame(
+            origin=volume.reference_frame.vx_to_mm(bb_vx[:3]),
+            orientation_matrix=volume.reference_frame.orientation_matrix,
+            voxel_spacing=volume.reference_frame.voxel_spacing,
+            last_point_coordinate=volume.reference_frame.vx_to_mm(bb_vx[3:]),
+        )
 
     def __call__(self, study, labels=None):
         results = list()
@@ -154,17 +185,19 @@ class StudyProcessor():
                 print(e)
                 continue
 
-            bb = self._get_bounding_box(
-                volume, masks) if self.padding != 'whole_image' else None
+            new_reference_frame = self._get_new_reference_frame(volume, masks)
 
             logger.info(f"Preprocessing image {f.modality}")
-            volume = self.volume_processor(volume,
-                                           mask_files=mask_files,
-                                           bounding_box=bb)
+            volume = self.volume_processor(
+                volume,
+                mask_files=mask_files,
+                new_reference_frame=new_reference_frame)
             logger.info(f"Preprocessing VOIs for {f.modality} image")
             masks = [
-                self.mask_processor(m, reference_frame=volume.reference_frame)
-                for m in masks
+                self.mask_processor(
+                    m,
+                    new_reference_frame=volume.reference_frame,
+                ) for m in masks
             ]
 
             logger.info(f"Preprocessing of {f.modality} image is done.")
