@@ -476,11 +476,11 @@ class SegFile(MaskFile, name="SEG"):
         array = np.transpose(
             self.raw_volume.segment_data(self.label_to_num[label]), trans)
 
-        # TODO: Match image with tag (0008, 1115)
-
         return BinaryVolume(
             array,
             reference_frame=copy(self.reference_frame),
+            reference_modality=self.reference_image.modality,
+            modality="SEG",
             label=label,
             reference_dicom_header=self.reference_image.dicom_header,
             dicom_header=self.dicom_header)
@@ -617,7 +617,8 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
 
         return BinaryVolume(
             mask,
-            reference_frame=self.reference_frame,
+            reference_frame=copy(self.reference_frame),
             reference_dicom_header=self.reference_image.dicom_header,
+            reference_modality=self.reference_image.modality,
             label=label,
             dicom_header=self.dicom_header)

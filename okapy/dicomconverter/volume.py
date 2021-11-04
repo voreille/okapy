@@ -285,17 +285,20 @@ class BinaryVolume(VolumeBase):
                  *args,
                  label=None,
                  reference_dicom_header=None,
+                 reference_modality=None,
                  **kwargs):
         super().__init__(*args, **kwargs)
         self.array[self.array != 0] = 1
         self.reference_dicom_header = reference_dicom_header
         self.label = label
+        self.reference_modality = reference_modality
 
     def zeros_like(self):
         return BinaryVolume(array=np.zeros_like(self.array),
                             reference_frame=copy(self.reference_frame),
                             reference_dicom_header=self.reference_dicom_header,
                             dicom_header=self.dicom_header,
+                            modality=self.modality,
                             label=self.label)
 
     def __getattr__(self, name):
