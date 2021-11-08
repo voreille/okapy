@@ -621,4 +621,5 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             reference_dicom_header=self.reference_image.dicom_header,
             reference_modality=self.reference_image.modality,
             label=label,
+            modality="RTSTRUCT",
             dicom_header=self.dicom_header)
