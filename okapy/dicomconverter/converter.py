@@ -94,35 +94,35 @@ class BaseConverter():
     def _get_name_mask(self, volume):
         if self.naming == 0:
             return (f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
-                    f"{volume.Modality}__{volume.reference_Modality}"
+                    f"{volume.modality}__{volume.reference_modality}"
                     f".{self.extension}")
 
         elif self.naming == 1:
             return (f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
-                    f"{volume.Modality}__{volume.SeriesNumber}__"
-                    f"{volume.reference_Modality}"
+                    f"{volume.modality}__{volume.SeriesNumber}__"
+                    f"{volume.reference_modality}"
                     f"__{volume.reference_SeriesNumber}"
                     f".{self.extension}")
 
         elif self.naming == 2:
             return (
                 f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
-                f"{volume.Modality}__{volume.SeriesNumber}__"
-                f"{volume.reference_Modality}"
+                f"{volume.modality}__{volume.SeriesNumber}__"
+                f"{volume.reference_modality}"
                 f"__{volume.reference_SeriesNumber}__"
                 f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}"
                 f".{self.extension}")
 
     def _get_name_volume(self, volume):
         if self.naming == 0:
-            return (f"{volume.PatientID}__{volume.Modality}"
+            return (f"{volume.PatientID}__{volume.modality}"
                     f".{self.extension}")
         elif self.naming == 1:
-            return (f"{volume.PatientID}__{volume.Modality}__"
+            return (f"{volume.PatientID}__{volume.modality}__"
                     f"{volume.SeriesNumber}.{self.extension}")
         elif self.naming == 2:
             return (
-                f"{volume.PatientID}__{volume.Modality}__"
+                f"{volume.PatientID}__{volume.modality}__"
                 f"{volume.SeriesNumber}__"
                 f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}"
                 f".{self.extension}")
@@ -283,6 +283,7 @@ class ExtractorConverter(BaseConverter):
         for volume, masks in self.study_processor(study, labels=labels):
             volume = self.write(volume, output_folder=self.output_folder)
             for mask in masks:
+                mask.reference_modality = volume.modality
                 mask = self.write(mask,
                                   is_mask=True,
                                   output_folder=self.output_folder)
