@@ -202,7 +202,7 @@ class ExtractorConverter(BaseConverter):
                  okapy_extractors=None,
                  result_format="long",
                  additional_dicom_tags=None,
-                 all_image_mask_combination=False,
+                 combine_segmentation=False,
                  **kwargs):
         super().__init__(**kwargs)
         self.okapy_extractors = okapy_extractors
@@ -212,8 +212,8 @@ class ExtractorConverter(BaseConverter):
         self.dicom_walker.additional_dicom_tags = additional_dicom_tags
         self._additional_dicom_tags = additional_dicom_tags
         self.core = None  # TODO: fix multiprocessing
-        self.all_image_mask_combination = all_image_mask_combination
         self._combine_segmentation = False
+        self.combine_segmentation = combine_segmentation
 
     @property
     def combine_segmentation(self):
@@ -221,7 +221,7 @@ class ExtractorConverter(BaseConverter):
 
     @combine_segmentation.setter
     def combine_segmentation(self, cond):
-        self._additional_dicom_tags = cond
+        self._combine_segmentation = cond
         self.study_processor.combine_segmentation = cond
 
     @property
@@ -250,6 +250,9 @@ class ExtractorConverter(BaseConverter):
 
         additional_dicom_tags = params["general"].get("additional_dicom_tags",
                                                       [])
+        combine_segmentation = params["general"].get("combine_segmentation",
+                                                     False)
+
         dicom_walker = DicomWalker(
             additional_dicom_tags=additional_dicom_tags,
             submodalities=params["general"].get("submodalities", False),
@@ -265,8 +268,7 @@ class ExtractorConverter(BaseConverter):
             volume_processor=volume_processor,
             mask_processor=mask_processor,
             padding=params["general"].get("padding", 10),
-            combine_segmentation=params["general"].get("combine_segmentation",
-                                                       False),
+            combine_segmentation=combine_segmentation,
         )
 
         okapy_extractors = OkapyExtractors(params["feature_extraction"])
@@ -276,6 +278,7 @@ class ExtractorConverter(BaseConverter):
             study_processor=study_processor,
             okapy_extractors=okapy_extractors,
             additional_dicom_tags=additional_dicom_tags,
+            combine_segmentation=combine_segmentation,
         )
 
     def process_study(self, study, labels=None):

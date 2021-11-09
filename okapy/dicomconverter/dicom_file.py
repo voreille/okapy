@@ -595,11 +595,13 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             ],
                                   axis=0)
             rr, cc = polygon(vx_indices[:, 0], vx_indices[:, 1])
-            if (len(rr) < 0 and len(cc) < 0) or (np.max(rr) > mask.shape[0] or
-                                                 np.min(cc) > mask.shape[1]):
-                raise Exception(f"The RTSTRUCT file is compromised, "
-                                f"it seems that the contour with "
-                                f"label {label} is out of bound")
+            if len(rr) > 0 and len(cc) > 0:
+                if (np.min(rr) < 0 or np.min(cc) < 0
+                        or np.max(rr) > mask.shape[0]
+                        or np.min(cc) > mask.shape[1]):
+                    raise Exception(f"The RTSTRUCT file is compromised, "
+                                    f"it seems that the contour with "
+                                    f"label {label} is out of bound")
 
             mask[rr, cc, np.round(vx_indices[0, 2]).astype(int)] = 1
         return mask
@@ -621,4 +623,5 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             reference_dicom_header=self.reference_image.dicom_header,
             reference_modality=self.reference_image.modality,
             label=label,
+            modality="RTSTRUCT",
             dicom_header=self.dicom_header)
