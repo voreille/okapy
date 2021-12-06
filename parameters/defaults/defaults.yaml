@@ -173,8 +173,8 @@ feature_extraction:
           binWidth: 20
           voxelArrayShift: 1000
           label: 1
-  # common:
-  #   riesz:
-  #     extractor0:
-  #       RieszOrder: 1
-  #       RieszScales: 4
+  common:
+    riesz:
+      extractor0:
+        RieszOrder: 1
+        RieszScales: 4
