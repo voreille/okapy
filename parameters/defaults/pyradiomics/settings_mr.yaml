@@ -1,0 +1,7 @@
+normalize: true
+normalizeScale: 100 # This allows you to use more or less the same bin width.
+binWidth: 5
+voxelArrayShift: 300
+label: 1
+
+

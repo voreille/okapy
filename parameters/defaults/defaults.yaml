@@ -1,6 +1,7 @@
 general:
   padding: 10
   submodalities: True
+  combine_segmentation: False
   result_format: "long"
   additional_dicom_tags:
     - "SeriesInstanceUID"
@@ -10,12 +11,6 @@ volume_preprocessing:
     bspline_resampler:
       resampling_spacing: [1.0, 1.0, 1.0]
       order: 3
-  CT:
-    standardizer:
-      threshold: 0.5
-  PET:
-    standardizer:
-      threshold: 0.5
   default:
 
 mask_preprocessing:

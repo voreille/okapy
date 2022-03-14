@@ -6,7 +6,6 @@ from shutil import rmtree
 from multiprocessing import Pool
 import logging
 
-import yaml
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
@@ -16,6 +15,7 @@ from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.volume_processor import VolumeProcessorStack
 from okapy.dicomconverter.study import StudyProcessor
 from okapy.featureextractor.featureextractor import OkapyExtractors
+import okapy.yaml.yaml as yaml
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
@@ -246,7 +246,7 @@ class ExtractorConverter(BaseConverter):
             params = params_path
         else:
             with open(params_path, 'r') as f:
-                params = yaml.safe_load(f)
+                params = yaml.load(f)
 
         additional_dicom_tags = params["general"].get("additional_dicom_tags",
                                                       [])
