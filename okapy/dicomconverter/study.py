@@ -140,10 +140,12 @@ class StudyProcessor():
                              volume.reference_frame) for mask in masks_list
         ])
 
-        bb_vx[:3] = (bb_vx[:3] -
-                     self.padding / volume.reference_frame.voxel_spacing)
-        bb_vx[3:] = (bb_vx[3:] +
-                     self.padding / volume.reference_frame.voxel_spacing)
+        bb_vx[:3] = (
+            bb_vx[:3] -
+            np.round(self.padding / volume.reference_frame.voxel_spacing))
+        bb_vx[3:] = (
+            bb_vx[3:] +
+            np.round(self.padding / volume.reference_frame.voxel_spacing))
 
         bb_volume = np.concatenate([[0, 0, 0], volume.reference_frame.shape])
         bb_vx = bb_intersection([bb_volume, bb_vx])

@@ -1,4 +1,4 @@
-import os
+from re import M
 import subprocess
 import json
 import six
@@ -11,6 +11,9 @@ import logging
 
 import numpy as np
 import SimpleITK as sitk
+import pandas as pd
+
+from okapy.utils import make_temp_directory
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
@@ -21,8 +24,14 @@ try:
 except ImportError:
     logger.warning("Pyradiomics is not installed")
 
+try:
+    from zrad.interface import compute_zrad_features
+except ImportError:
+    logger.warning("Zrad is not installed")
+
 
 class OkapyExtractors():
+
     def __init__(self, params_path):
         if type(params_path) == dict:
             params = params_path
@@ -72,28 +81,12 @@ def create_extractor(modality=None,
             return FeatureExtractorPyradiomics(name=name, params=params)
     elif extractor_type == "riesz":
         return RieszFeatureExtractor(name=name, params=params)
-
+    elif extractor_type == "zrad":
+        return ZradFeatureExtractor(name=name,
+                                    params=params,
+                                    modality=modality)
     else:
         raise ValueError(f"The type {extractor_type} is not recongised")
-
-
-def to_np(image):
-    return np.transpose(sitk.GetArrayFromImage(image), (2, 1, 0))
-
-
-def ellipsoid_window(radius):
-    neighborhood = np.zeros((
-        2 * radius[0] + 1,
-        2 * radius[1] + 1,
-        2 * radius[2] + 1,
-    ))
-    x = np.arange(-radius[0], radius[0] + 1)
-    y = np.arange(-radius[1], radius[1] + 1)
-    z = np.arange(-radius[2], radius[2] + 1)
-    x, y, z = np.meshgrid(x, y, z, indexing='ij')
-    neighborhood[x**2 / radius[0]**2 + y**2 / radius[1]**2 +
-                 z**2 / radius[2]**2 <= 1] = 1
-    return neighborhood
 
 
 def check_image(image):
@@ -108,6 +101,7 @@ def check_image(image):
 
 
 class FeatureExtractor(ABC):
+
     @abstractmethod
     def __init__(self, name="", params=None):
         self.name = name
@@ -117,8 +111,13 @@ class FeatureExtractor(ABC):
     def __call__(self, image, mask):
         pass
 
+    @staticmethod
+    def to_np(image):
+        return np.transpose(sitk.GetArrayFromImage(image), (2, 1, 0))
+
 
 class FeatureExtractorPyradiomics(FeatureExtractor):
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.radiomics_extractor = RadiomicsFeatureExtractor(
@@ -132,8 +131,24 @@ class FeatureExtractorPyradiomics(FeatureExtractor):
 
 
 class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
+    @staticmethod
+    def ellipsoid_window(radius):
+        neighborhood = np.zeros((
+            2 * radius[0] + 1,
+            2 * radius[1] + 1,
+            2 * radius[2] + 1,
+        ))
+        x = np.arange(-radius[0], radius[0] + 1)
+        y = np.arange(-radius[1], radius[1] + 1)
+        z = np.arange(-radius[2], radius[2] + 1)
+        x, y, z = np.meshgrid(x, y, z, indexing='ij')
+        neighborhood[x**2 / radius[0]**2 + y**2 / radius[1]**2 +
+                     z**2 / radius[2]**2 <= 1] = 1
+        return neighborhood
 
     @staticmethod
     def translate_radiomics_output(results):
@@ -147,8 +162,8 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
     @staticmethod
     def pet_features(image, mask, threshold=0.4, relative=True):
 
-        np_image = to_np(image)
-        np_mask = to_np(mask)
+        np_image = FeatureExtractor.to_np(image)
+        np_mask = FeatureExtractor.to_np(mask)
         spacing = np.array(image.GetSpacing())
         positions = np.where(np_mask != 0)
         if threshold != 0:
@@ -180,7 +195,8 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
                                         pos_max[2] - radius[2]:pos_max[2] +
                                         radius[2] + 1, ]
             # it's an ellipsoid since isotropy is not assumed
-            spherical_mask = ellipsoid_window(radius)
+            spherical_mask = FeatureExtractorPyradiomicsPT.ellipsoid_window(
+                radius)
             try:
                 suv_peak = np.mean(max_neighborhood[spherical_mask != 0])
             except IndexError:
@@ -226,6 +242,7 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
 
 
 class RieszFeatureExtractor(FeatureExtractor):
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -248,4 +265,35 @@ class RieszFeatureExtractor(FeatureExtractor):
         output_lines = output.splitlines()
         results = json.loads(output_lines[-1])
 
+        return results
+
+
+class ZradFeatureExtractor(FeatureExtractor):
+
+    def __init__(self, modality=None, **kwargs):
+        super().__init__(**kwargs)
+        if modality == "PT":
+            self.modality = "PET"
+        else:
+            self.modality = modality
+
+    def __call__(self, images_path, labels_path):
+        with make_temp_directory() as output_dir:
+            path_to_features = compute_zrad_features(
+                images_path,
+                labels_path,
+                self.modality,
+                output_dir,
+                patient_id='xx',
+                save_name='patient',  # only for tmp output in p_out
+                **self.params,
+            )
+
+            results = pd.read_csv(path_to_features,
+                                  delimiter="\t",
+                                  index_col=False)
+
+        results = results.drop(["patient", "organ"], axis=1)
+        results = results.to_dict("records")[0]
+        results = {"zrad_" + k: i for k, i in results.items()}
         return results

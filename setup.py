@@ -15,6 +15,12 @@ requirements = [
     "pydicom_seg",
     "scikit-image",
     "pandas",
+    "numpy",
+    "click",
+    "tqdm",
+    "pyyaml",
+    "SimpleITK",
+    "pyradiomics",
 ],
 
 setup_requirements = []
@@ -33,6 +39,7 @@ setup(
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
         'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
     ],
     description=
     "toolbox for biomedical analysis from preprocessing to model evaluation",
