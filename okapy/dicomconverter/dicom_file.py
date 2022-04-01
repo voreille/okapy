@@ -1,7 +1,12 @@
+"""
+TODO: check NumberOfSlices as dicom tag
+"""
+
 from copy import copy
 from datetime import time, datetime
 import logging
 from statistics import mode
+from tracemalloc import stop
 
 import numpy as np
 import pydicom as pdcm
@@ -111,21 +116,90 @@ class DicomFileBase():
 
 
 class DicomFileImageBase(DicomFileBase, name="image_base"):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def get_physical_values(self):
         raise NotImplementedError('This is an abstract class')
 
-    def read(self, stop_before_pixel=False):
+    def read_without_pixel(self):
         if type(self.dicom_paths[0]) == FileDataset:
             slices = self.dicom_paths
         else:
             slices = [
-                pdcm.filereader.dcmread(dcm,
-                                        stop_before_pixels=stop_before_pixel)
+                pdcm.filereader.dcmread(dcm, stop_before_pixels=True)
                 for dcm in self.dicom_paths
             ]
+        image_orientation = slices[0].ImageOrientationPatient
+        n = np.cross(image_orientation[:3], image_orientation[3:])
+
+        orthogonal_positions = [
+            np.dot(n, np.asarray(x.ImagePositionPatient)) for x in slices
+        ]
+        # Sort the slices accordind to orthogonal_postions,
+        slices_pos = list(zip(slices, orthogonal_positions))
+        slices_pos.sort(key=lambda x: x[1])
+        slices, orthogonal_positions = zip(*slices_pos)
+        # Check shape consistency
+        columns = [s.Columns for s in slices]
+        val, counts = np.unique(columns, return_counts=True)
+        valcounts = list(zip(val, counts))
+        valcounts.sort(key=lambda x: x[1])
+        val, counts = zip(*valcounts)
+        ind2rm = [
+            ind for ind in range(len(slices))
+            if slices[ind].Columns in val[:-1]
+        ]
+
+        if len(ind2rm) > 0:
+            slices = [k for i, k in enumerate(slices) if i not in ind2rm]
+            orthogonal_positions = [
+                k for i, k in enumerate(orthogonal_positions)
+                if i not in ind2rm
+            ]
+
+        rows = [s.Rows for s in slices]
+        val, counts = np.unique(rows, return_counts=True)
+        valcounts = list(zip(val, counts))
+        valcounts.sort(key=lambda x: x[1])
+        val, counts = zip(*valcounts)
+        ind2rm = [
+            ind for ind in range(len(slices))
+            if slices[ind].Columns in val[:-1]
+        ]
+
+        if len(ind2rm) > 0:
+            slices = [k for i, k in enumerate(slices) if i not in ind2rm]
+            orthogonal_positions = [
+                k for i, k in enumerate(orthogonal_positions)
+                if i not in ind2rm
+            ]
+
+        # Compute redundant slice positions and possibly weird slice
+        ind2rm = [
+            ind for ind in range(len(orthogonal_positions))
+            if orthogonal_positions[ind] == orthogonal_positions[ind - 1]
+        ]
+        # Check if there is redundancy in slice positions and remove them
+        if len(ind2rm) > 0:
+            slices = [k for i, k in enumerate(slices) if i not in ind2rm]
+
+        self.slices = slices
+        self.orthogonal_positions = orthogonal_positions
+        self.d_slices = np.array([
+            self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
+            for ind in range(len(self.slices) - 1)
+        ])
+        self.slice_spacing = mode(np.round(self.d_slices, decimals=5))
+
+        self.expected_n_slices = self._check_missing_slices()
+
+    def read(self):
+        if type(self.dicom_paths[0]) == FileDataset:
+            slices = self.dicom_paths
+        else:
+            slices = [pdcm.filereader.dcmread(dcm) for dcm in self.dicom_paths]
         image_orientation = slices[0].ImageOrientationPatient
         n = np.cross(image_orientation[:3], image_orientation[3:])
 
@@ -211,7 +285,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         n_missing_slices = np.sum(condition_missing_slice)
         if n_missing_slices == 1:
             # If only one slice is missing
-            logger.warning(f"One slice is missing, we replaced "
+            logger.warning(f"One slice is missing, we will soon replace "
                            f"it by linear interpolation for patient"
                            f"{self.dicom_header.PatientID}")
             logger.warning(f"One slice is missing, "
@@ -255,6 +329,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
 
 class DicomFileCT(DicomFileImageBase, name="CT"):
+
     def get_physical_values(self):
         image = list()
         for s in self.slices:
@@ -265,6 +340,7 @@ class DicomFileCT(DicomFileImageBase, name="CT"):
 
 
 class DicomFileMR(DicomFileImageBase, name="MR"):
+
     def get_physical_values(self):
         image = list()
         for s in self.slices:
@@ -273,6 +349,7 @@ class DicomFileMR(DicomFileImageBase, name="MR"):
 
 
 class DicomFilePT(DicomFileImageBase, name="PT"):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -392,6 +469,7 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
 
 
 class MaskFile(DicomFileBase, name="mask_base"):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._labels = None
@@ -404,6 +482,7 @@ class MaskFile(DicomFileBase, name="mask_base"):
 
 
 class SegFile(MaskFile, name="SEG"):
+
     def __init__(self, *args, reference_image=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.raw_volume = None
@@ -487,6 +566,7 @@ class SegFile(MaskFile, name="SEG"):
 
 
 class RtstructFile(MaskFile, name="RTSTRUCT"):
+
     def __init__(self,
                  *args,
                  reference_image=None,
