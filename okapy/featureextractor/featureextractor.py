@@ -1,3 +1,4 @@
+from calendar import month_abbr
 from re import M
 import subprocess
 import json
@@ -39,7 +40,7 @@ class OkapyExtractors():
             with open(params_path, 'r') as f:
                 params = yaml.safe_load(f)
         self.feature_extractors = dict()
-        self.default_extractor = FeatureExtractorPyradiomics()
+        self.default_extractor = FeatureExtractorPyradiomics(name="DEFAULT")
         for modality, sub_dict in params.items():
             self.feature_extractors[modality] = list()
             for extractor_type, list_extractors in sub_dict.items():
@@ -52,9 +53,9 @@ class OkapyExtractors():
                 ])
 
     @staticmethod
-    def _update_results(image, mask, extractor, results):
+    def _update_results(image, mask, extractor, results, modality=None):
         try:
-            results.update(extractor(image, mask))
+            results.update(extractor(image, mask, modality=modality))
         except Exception as e:
             logger.error(f"Features were not extracted for "
                          f"extractor {extractor.name}, image {image} "
@@ -64,9 +65,21 @@ class OkapyExtractors():
         results = OrderedDict()
         for extractor in self.feature_extractors.get(modality,
                                                      [self.default_extractor]):
-            OkapyExtractors._update_results(image, mask, extractor, results)
+            OkapyExtractors._update_results(
+                image,
+                mask,
+                extractor,
+                results,
+                modality=modality,
+            )
         for extractor in self.feature_extractors.get("common", []):
-            OkapyExtractors._update_results(image, mask, extractor, results)
+            OkapyExtractors._update_results(
+                image,
+                mask,
+                extractor,
+                results,
+                modality=modality,
+            )
         return results
 
 
@@ -82,9 +95,7 @@ def create_extractor(modality=None,
     elif extractor_type == "riesz":
         return RieszFeatureExtractor(name=name, params=params)
     elif extractor_type == "zrad":
-        return ZradFeatureExtractor(name=name,
-                                    params=params,
-                                    modality=modality)
+        return ZradFeatureExtractor(name=name, params=params)
     else:
         raise ValueError(f"The type {extractor_type} is not recongised")
 
@@ -102,13 +113,12 @@ def check_image(image):
 
 class FeatureExtractor(ABC):
 
-    @abstractmethod
     def __init__(self, name="", params=None):
         self.name = name
         self.params = params
 
     @abstractmethod
-    def __call__(self, image, mask):
+    def __call__(self, image, mask, modality=None):
         pass
 
     @staticmethod
@@ -124,6 +134,7 @@ class FeatureExtractorPyradiomics(FeatureExtractor):
             kwargs.get("params"))
 
     def __call__(self, image_path, mask_path, **kwargs):
+        kwargs = {k: i for k, i in kwargs.items() if k is not "modality"}
         image = check_image(image_path)
         mask = check_image(mask_path)
         results = self.radiomics_extractor.execute(image, mask, **kwargs)
@@ -216,7 +227,7 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
         })
 
     def __call__(self, image_path, mask_path, **kwargs):
-
+        kwargs = {k: i for k, i in kwargs.items() if k is not "modality"}
         if type(image_path) != sitk.SimpleITK.Image:
             image = sitk.ReadImage(str(image_path))
         else:
@@ -246,7 +257,7 @@ class RieszFeatureExtractor(FeatureExtractor):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def __call__(self, images_path, labels_path):
+    def __call__(self, image_path, labels_path, **kwargs):
 
         path_of_this_file = os.path.dirname(os.path.abspath(__file__))
         path_of_executable = os.path.join(path_of_this_file, 'matlab_bin/RieszExtractor')
@@ -254,7 +265,7 @@ class RieszFeatureExtractor(FeatureExtractor):
         completed_matlab_process = subprocess.run(
             [
                 path_of_executable,
-                images_path, labels_path,
+                image_path, labels_path,
                 json.dumps(self.params)
             ],
             stdout=subprocess.PIPE,
@@ -270,19 +281,14 @@ class RieszFeatureExtractor(FeatureExtractor):
 
 class ZradFeatureExtractor(FeatureExtractor):
 
-    def __init__(self, modality=None, **kwargs):
-        super().__init__(**kwargs)
-        if modality == "PT":
-            self.modality = "PET"
-        else:
-            self.modality = modality
-
-    def __call__(self, images_path, labels_path):
+    def __call__(self, images_path, labels_path, modality=None):
+        modality = modality[:2]
+        modality = modality.replace("PT", "PET")
         with make_temp_directory() as output_dir:
             path_to_features = compute_zrad_features(
                 images_path,
                 labels_path,
-                self.modality,
+                modality,
                 output_dir,
                 patient_id='xx',
                 save_name='patient',  # only for tmp output in p_out

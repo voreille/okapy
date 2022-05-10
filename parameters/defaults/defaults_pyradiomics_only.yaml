@@ -11,12 +11,6 @@ volume_preprocessing:
     bspline_resampler:
       resampling_spacing: [1.0, 1.0, -1.0]
       order: 3
-  CT:
-    standardizer:
-      threshold: 0.5
-  PET:
-    standardizer:
-      threshold: 0.5
   default:
 
 mask_preprocessing:

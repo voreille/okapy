@@ -1,7 +1,12 @@
+"""
+TODO: check NumberOfSlices as dicom tag
+"""
+
 from copy import copy
 from datetime import time, datetime
 import logging
 from statistics import mode
+from tracemalloc import stop
 
 import numpy as np
 import pydicom as pdcm
@@ -106,38 +111,47 @@ class DicomFileBase():
     @property
     def reference_frame(self):
         if self._reference_frame is None:
-            self.read(stop_before_pixel=False)
+            self.read()
         return self._reference_frame
 
 
 class DicomFileImageBase(DicomFileBase, name="image_base"):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
     def get_physical_values(self):
         raise NotImplementedError('This is an abstract class')
 
-    def read(self, stop_before_pixel=False):
+    def _check_dicom_paths(self):
         if type(self.dicom_paths[0]) == FileDataset:
             slices = self.dicom_paths
         else:
             slices = [
-                pdcm.filereader.dcmread(dcm,
-                                        stop_before_pixels=stop_before_pixel)
+                pdcm.filereader.dcmread(dcm, stop_before_pixels=True)
                 for dcm in self.dicom_paths
             ]
+        return slices, self.dicom_paths
+
+    def _sort_slices(self, slices, dicom_paths):
         image_orientation = slices[0].ImageOrientationPatient
         n = np.cross(image_orientation[:3], image_orientation[3:])
-
         orthogonal_positions = [
             np.dot(n, np.asarray(x.ImagePositionPatient)) for x in slices
         ]
         # Sort the slices accordind to orthogonal_postions,
-        slices_pos = list(zip(slices, orthogonal_positions))
-        slices_pos.sort(key=lambda x: x[1])
-        slices, orthogonal_positions = zip(*slices_pos)
+        slices_pos = list(zip(slices, dicom_paths, orthogonal_positions))
+        slices_pos.sort(key=lambda x: x[2])
+        slices, dicom_paths, orthogonal_positions = zip(*slices_pos)
+        return slices, dicom_paths, orthogonal_positions
+
+    def _check_shape_consistency(self,
+                                 slices,
+                                 dicom_paths,
+                                 orthogonal_positions,
+                                 dimension="Columns"):
         # Check shape consistency
-        columns = [s.Columns for s in slices]
+        columns = [getattr(s, dimension) for s in slices]
         val, counts = np.unique(columns, return_counts=True)
         valcounts = list(zip(val, counts))
         valcounts.sort(key=lambda x: x[1])
@@ -149,28 +163,17 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
         if len(ind2rm) > 0:
             slices = [k for i, k in enumerate(slices) if i not in ind2rm]
+            dicom_paths = [
+                k for i, k in enumerate(dicom_paths) if i not in ind2rm
+            ]
             orthogonal_positions = [
                 k for i, k in enumerate(orthogonal_positions)
                 if i not in ind2rm
             ]
 
-        rows = [s.Rows for s in slices]
-        val, counts = np.unique(rows, return_counts=True)
-        valcounts = list(zip(val, counts))
-        valcounts.sort(key=lambda x: x[1])
-        val, counts = zip(*valcounts)
-        ind2rm = [
-            ind for ind in range(len(slices))
-            if slices[ind].Columns in val[:-1]
-        ]
+        return slices, dicom_paths, orthogonal_positions
 
-        if len(ind2rm) > 0:
-            slices = [k for i, k in enumerate(slices) if i not in ind2rm]
-            orthogonal_positions = [
-                k for i, k in enumerate(orthogonal_positions)
-                if i not in ind2rm
-            ]
-
+    def _check_redundancy(self, slices, dicom_paths, orthogonal_positions):
         # Compute redundant slice positions and possibly weird slice
         ind2rm = [
             ind for ind in range(len(orthogonal_positions))
@@ -179,24 +182,15 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         # Check if there is redundancy in slice positions and remove them
         if len(ind2rm) > 0:
             slices = [k for i, k in enumerate(slices) if i not in ind2rm]
+            dicom_paths = [
+                k for i, k in enumerate(dicom_paths) if i not in ind2rm
+            ]
+            orthogonal_positions = [
+                k for i, k in enumerate(orthogonal_positions)
+                if i not in ind2rm
+            ]
 
-        self.slices = slices
-        self.orthogonal_positions = orthogonal_positions
-        self.d_slices = np.array([
-            self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
-            for ind in range(len(self.slices) - 1)
-        ])
-        self.slice_spacing = mode(np.round(self.d_slices, decimals=5))
-
-        self.expected_n_slices = self._check_missing_slices()
-        slice_shape = (slices[0].pixel_array.shape[1],
-                       slices[0].pixel_array.shape[0])
-        self._reference_frame = ReferenceFrame.from_slice_info(
-            origin=slices[0].ImagePositionPatient,
-            origin_last_slice=slices[-1].ImagePositionPatient,
-            orientation=slices[0].ImageOrientationPatient,
-            pixel_spacing=slices[0].PixelSpacing,
-            shape=slice_shape + (self.expected_n_slices, ))
+        return slices, dicom_paths, orthogonal_positions
 
     def _check_missing_slices(self):
         if self.slice_spacing == 0:
@@ -211,7 +205,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         n_missing_slices = np.sum(condition_missing_slice)
         if n_missing_slices == 1:
             # If only one slice is missing
-            logger.warning(f"One slice is missing, we replaced "
+            logger.warning(f"One slice is missing, we will soon replace "
                            f"it by linear interpolation for patient"
                            f"{self.dicom_header.PatientID}")
             logger.warning(f"One slice is missing, "
@@ -226,6 +220,58 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             expected_n_slices = len(self.slices)
 
         return expected_n_slices
+
+    def read(self):
+        slices, dicom_paths = self._check_dicom_paths()
+        slices, dicom_paths, orthogonal_positions = self._sort_slices(
+            slices, dicom_paths)
+
+        (
+            slices,
+            dicom_paths,
+            orthogonal_positions,
+        ) = self._check_shape_consistency(
+            slices,
+            dicom_paths,
+            orthogonal_positions,
+            dimension="Rows",
+        )
+        (
+            slices,
+            dicom_paths,
+            orthogonal_positions,
+        ) = self._check_shape_consistency(
+            slices,
+            dicom_paths,
+            orthogonal_positions,
+            dimension="Columns",
+        )
+        (
+            slices,
+            dicom_paths,
+            orthogonal_positions,
+        ) = self._check_redundancy(
+            slices,
+            dicom_paths,
+            orthogonal_positions,
+        )
+        self.slices = slices
+        self.dicom_paths = dicom_paths
+        self.orthogonal_positions = orthogonal_positions
+        self.d_slices = np.array([
+            self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
+            for ind in range(len(self.slices) - 1)
+        ])
+        self.slice_spacing = mode(np.round(self.d_slices, decimals=5))
+
+        self.expected_n_slices = self._check_missing_slices()
+        slice_shape = (slices[0].Rows, slices[0].Columns)  # TO CHECK
+        self._reference_frame = ReferenceFrame.from_slice_info(
+            origin=slices[0].ImagePositionPatient,
+            origin_last_slice=slices[-1].ImagePositionPatient,
+            orientation=slices[0].ImageOrientationPatient,
+            pixel_spacing=slices[0].PixelSpacing,
+            shape=slice_shape + (self.expected_n_slices, ))
 
     def _interp_missing_slice(self, image):
         mean_slice_spacing = np.mean(self.d_slices)
@@ -255,9 +301,11 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
 
 class DicomFileCT(DicomFileImageBase, name="CT"):
+
     def get_physical_values(self):
         image = list()
-        for s in self.slices:
+        for p in self.dicom_paths:
+            s = pdcm.read_file(p)
             image.append(
                 float(s.RescaleSlope) * s.pixel_array +
                 float(s.RescaleIntercept))
@@ -265,14 +313,17 @@ class DicomFileCT(DicomFileImageBase, name="CT"):
 
 
 class DicomFileMR(DicomFileImageBase, name="MR"):
+
     def get_physical_values(self):
         image = list()
-        for s in self.slices:
+        for p in self.dicom_paths:
+            s = pdcm.read_file(p)
             image.append(s.pixel_array)
         return np.stack(image, axis=-1)
 
 
 class DicomFilePT(DicomFileImageBase, name="PT"):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -366,7 +417,8 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
 
     def _get_suv_philips(self):
         image = list()
-        for s in self.slices:
+        for p in self.dicom_paths:
+            s = pdcm.read_file(p)
             im = (float(s.RescaleSlope) * s.pixel_array +
                   float(s.RescaleIntercept)) * float(s[0x70531000].value)
             image.append(im)
@@ -376,7 +428,8 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
         # Get SUV from raw PET
         image = list()
         patient_weight = self.patient_weight
-        for s in self.slices:
+        for p in self.dicom_paths:
+            s = pdcm.read_file(p)
             pet = float(s.RescaleSlope) * s.pixel_array + float(
                 s.RescaleIntercept)
             half_life = float(s.RadiopharmaceuticalInformationSequence[0].
@@ -392,6 +445,7 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
 
 
 class MaskFile(DicomFileBase, name="mask_base"):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._labels = None
@@ -404,6 +458,7 @@ class MaskFile(DicomFileBase, name="mask_base"):
 
 
 class SegFile(MaskFile, name="SEG"):
+
     def __init__(self, *args, reference_image=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.raw_volume = None
@@ -487,6 +542,7 @@ class SegFile(MaskFile, name="SEG"):
 
 
 class RtstructFile(MaskFile, name="RTSTRUCT"):
+
     def __init__(self,
                  *args,
                  reference_image=None,

@@ -20,82 +20,11 @@ mask_preprocessing:
       order: 3
 
 feature_extraction:
-  CT:
-    pyradiomics:
-      original:
-        imageType:
-          Original: {}
-        featureClass: !include pyradiomics/original_featureclass.yaml
-        setting: !include pyradiomics/settings_ct.yaml
-
-      log:
-        imageType:
-          LoG:
-            sigma: [1.0, 2.0, 3.0, 4.0, 5.0] # If you include sigma values >5, remember to also increase the padDistance.
-
-        featureClass:
-          firstorder:
-        setting: !include pyradiomics/settings_ct.yaml
-    zrad:
-      extractor0:
-        structure: "test"
-        n_bins: 5
-        bin_size:
-        compute_wavelet: False
-        outlier: False
-
-  PT:
-    pyradiomics:
-      original:
-        imageType:
-          Original: {}
-        featureClass: !include pyradiomics/original_featureclass.yaml
-        setting: !include pyradiomics/settings_pt.yaml
-
-      log:
-        imageType:
-          LoG:
-            sigma: [1.0, 2.0, 3.0, 4.0, 5.0] # If you include sigma values >5, remember to also increase the padDistance.
-
-        featureClass:
-          firstorder:
-        setting: !include pyradiomics/settings_pt.yaml
-
-    zrad:
-      extractor0:
-        structure: "test"
-        n_bins: 5
-        bin_size:
-        compute_wavelet: False
-        outlier: False
-
-  MR:
-    pyradiomics:
-      original:
-        imageType:
-          Original: {}
-        featureClass: !include pyradiomics/original_featureclass.yaml
-        setting: !include pyradiomics/settings_mr.yaml
-
-      log:
-        imageType:
-          LoG:
-            sigma: [1.0, 2.0, 3.0, 4.0, 5.0] # If you include sigma values >5, remember to also increase the padDistance.
-
-        featureClass:
-          firstorder:
-        setting: !include pyradiomics/settings_mr.yaml
-
-    zrad:
-      extractor0:
-        structure: "test"
-        n_bins: 5
-        bin_size:
-        compute_wavelet: False
-        outlier: False
-
   common:
-    riesz:
+    zrad:
       extractor0:
-        RieszOrder: 1
-        RieszScales: 4
+        structure: "test"
+        n_bins: 5
+        bin_size:
+        compute_wavelet: False
+        outlier: False
