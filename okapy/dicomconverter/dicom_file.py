@@ -1,7 +1,12 @@
+"""
+TODO: check NumberOfSlices as dicom tag
+"""
+
 from copy import copy
 from datetime import time, datetime
 import logging
 from statistics import mode
+from tracemalloc import stop
 
 import numpy as np
 import pydicom as pdcm
@@ -200,7 +205,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         n_missing_slices = np.sum(condition_missing_slice)
         if n_missing_slices == 1:
             # If only one slice is missing
-            logger.warning(f"One slice is missing, we replaced "
+            logger.warning(f"One slice is missing, we will soon replace "
                            f"it by linear interpolation for patient"
                            f"{self.dicom_header.PatientID}")
             logger.warning(f"One slice is missing, "
