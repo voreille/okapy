@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.volume_processor import VolumeProcessorStack
-from okapy.dicomconverter.study import StudyProcessor
+from okapy.dicomconverter.study import StudyProcessor, SimpleStudyProcessor
 from okapy.featureextractor.featureextractor import OkapyExtractors
 import okapy.yaml.yaml as yaml
 
@@ -165,10 +165,13 @@ class NiftiConverter(BaseConverter):
     def __init__(
         self,
         output_folder=".",
+        labels_startswith=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.output_folder = Path(output_folder).resolve()
+        self.study_processor = SimpleStudyProcessor()
+        self.labels_startswith = labels_startswith
 
     @staticmethod
     def from_params(params_path):
@@ -212,37 +215,37 @@ class NiftiConverter(BaseConverter):
         logger.debug(
             f"Start of processing study for patient {study.patient_id}")
         try:
-            volumes_masks = self.study_processor(study, labels=self.list_labels)
+            volumes, masks = self.study_processor(
+                study,
+                labels=self.list_labels,
+                labels_startswith=self.labels_startswith)
         except Exception as e:
-            raise e
-            # logger.error(f"Error while processing study {study.patient_id}"
-            #              f" error_message: \n{e}")
-            # return {
-            #     "patient_id": study.patient_id,
-            #     "study_id": study.study_instance_uid,
-            #     "status": str(e),
-            # }
-        for volume, masks in volumes_masks:
-            volume = self.write(volume, output_folder=output_folder)
-            for mask in masks:
-                mask.reference_modality = volume.modality
-                mask = self.write(mask,
-                                  is_mask=True,
-                                  output_folder=output_folder)
-        logger.debug(
-            f"Patient {study.patient_id} sucessfully processed")
-        return {
+            logger.error(f"Error while processing patient_id {study.patient_id}"
+                         f" error_message: {e}")
+            return {
                 "patient_id": study.patient_id,
                 "study_id": study.study_instance_uid,
-                "status": "OK",
+                "status": str(e),
             }
+        for volume in volumes:
+            volume = self.write(volume, output_folder=output_folder)
+
+        for mask in masks:
+            mask.reference_modality = volume.modality
+            mask = self.write(mask, is_mask=True, output_folder=output_folder)
+
+        logger.debug(f"Patient {study.patient_id} sucessfully processed")
+        return {
+            "patient_id": study.patient_id,
+            "study_id": study.study_instance_uid,
+            "status": "OK",
+        }
 
     def __call__(self, input_folder, output_folder=None):
         if output_folder is not None:
             self.output_folder = output_folder
 
-        # studies_list = self.dicom_walker(input_folder, cores=self.cores)
-        studies_list = self.dicom_walker(input_folder, cores=20)
+        studies_list = self.dicom_walker(input_folder, cores=self.cores)
         if self.cores:
             with Pool(self.cores) as p:
                 result = list(

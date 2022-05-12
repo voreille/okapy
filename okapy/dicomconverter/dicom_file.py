@@ -5,6 +5,7 @@ TODO: check NumberOfSlices as dicom tag
 from copy import copy
 from datetime import time, datetime
 import logging
+from re import U
 from statistics import mode
 from tracemalloc import stop
 
@@ -44,13 +45,43 @@ class DicomFileBase():
             raise NotHandledModality(f"The modality {name} is not handled.")
 
     @staticmethod
-    def from_dicom_paths(dicom_paths):
+    def _check_modality(dcm_header):
+        try:
+            units = dcm_header.Units
+        except AttributeError:
+            if dcm_header.Modality == "PT":
+                logger.warning(
+                    f"Units for series{dcm_header.SeriesInstanceUID} "
+                    f" is not present, since modality is PT we change it to CT"
+                    f" in hope that it will be right.")
+            return dcm_header.Modality if dcm_header.Modality != "PT" else "CT"
+
+        if (units in ["BQML", "CNTS"] and dcm_header.Modality != "PT"):
+            logger.warning(
+                f"Modality for series{dcm_header.SeriesInstanceUID} "
+                f"was changed from {dcm_header.Modality} to PT since the unit does not"
+                f" match the modality (unit was {dcm_header.Units})")
+            return "PT"
+        if units == "HU" and dcm_header.Modality != "CT":
+            logger.warning(
+                f"Modality for series{dcm_header.SeriesInstanceUID} "
+                f"was changed from {dcm_header.Modality} to CT since the unit does not"
+                f" match the modality (unit was {dcm_header.Units})")
+            return "CT"
+
+        return dcm_header.Modality
+
+    @staticmethod
+    def from_dicom_paths(dicom_paths, study=None, submodalities=False):
         if isinstance(dicom_paths[0], FileDataset):
-            modality = dicom_paths[0].Modality
+            modality = DicomFileBase._check_modality(dicom_paths[0])
         else:
-            modality = pdcm.filereader.dcmread(
-                dicom_paths[0], stop_before_pixels=True).Modality
-        return DicomFileBase.get(modality)(dicom_paths=dicom_paths)
+            modality = DicomFileBase._check_modality(
+                pdcm.filereader.dcmread(dicom_paths[0],
+                                        stop_before_pixels=True))
+        return DicomFileBase.get(modality)(dicom_paths=dicom_paths,
+                                           study=study,
+                                           submodalities=submodalities)
 
     def __init__(
         self,
@@ -67,7 +98,7 @@ class DicomFileBase():
         self.study = study
         self.slices = None
         self.additional_dicom_tags = additional_dicom_tags
-        self.modality = dicom_header.Modality
+        self.modality = self.name
         if submodalities:
             self.modality = self.modality + self._parse_submodalities()
 
@@ -116,7 +147,6 @@ class DicomFileBase():
 
 
 class DicomFileImageBase(DicomFileBase, name="image_base"):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -301,7 +331,6 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
 
 class DicomFileCT(DicomFileImageBase, name="CT"):
-
     def get_physical_values(self):
         image = list()
         for p in self.dicom_paths:
@@ -313,7 +342,6 @@ class DicomFileCT(DicomFileImageBase, name="CT"):
 
 
 class DicomFileMR(DicomFileImageBase, name="MR"):
-
     def get_physical_values(self):
         image = list()
         for p in self.dicom_paths:
@@ -323,7 +351,6 @@ class DicomFileMR(DicomFileImageBase, name="MR"):
 
 
 class DicomFilePT(DicomFileImageBase, name="PT"):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -365,7 +392,8 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
     def _acquistion_datetime(self):
         times = [
             datetime.strptime(
-                s[0x00080022].value + s[0x00080032].value.split('.')[0],
+                s[0x00080022].value +
+                s[0x00080032].value.split('.')[0].replace(":", ""),
                 "%Y%m%d%H%M%S") for s in self.slices
         ]
         times.sort()
@@ -445,7 +473,6 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
 
 
 class MaskFile(DicomFileBase, name="mask_base"):
-
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._labels = None
@@ -458,7 +485,6 @@ class MaskFile(DicomFileBase, name="mask_base"):
 
 
 class SegFile(MaskFile, name="SEG"):
-
     def __init__(self, *args, reference_image=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.raw_volume = None
@@ -542,7 +568,6 @@ class SegFile(MaskFile, name="SEG"):
 
 
 class RtstructFile(MaskFile, name="RTSTRUCT"):
-
     def __init__(self,
                  *args,
                  reference_image=None,

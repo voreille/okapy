@@ -21,6 +21,7 @@ DEFAULT_DICOM_TAGS = [
     "ImageType",
     "SeriesDate",
     "SeriesTime",
+    "Units",
 ]
 
 
@@ -37,6 +38,7 @@ class DicomHeader():
                  image_type=None,
                  series_date=None,
                  series_time=None,
+                 units=None,
                  additional_data=None):
         self.patient_id = patient_id
         self.patient_name = patient_name
@@ -49,10 +51,8 @@ class DicomHeader():
         self.image_type = image_type
         self.series_date = series_date
         self.series_time = series_time
-        if additional_data:
-            self.additional_data = additional_data
-        else:
-            self.additional_data = {}
+        self.units = units
+        self.additional_data = additional_data if additional_data else {}
 
         try:
             self.series_datetime = datetime.strptime(
