@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from doctest import ELLIPSIS_MARKER
 from pathlib import Path
 from functools import partial
 from tempfile import mkdtemp
@@ -223,8 +224,9 @@ class NiftiConverter(BaseConverter):
                 labels=self.list_labels,
                 labels_startswith=self.labels_startswith)
         except Exception as e:
-            logger.error(f"Error while processing patient_id {study.patient_id}"
-                         f" error_message: {e}")
+            logger.error(
+                f"Error while processing patient_id {study.patient_id}"
+                f" error_message: {e}")
             return {
                 "patient_id": study.patient_id,
                 "study_id": study.study_instance_uid,
@@ -417,10 +419,12 @@ class NiftiConverterSimple(BaseConverter):
         dicom_walker=None,
         volume_processor=None,
         mask_processor=None,
+        labels_startswith=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.output_folder = Path(output_folder).resolve()
+        self.labels_startswith = labels_startswith
 
         if dicom_walker is None:
             self.dicom_walker = DicomWalker()
@@ -438,7 +442,13 @@ class NiftiConverterSimple(BaseConverter):
                 volume = self.volume_processor(volume)
             volumes.append(self.write(volume, output_folder=output_folder))
         for f in study.mask_files:
-            labels = set(self.list_labels).intersection(f.labels)
+            if self.list_labels and self.labels_startswith is None:
+                labels = set(self.list_labels).intersection(f.labels)
+            if self.labels_startswith:
+                labels = [l for l in f.labels if l.startswith(self.labels_startswith)]
+            else:
+                labels = f.labels
+
             if len(labels) == 0:
                 continue
             for l in labels:
