@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 class VolumeFile():
+
     def __init__(self,
                  path=None,
                  dicom_header=None,
@@ -40,6 +41,7 @@ class VolumeFile():
 
 
 class BaseConverter():
+
     def __init__(
         self,
         padding=10,
@@ -165,39 +167,66 @@ class BaseConverter():
 
 
 class NiftiConverter(BaseConverter):
+
     def __init__(
         self,
         output_folder=".",
+        dicom_walker=None,
+        volume_processor=None,
+        mask_processor=None,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.output_folder = Path(output_folder).resolve()
 
+        if dicom_walker is None:
+            self.dicom_walker = DicomWalker()
+        else:
+            self.dicom_walker = dicom_walker
+        self.volume_processor = volume_processor
+        self.mask_processor = mask_processor
+
     def process_study(self, study, output_folder=None):
-        raise NotImplementedError("the nifticonverter is not finalized")
-        # logger.debug(
-        #     f"Start of processing study for patient {study.patient_id}")
-        # return 0
+        volumes = list()
+        masks = list()
+        for f in study.volume_files:
+            volume = f.get_volume()
+            if self.volume_processor:
+                volume = self.volume_processor(volume)
+            volumes.append(self.write(volume, output_folder=output_folder))
+        for f in study.mask_files:
+            labels = set(self.list_labels).intersection(f.labels)
+            if len(labels) == 0:
+                continue
+            for l in labels:
+                mask = f.get_volume(l)
+                if self.mask_processor:
+                    volume = self.mask_processor(mask)
+                masks.append(
+                    self.write(
+                        mask,
+                        output_folder=output_folder,
+                        is_mask=True,
+                    ))
+
+        return volumes, masks
 
     def __call__(self, input_folder, output_folder=None):
-        if output_folder is not None:
-            self.output_folder = output_folder
-
-        studies_list = self.dicom_walker(input_folder, cores=self.cores)
-        if self.cores:
-            with Pool(self.cores) as p:
-                result = list(
-                    tqdm(p.imap(self.process_study, studies_list),
-                         total=len(studies_list)))
-        else:
-            result = list()
-            for study in tqdm(studies_list):
-                result.append(self.process_study(study))
-
-        return result
+        if output_folder is None:
+            output_folder = self.output_folder
+        images = list()
+        masks = list()
+        for study in self.dicom_walker(input_folder, cores=self.cores):
+            logger.info(f"Processing study {study.patient_id}")
+            ims, ms = self.process_study(study, output_folder=output_folder)
+            images.extend(ims)
+            masks.extend(ms)
+            logger.info(f"Processing study {study.patient_id} - DONE")
+        return images, masks
 
 
 class ExtractorConverter(BaseConverter):
+
     def __init__(self,
                  okapy_extractors=None,
                  result_format="long",
@@ -339,3 +368,62 @@ class ExtractorConverter(BaseConverter):
             raise e
 
         return pd.concat(result_dfs, axis=0, ignore_index=True)
+
+
+class NiftiConverterSimple(BaseConverter):
+
+    def __init__(
+        self,
+        output_folder=".",
+        dicom_walker=None,
+        volume_processor=None,
+        mask_processor=None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.output_folder = Path(output_folder).resolve()
+
+        if dicom_walker is None:
+            self.dicom_walker = DicomWalker()
+        else:
+            self.dicom_walker = dicom_walker
+        self.volume_processor = volume_processor
+        self.mask_processor = mask_processor
+
+    def process_study(self, study, output_folder=None):
+        volumes = list()
+        masks = list()
+        for f in study.volume_files:
+            volume = f.get_volume()
+            if self.volume_processor:
+                volume = self.volume_processor(volume)
+            volumes.append(self.write(volume, output_folder=output_folder))
+        for f in study.mask_files:
+            labels = set(self.list_labels).intersection(f.labels)
+            if len(labels) == 0:
+                continue
+            for l in labels:
+                mask = f.get_volume(l)
+                if self.mask_processor:
+                    volume = self.mask_processor(mask)
+                masks.append(
+                    self.write(
+                        mask,
+                        output_folder=output_folder,
+                        is_mask=True,
+                    ))
+
+        return volumes, masks
+
+    def __call__(self, input_folder, output_folder=None):
+        if output_folder is None:
+            output_folder = self.output_folder
+        images = list()
+        masks = list()
+        for study in self.dicom_walker(input_folder, cores=self.cores):
+            logger.info(f"Processing study {study.patient_id}")
+            ims, ms = self.process_study(study, output_folder=output_folder)
+            images.extend(ims)
+            masks.extend(ms)
+            logger.info(f"Processing study {study.patient_id} - DONE")
+        return images, masks
