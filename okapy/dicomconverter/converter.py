@@ -57,12 +57,9 @@ class BaseConverter():
         self.padding = BaseConverter._check_padding(padding)
         self.list_labels = list_labels
         self.naming = naming
-        if dicom_walker is None:
-            # self.dicom_walker = DicomWalker()
-            self.dicom_walker = DicomWalker(cores=cores)
-        else:
-            self.dicom_walker = dicom_walker
-        self.study_processor = study_processor
+        self.dicom_walker = dicom_walker if dicom_walker else DicomWalker()
+        self.study_processor = (study_processor
+                                if study_processor else StudyProcessor())
         self.volume_dtype = volume_dtype
         self.mask_dtype = mask_dtype
         self.extension = extension
@@ -179,50 +176,92 @@ class NiftiConverter(BaseConverter):
         super().__init__(**kwargs)
         self.output_folder = Path(output_folder).resolve()
 
-        if dicom_walker is None:
-            self.dicom_walker = DicomWalker()
+    @staticmethod
+    def from_params(params_path):
+        if type(params_path) == dict:
+            params = params_path
         else:
-            self.dicom_walker = dicom_walker
-        self.volume_processor = volume_processor
-        self.mask_processor = mask_processor
+            with open(params_path, 'r') as f:
+                params = yaml.load(f)
+
+        additional_dicom_tags = params["general"].get("additional_dicom_tags",
+                                                      [])
+        combine_segmentation = params["general"].get("combine_segmentation",
+                                                     False)
+
+        dicom_walker = DicomWalker(
+            additional_dicom_tags=additional_dicom_tags,
+            submodalities=params["general"].get("submodalities", False),
+        )
+
+        mask_processor = VolumeProcessorStack.from_params(
+            params["mask_preprocessing"])
+
+        volume_processor = VolumeProcessorStack.from_params(
+            params["volume_preprocessing"], mask_resampler=mask_processor)
+
+        study_processor = StudyProcessor(
+            volume_processor=volume_processor,
+            mask_processor=mask_processor,
+            padding=params["general"].get("padding", 10),
+            combine_segmentation=combine_segmentation,
+        )
+
+        return NiftiConverter(
+            dicom_walker=dicom_walker,
+            study_processor=study_processor,
+            additional_dicom_tags=additional_dicom_tags,
+            combine_segmentation=combine_segmentation,
+        )
 
     def process_study(self, study, output_folder=None):
-        volumes = list()
-        masks = list()
-        for f in study.volume_files:
-            volume = f.get_volume()
-            if self.volume_processor:
-                volume = self.volume_processor(volume)
-            volumes.append(self.write(volume, output_folder=output_folder))
-        for f in study.mask_files:
-            labels = set(self.list_labels).intersection(f.labels)
-            if len(labels) == 0:
-                continue
-            for l in labels:
-                mask = f.get_volume(l)
-                if self.mask_processor:
-                    volume = self.mask_processor(mask)
-                masks.append(
-                    self.write(
-                        mask,
-                        output_folder=output_folder,
-                        is_mask=True,
-                    ))
-
-        return volumes, masks
+        logger.debug(
+            f"Start of processing study for patient {study.patient_id}")
+        try:
+            volumes_masks = self.study_processor(study, labels=self.list_labels)
+        except Exception as e:
+            raise e
+            # logger.error(f"Error while processing study {study.patient_id}"
+            #              f" error_message: \n{e}")
+            # return {
+            #     "patient_id": study.patient_id,
+            #     "study_id": study.study_instance_uid,
+            #     "status": str(e),
+            # }
+        for volume, masks in volumes_masks:
+            volume = self.write(volume, output_folder=output_folder)
+            for mask in masks:
+                mask.reference_modality = volume.modality
+                mask = self.write(mask,
+                                  is_mask=True,
+                                  output_folder=output_folder)
+        logger.debug(
+            f"Patient {study.patient_id} sucessfully processed")
+        return {
+                "patient_id": study.patient_id,
+                "study_id": study.study_instance_uid,
+                "status": "OK",
+            }
 
     def __call__(self, input_folder, output_folder=None):
-        if output_folder is None:
-            output_folder = self.output_folder
-        images = list()
-        masks = list()
-        for study in self.dicom_walker(input_folder, cores=self.cores):
-            logger.info(f"Processing study {study.patient_id}")
-            ims, ms = self.process_study(study, output_folder=output_folder)
-            images.extend(ims)
-            masks.extend(ms)
-            logger.info(f"Processing study {study.patient_id} - DONE")
-        return images, masks
+        if output_folder is not None:
+            self.output_folder = output_folder
+
+        # studies_list = self.dicom_walker(input_folder, cores=self.cores)
+        studies_list = self.dicom_walker(input_folder, cores=20)
+        if self.cores:
+            with Pool(self.cores) as p:
+                result = list(
+                    tqdm(p.imap(self.process_study, studies_list),
+                         total=len(studies_list)))
+        else:
+            result = list()
+            for study in tqdm(studies_list):
+                result.append(self.process_study(study))
+
+        logger.debug(
+            f"End of processing studies for {len(studies_list)} studies")
+        return result
 
 
 class ExtractorConverter(BaseConverter):

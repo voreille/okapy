@@ -98,11 +98,13 @@ class StudyProcessor():
         mask_processor=None,
         padding="whole_image",
         combine_segmentation=False,
+        only_segmented_image=False,
     ):
         self.volume_processor = volume_processor
         self.mask_processor = mask_processor
         self.padding = padding
         self.combine_segmentation = combine_segmentation
+        self.only_segmented_image = only_segmented_image
 
     @staticmethod
     def _extract_volume_of_interest(mask_files, labels=None):
@@ -168,7 +170,7 @@ class StudyProcessor():
                     m for m in study.mask_files if m.reference_image_uid ==
                     f.dicom_header.series_instance_uid
                 ]
-            if len(mask_files) == 0:
+            if len(mask_files) == 0 and self.only_segmented_image:
                 logger.warning(f"Discarding {f.dicom_header.Modality} "
                                f"image {f.dicom_header.SeriesInstanceUID} "
                                f"since no VOI was found")
@@ -176,7 +178,7 @@ class StudyProcessor():
 
             masks = self._extract_volume_of_interest(mask_files, labels=labels)
 
-            if len(masks) == 0:
+            if len(masks) == 0 and len(mask_files) > 0:
                 raise MissingSegmentationException(
                     f"No segmentation found for study with"
                     f" StudyInstanceUID {study.study_instance_uid}")
@@ -190,19 +192,77 @@ class StudyProcessor():
             new_reference_frame = self._get_new_reference_frame(volume, masks)
 
             logger.info(f"Preprocessing image {f.modality}")
-            volume = self.volume_processor(
-                volume,
-                mask_files=mask_files,
-                new_reference_frame=new_reference_frame)
+            if self.volume_processor:
+                volume = self.volume_processor(
+                    volume,
+                    mask_files=mask_files,
+                    new_reference_frame=new_reference_frame)
             logger.info(f"Preprocessing VOIs for {f.modality} image")
-            masks = [
-                self.mask_processor(
-                    m,
-                    new_reference_frame=volume.reference_frame,
-                ) for m in masks
-            ]
+            if self.mask_processor and len(masks) > 0:
+                masks = [
+                    self.mask_processor(
+                        m,
+                        new_reference_frame=volume.reference_frame,
+                    ) for m in masks
+                ]
 
             logger.info(f"Preprocessing of {f.modality} image is done.")
             results.append((volume, masks))
+
+        return results
+
+
+class SimpleStudyProcessor():
+    def __init__(self, volume_processor=None, mask_processor=None):
+        self.volume_processor = volume_processor
+        self.mask_processor = mask_processor
+
+    @staticmethod
+    def _extract_volume_of_interest(mask_files, labels=None):
+        masks_list = list()
+        for f in mask_files:
+            if labels is None:
+                masks_list.extend([f.get_volume(label) for label in f.labels])
+            else:
+                label_intersection = list(set(f.labels) & set(labels))
+                for label in label_intersection:
+                    try:
+                        masks_list.append(f.get_volume(label))
+                    except EmptyContourException:
+                        continue
+        return masks_list
+
+    def __call__(self, study, labels=None):
+        results = list()
+        volumes = list()
+        for f in study.volume_files:
+            try:
+                volume = f.get_volume()
+            except PETUnitException as e:
+                print(e)
+                continue
+
+            if self.volume_processor:
+                logger.info(f"Preprocessing image {f.modality}")
+                volume = self.volume_processor(
+                    volume,
+                    mask_files=mask_files,
+                    new_reference_frame=new_reference_frame)
+            volumes.append(volume)
+
+        mask_output = list()
+        for m in study.mask_files:
+            if self.mask_processor and len(masks) > 0:
+                logger.info(f"Preprocessing VOIs for {f.modality} image")
+                masks = [
+                    self.mask_processor(
+                        m,
+                        new_reference_frame=volume.reference_frame,
+                    ) for m in masks
+                ]
+            mask_output.extend(masks)
+
+        logger.info(f"Preprocessing of {f.modality} image is done.")
+        results.append((volume, masks))
 
         return results
