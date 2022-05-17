@@ -445,7 +445,10 @@ class NiftiConverterSimple(BaseConverter):
             if self.list_labels and self.labels_startswith is None:
                 labels = set(self.list_labels).intersection(f.labels)
             if self.labels_startswith:
-                labels = [l for l in f.labels if l.startswith(self.labels_startswith)]
+                labels = [
+                    label for label in f.labels
+                    if label.startswith(self.labels_startswith)
+                ]
             else:
                 labels = f.labels
 
