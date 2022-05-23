@@ -23,24 +23,6 @@ logging.basicConfig(level=logging.INFO, format=log_fmt)
 logger = logging.getLogger(__name__)
 
 
-class VolumeFile():
-
-    def __init__(self,
-                 path=None,
-                 dicom_header=None,
-                 modality=None,
-                 label=None,
-                 reference_dicom_header=None):
-        self.path = path
-        self.modality = modality
-        self.dicom_header = dicom_header
-        self.label = label
-        self.reference_dicom_header = reference_dicom_header
-
-    def __getattr__(self, name):
-        return getattr(self.dicom_header, name)
-
-
 class BaseConverter():
 
     def __init__(
@@ -143,7 +125,7 @@ class BaseConverter():
         sitk.WriteImage(volume.sitk_image, str(new_path.resolve()))
 
         if is_mask:
-            return VolumeFile(
+            return dict(
                 path=new_path,
                 dicom_header=volume.dicom_header,
                 modality=volume.modality,
@@ -151,9 +133,9 @@ class BaseConverter():
                 reference_dicom_header=volume.reference_dicom_header,
             )
         else:
-            return VolumeFile(path=new_path,
-                              modality=volume.modality,
-                              dicom_header=volume.dicom_header)
+            return dict(path=new_path,
+                        modality=volume.modality,
+                        dicom_header=volume.dicom_header)
 
     @abstractmethod
     def process_study(self, study, output_folder=None):
