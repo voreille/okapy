@@ -9,6 +9,7 @@ from okapy.dicomconverter.volume import ReferenceFrame
 
 
 class VolumeProcessorStack():
+
     def __init__(self, stacks=None):
         self.stacks = stacks
 
@@ -67,6 +68,7 @@ class VolumeProcessor():
 
 
 class IdentityProcessor(VolumeProcessor, name="identity_processor"):
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -75,6 +77,7 @@ class IdentityProcessor(VolumeProcessor, name="identity_processor"):
 
 
 class Standardizer(VolumeProcessor, name="standardizer"):
+
     def __init__(self, *args, threshold=0.0, **kwargs):
         super().__init__(*args, **kwargs)
         self.threshold = threshold
@@ -89,11 +92,12 @@ class Standardizer(VolumeProcessor, name="standardizer"):
 
 
 class MaskedStandardizer(VolumeProcessor, name="masked_standardizer"):
+
     def __init__(self, *args, mask_label="", mask_resampler=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.mask_label = mask_label
         if mask_resampler is None:
-            raise TypeError("mask_resamper cannot be None")
+            raise TypeError("mask_resampler cannot be None")
         self.mask_resampler = mask_resampler
 
     def _get_mask_array(self, mask_files, reference_frame=None):
@@ -104,7 +108,52 @@ class MaskedStandardizer(VolumeProcessor, name="masked_standardizer"):
                 break
         if mask is None:
             raise MissingSegmentationException(
-                f"The label was {self.mask_labe} was not found")
+                f"The label was {self.mask_label} was not found")
+        return self.mask_resampler(
+            mask, new_reference_frame=reference_frame).array != 0
+
+    def process(self, volume, mask_files=None, **kwargs):
+        array = volume.array
+        mask_array = self._get_mask_array(
+            mask_files, reference_frame=volume.reference_frame)
+        mean = np.mean(array[mask_array])
+        std = np.std(array[mask_array])
+        array = (array - mean) / std
+        volume.array = array
+        return volume
+
+
+class CombinedStandardizer(VolumeProcessor, name="combined_standardizer"):
+
+    def __init__(self,
+                 *args,
+                 mask_union1=None,
+                 mask_union2=None,
+                 mask_resampler=None,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        self.mask_union1 = self._check_union_arg(mask_union1)
+        self.mask_union2 = self._check_union_arg(mask_union2)
+        if mask_resampler is None:
+            raise TypeError("mask_resampler cannot be None")
+        self.mask_resampler = mask_resampler
+
+    def _check_union_arg(self, mask_union):
+        if mask_union is None:
+            raise TypeError("mask_union cannot be None")
+        if type(mask_union) == str:
+            mask_union = [mask_union]
+        return mask_union
+
+    def _get_final_mask(self, mask_files, reference_frame=None):
+        mask = None
+        for f in mask_files:
+            if self.mask_label in f.labels:
+                mask = f.get_volume(self.mask_label)
+                break
+        if mask is None:
+            raise MissingSegmentationException(
+                f"The label was {self.mask_label} was not found")
         return self.mask_resampler(
             mask, new_reference_frame=reference_frame).array != 0
 
@@ -120,6 +169,7 @@ class MaskedStandardizer(VolumeProcessor, name="masked_standardizer"):
 
 
 class BSplineResampler(VolumeProcessor, name="bspline_resampler"):
+
     def __init__(self,
                  resampling_spacing=None,
                  order=3,
@@ -161,6 +211,7 @@ class BSplineResampler(VolumeProcessor, name="bspline_resampler"):
 
 class BinaryBSplineResampler(BSplineResampler,
                              name="binary_bspline_resampler"):
+
     def __init__(self, *args, threshold=0.5, mode="constant", **kwargs):
         super().__init__(*args, mode=mode, **kwargs)
         self.t = threshold
