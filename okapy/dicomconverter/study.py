@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class Study():
+
     def __init__(self,
                  study_instance_uid=None,
                  study_date=None,
@@ -91,6 +92,7 @@ def bb_intersection(bbs):
 
 
 class StudyProcessor():
+
     def __init__(
         self,
         volume_processor=None,
@@ -212,30 +214,41 @@ class StudyProcessor():
 
 
 class SimpleStudyProcessor():
+
     def __init__(self, volume_processor=None, mask_processor=None):
         self.volume_processor = volume_processor
         self.mask_processor = mask_processor
 
-    @staticmethod
-    def _extract_volume_of_interest(mask_files,
+    def _extract_volume_of_interest(self,
+                                    study,
                                     labels=None,
                                     labels_startswith=None):
         masks_list = list()
-        for f in mask_files:
+        for f in study.mask_files:
+            try:
+                _ = f.labels
+            except ValueError as e:
+                logger.warning(
+                    f"Study for patient_id {study.patient_id} contains"
+                    f" a corrupted {f.modality} file with "
+                    f"error message {str(e)}")
+                continue
             if labels is None and labels_startswith is None:
-                masks_list.extend([f.get_volume(label) for label in f.labels])
-            if labels is None and labels_startswith:
-                masks_list.extend([
-                    f.get_volume(label) for label in f.labels
+                labels_to_extract = f.labels
+            elif labels is None and labels_startswith:
+                labels_to_extract = [
+                    label for label in f.labels
                     if label.startswith(labels_startswith)
-                ])
+                ]
             else:
-                label_intersection = list(set(f.labels) & set(labels))
-                for label in label_intersection:
-                    try:
-                        masks_list.append(f.get_volume(label))
-                    except EmptyContourException:
-                        continue
+                labels_to_extract = list(set(f.labels) & set(labels))
+
+            for label in labels_to_extract:
+                try:
+                    masks_list.append(f.get_volume(label))
+                except EmptyContourException:
+                    continue
+
         return masks_list
 
     def __call__(self, study, labels=None, labels_startswith=None):
@@ -247,8 +260,7 @@ class SimpleStudyProcessor():
                 logger.error(
                     f"Study for patient_id {study.patient_id } contains"
                     f" a PET which is probably not suited for "
-                    f"quantitative imaging, error message {str(e)}"
-                )
+                    f"quantitative imaging, error message {str(e)}")
                 continue
 
             if self.volume_processor:
@@ -258,9 +270,7 @@ class SimpleStudyProcessor():
             volumes.append(volume)
 
         masks = self._extract_volume_of_interest(
-            study.mask_files,
-            labels=labels,
-            labels_startswith=labels_startswith)
+            study, labels=labels, labels_startswith=labels_startswith)
         if self.mask_processor and len(masks) > 0:
             logger.info(f"Preprocessing VOIs for {f.modality} image")
             masks = [self.mask_processor(m, ) for m in masks]

@@ -132,6 +132,8 @@ class DicomFileBase():
 
     @property
     def patient_weight(self):
+        if self.slices is None:
+            self.read()
         patient_weight = getattr(self.slices[0], "PatientWeight", None)
         if patient_weight is None:
             raise MissingWeightException(

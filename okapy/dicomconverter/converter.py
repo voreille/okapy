@@ -32,7 +32,7 @@ class BaseConverter():
         dicom_walker=None,
         study_processor=None,
         volume_dtype=np.float32,
-        mask_dtype=np.uint32,
+        mask_dtype=np.uint8,
         extension='nii.gz',
         naming=0,
         cores=None,
@@ -112,6 +112,11 @@ class BaseConverter():
     def write(self, volume, is_mask=False, dtype=None, output_folder=None):
         if dtype:
             volume = volume.astype(dtype)
+        elif self.volume_dtype and not is_mask:
+            volume = volume.astype(self.volume_dtype)
+        elif self.mask_dtype and is_mask:
+            volume = volume.astype(self.mask_dtype)
+
         counter = 0
         path = self.get_path(volume,
                              is_mask=is_mask,
@@ -212,13 +217,14 @@ class NiftiConverter(BaseConverter):
             return {
                 "patient_id": study.patient_id,
                 "study_id": study.study_instance_uid,
-                "status": str(e),
+                "error": str(e),
+                "status": "failed",
             }
         for volume in volumes:
             volume = self.write(volume, output_folder=output_folder)
 
         for mask in masks:
-            mask.reference_modality = volume.modality
+            # mask.reference_modality = volume.modality
             mask = self.write(mask, is_mask=True, output_folder=output_folder)
 
         logger.debug(f"Patient {study.patient_id} sucessfully processed")
