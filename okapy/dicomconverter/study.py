@@ -55,8 +55,8 @@ class Study():
         elif len(im_dicom_files) > 1:
             try:
                 self.volume_files.append(
-                    DicomFileBase.from_dicom_paths(
-                        dicom_paths=[k.path for k in im_dicom_files],
+                    DicomFileBase.from_dicom_slices(
+                        dicoms=[k.path for k in im_dicom_files],
                         study=self,
                         submodalities=self.submodalities,
                     ))
