@@ -5,6 +5,7 @@ TODO: check NumberOfSlices as dicom tag
 from copy import copy
 from datetime import time, datetime
 import logging
+from re import U
 from statistics import mode
 from tracemalloc import stop
 
@@ -44,13 +45,46 @@ class DicomFileBase():
             raise NotHandledModality(f"The modality {name} is not handled.")
 
     @staticmethod
-    def from_dicom_paths(dicom_paths):
-        if isinstance(dicom_paths[0], FileDataset):
-            modality = dicom_paths[0].Modality
+    def _check_modality(dcm_header):
+        try:
+            units = dcm_header.Units
+        except AttributeError:
+            if dcm_header.Modality == "PT":
+                logger.warning(
+                    f"Units for series{dcm_header.SeriesInstanceUID} "
+                    f" is not present, since modality is PT we change it to CT"
+                    f" in hope that it will be right.")
+            return dcm_header.Modality if dcm_header.Modality != "PT" else "CT"
+
+        if (units in ["BQML", "CNTS"] and dcm_header.Modality != "PT"):
+            logger.warning(
+                f"Modality for series{dcm_header.SeriesInstanceUID} "
+                f"was changed from {dcm_header.Modality} to PT since the unit does not"
+                f" match the modality (unit was {dcm_header.Units})")
+            return "PT"
+        if units == "HU" and dcm_header.Modality != "CT":
+            logger.warning(
+                f"Modality for series{dcm_header.SeriesInstanceUID} "
+                f"was changed from {dcm_header.Modality} to CT since the unit does not"
+                f" match the modality (unit was {dcm_header.Units})")
+            return "CT"
+
+        return dcm_header.Modality
+
+    @staticmethod
+    def from_dicom_slices(dicoms, study=None, submodalities=False):
+        if isinstance(dicoms[0], FileDataset):
+            modality = DicomFileBase._check_modality(dicoms[0])
+
         else:
-            modality = pdcm.filereader.dcmread(
-                dicom_paths[0], stop_before_pixels=True).Modality
-        return DicomFileBase.get(modality)(dicom_paths=dicom_paths)
+            modality = DicomFileBase._check_modality(
+                pdcm.filereader.dcmread(
+                    dicoms[0],
+                    stop_before_pixels=True,
+                ))
+        return DicomFileBase.get(modality)(dicom_paths=dicoms,
+                                           study=study,
+                                           submodalities=submodalities)
 
     def __init__(
         self,
@@ -60,14 +94,15 @@ class DicomFileBase():
         study=None,
         additional_dicom_tags=None,
         submodalities=False,
+        slices=None,
     ):
         self._dicom_header = dicom_header
         self.dicom_paths = dicom_paths
         self._reference_frame = reference_frame
         self.study = study
-        self.slices = None
+        self.slices = slices
         self.additional_dicom_tags = additional_dicom_tags
-        self.modality = dicom_header.Modality
+        self.modality = self.name
         if submodalities:
             self.modality = self.modality + self._parse_submodalities()
 
@@ -101,6 +136,8 @@ class DicomFileBase():
 
     @property
     def patient_weight(self):
+        if self.slices is None:
+            self.read()
         patient_weight = getattr(self.slices[0], "PatientWeight", None)
         if patient_weight is None:
             raise MissingWeightException(
@@ -226,35 +263,17 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         slices, dicom_paths, orthogonal_positions = self._sort_slices(
             slices, dicom_paths)
 
-        (
-            slices,
-            dicom_paths,
-            orthogonal_positions,
-        ) = self._check_shape_consistency(
-            slices,
-            dicom_paths,
-            orthogonal_positions,
-            dimension="Rows",
-        )
-        (
-            slices,
-            dicom_paths,
-            orthogonal_positions,
-        ) = self._check_shape_consistency(
-            slices,
-            dicom_paths,
-            orthogonal_positions,
-            dimension="Columns",
-        )
-        (
-            slices,
-            dicom_paths,
-            orthogonal_positions,
-        ) = self._check_redundancy(
-            slices,
-            dicom_paths,
-            orthogonal_positions,
-        )
+        (slices, dicom_paths,
+         orthogonal_positions) = self._check_shape_consistency(
+             slices, dicom_paths, orthogonal_positions, dimension="Rows")
+
+        (slices, dicom_paths,
+         orthogonal_positions) = self._check_shape_consistency(
+             slices, dicom_paths, orthogonal_positions, dimension="Columns")
+
+        (slices, dicom_paths, orthogonal_positions) = self._check_redundancy(
+            slices, dicom_paths, orthogonal_positions)
+
         self.slices = slices
         self.dicom_paths = dicom_paths
         self.orthogonal_positions = orthogonal_positions
@@ -302,23 +321,31 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
 class DicomFileCT(DicomFileImageBase, name="CT"):
 
+    @staticmethod
+    def _get_physical_per_slice(s):
+        return float(s.RescaleSlope) * s.pixel_array + float(
+            s.RescaleIntercept)
+
     def get_physical_values(self):
-        image = list()
-        for p in self.dicom_paths:
-            s = pdcm.read_file(p)
-            image.append(
-                float(s.RescaleSlope) * s.pixel_array +
-                float(s.RescaleIntercept))
+        if not hasattr(self.slices[0], "pixel_array"):
+            image = [
+                DicomFileCT._get_physical_per_slice(pdcm.read_file(p))
+                for p in self.dicom_paths
+            ]
+        else:
+            image = [
+                DicomFileCT._get_physical_per_slice(s) for s in self.slices
+            ]
         return np.stack(image, axis=-1)
 
 
 class DicomFileMR(DicomFileImageBase, name="MR"):
 
     def get_physical_values(self):
-        image = list()
-        for p in self.dicom_paths:
-            s = pdcm.read_file(p)
-            image.append(s.pixel_array)
+        if not hasattr(self.slices[0], "pixel_array"):
+            image = [pdcm.read_file(p).pixel_array for p in self.dicom_paths]
+        else:
+            image = [s.pixel_array for s in self.slices]
         return np.stack(image, axis=-1)
 
 
@@ -351,21 +378,33 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
 
         return patient_weight
 
+    def _get_physical_values_func(self, units):
+        if units == 'BQML':
+            decay_time = self._get_decay_time()
+            return lambda x: self._get_suv_from_bqml(x, decay_time)
+        elif units == 'CNTS':
+            return self._get_suv_philips
+        else:
+            raise PETUnitException('The {} units is not handled'.format(units))
+
     def get_physical_values(self):
         s = self.slices[0]
         units = s.Units
-        if units == 'BQML':
-            decay_time = self._get_decay_time()
-            return self._get_suv_from_bqml(decay_time)
-        elif units == 'CNTS':
-            return self._get_suv_philips()
+        phys_value_func = self._get_physical_values_func(units)
+
+        if not hasattr(self.slices[0], "pixel_array"):
+            image = [
+                phys_value_func(pdcm.read_file(p)) for p in self.dicom_paths
+            ]
         else:
-            raise PETUnitException('The {} units is not handled'.format(units))
+            image = [phys_value_func(s) for s in self.slices]
+        return np.stack(image, axis=-1)
 
     def _acquistion_datetime(self):
         times = [
             datetime.strptime(
-                s[0x00080022].value + s[0x00080032].value.split('.')[0],
+                s[0x00080022].value +
+                s[0x00080032].value.split('.')[0].replace(":", ""),
                 "%Y%m%d%H%M%S") for s in self.slices
         ]
         times.sort()
@@ -415,33 +454,22 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
                      f"{self.dicom_header.PatientName} is {decay_time} [s]")
         return decay_time
 
-    def _get_suv_philips(self):
-        image = list()
-        for p in self.dicom_paths:
-            s = pdcm.read_file(p)
-            im = (float(s.RescaleSlope) * s.pixel_array +
-                  float(s.RescaleIntercept)) * float(s[0x70531000].value)
-            image.append(im)
-        return np.stack(image, axis=-1)
+    def _get_suv_philips(self, s):
+        return (float(s.RescaleSlope) * s.pixel_array +
+                float(s.RescaleIntercept)) * float(s[0x70531000].value)
 
-    def _get_suv_from_bqml(self, decay_time):
+    def _get_suv_from_bqml(self, s, decay_time):
         # Get SUV from raw PET
-        image = list()
         patient_weight = self.patient_weight
-        for p in self.dicom_paths:
-            s = pdcm.read_file(p)
-            pet = float(s.RescaleSlope) * s.pixel_array + float(
-                s.RescaleIntercept)
-            half_life = float(s.RadiopharmaceuticalInformationSequence[0].
-                              RadionuclideHalfLife)
-            total_dose = float(s.RadiopharmaceuticalInformationSequence[0].
-                               RadionuclideTotalDose)
-            decay = 2**(-decay_time / half_life)
-            actual_activity = total_dose * decay
+        pet = float(s.RescaleSlope) * s.pixel_array + float(s.RescaleIntercept)
+        half_life = float(
+            s.RadiopharmaceuticalInformationSequence[0].RadionuclideHalfLife)
+        total_dose = float(
+            s.RadiopharmaceuticalInformationSequence[0].RadionuclideTotalDose)
+        decay = 2**(-decay_time / half_life)
+        actual_activity = total_dose * decay
 
-            im = pet * patient_weight * 1000 / actual_activity
-            image.append(im)
-        return np.stack(image, axis=-1)
+        return pet * patient_weight * 1000 / actual_activity
 
 
 class MaskFile(DicomFileBase, name="mask_base"):

@@ -35,7 +35,7 @@ class TestOkapy(unittest.TestCase):
         # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
         # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'
         # 'omics-HN1/HEAD-NECK-RADIOMICS-HN1-NORTSTRUCT/HN1026')
-        extraction_params = "/home/valentin/python_wkspce/okapy/parameters/defaults/defaults_zrad.yaml"
+        extraction_params = "/home/valentin/python_wkspce/okapy/parameters/defaults/defaults_pyradiomics_only.yaml"
         converter = ExtractorConverter.from_params(extraction_params)
         converter.combine_segmentation = True
         # converter.cores = 5

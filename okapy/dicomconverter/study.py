@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class Study():
+
     def __init__(self,
                  study_instance_uid=None,
                  study_date=None,
@@ -54,9 +55,8 @@ class Study():
         elif len(im_dicom_files) > 1:
             try:
                 self.volume_files.append(
-                    DicomFileBase.get(dcm_header.Modality)(
-                        dicom_header=dcm_header,
-                        dicom_paths=[k.path for k in im_dicom_files],
+                    DicomFileBase.from_dicom_slices(
+                        dicoms=[k.path for k in im_dicom_files],
                         study=self,
                         submodalities=self.submodalities,
                     ))
@@ -92,6 +92,7 @@ def bb_intersection(bbs):
 
 
 class StudyProcessor():
+
     def __init__(
         self,
         volume_processor=None,
@@ -213,56 +214,67 @@ class StudyProcessor():
 
 
 class SimpleStudyProcessor():
+
     def __init__(self, volume_processor=None, mask_processor=None):
         self.volume_processor = volume_processor
         self.mask_processor = mask_processor
 
-    @staticmethod
-    def _extract_volume_of_interest(mask_files, labels=None):
+    def _extract_volume_of_interest(self,
+                                    study,
+                                    labels=None,
+                                    labels_startswith=None):
         masks_list = list()
-        for f in mask_files:
-            if labels is None:
-                masks_list.extend([f.get_volume(label) for label in f.labels])
+        for f in study.mask_files:
+            try:
+                _ = f.labels
+            except ValueError as e:
+                logger.warning(
+                    f"Study for patient_id {study.patient_id} contains"
+                    f" a corrupted {f.modality} file with "
+                    f"error message {str(e)}")
+                continue
+            if labels is None and labels_startswith is None:
+                labels_to_extract = f.labels
+            elif labels is None and labels_startswith:
+                labels_to_extract = [
+                    label for label in f.labels
+                    if label.startswith(labels_startswith)
+                ]
             else:
-                label_intersection = list(set(f.labels) & set(labels))
-                for label in label_intersection:
-                    try:
-                        masks_list.append(f.get_volume(label))
-                    except EmptyContourException:
-                        continue
+                labels_to_extract = list(set(f.labels) & set(labels))
+
+            for label in labels_to_extract:
+                try:
+                    masks_list.append(f.get_volume(label))
+                except EmptyContourException:
+                    continue
+
         return masks_list
 
-    def __call__(self, study, labels=None):
-        results = list()
+    def __call__(self, study, labels=None, labels_startswith=None):
         volumes = list()
         for f in study.volume_files:
             try:
                 volume = f.get_volume()
             except PETUnitException as e:
-                print(e)
+                logger.error(
+                    f"Study for patient_id {study.patient_id } contains"
+                    f" a PET which is probably not suited for "
+                    f"quantitative imaging, error message {str(e)}")
                 continue
 
             if self.volume_processor:
                 logger.info(f"Preprocessing image {f.modality}")
-                volume = self.volume_processor(
-                    volume,
-                    mask_files=mask_files,
-                    new_reference_frame=new_reference_frame)
+                volume = self.volume_processor(volume,
+                                               mask_files=study.mask_files)
             volumes.append(volume)
 
-        mask_output = list()
-        for m in study.mask_files:
-            if self.mask_processor and len(masks) > 0:
-                logger.info(f"Preprocessing VOIs for {f.modality} image")
-                masks = [
-                    self.mask_processor(
-                        m,
-                        new_reference_frame=volume.reference_frame,
-                    ) for m in masks
-                ]
-            mask_output.extend(masks)
+        masks = self._extract_volume_of_interest(
+            study, labels=labels, labels_startswith=labels_startswith)
+        if self.mask_processor and len(masks) > 0:
+            logger.info(f"Preprocessing VOIs for {f.modality} image")
+            masks = [self.mask_processor(m, ) for m in masks]
 
         logger.info(f"Preprocessing of {f.modality} image is done.")
-        results.append((volume, masks))
 
-        return results
+        return volumes, masks
