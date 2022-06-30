@@ -342,28 +342,28 @@ class ExtractorConverter(BaseConverter):
     def process_study(self, study, labels=None):
         results_df = pd.DataFrame()
         for volume, masks in self.study_processor(study, labels=labels):
-            volume = self.write(volume, output_folder=self.output_folder)
+            vol_dict = self.write(volume, output_folder=self.output_folder)
             for mask in masks:
-                mask.reference_modality = volume.modality
-                mask = self.write(mask,
+                mask.reference_modality = vol_dict["modality"]
+                mask_dict = self.write(mask,
                                   is_mask=True,
                                   output_folder=self.output_folder)
-                result = self.okapy_extractors(volume.path,
-                                               mask.path,
-                                               modality=volume.modality)
+                result = self.okapy_extractors(vol_dict["path"],
+                                               mask_dict["path"],
+                                               modality=vol_dict["modality"])
                 for key, val in result.items():
                     if "diagnostics" in key:
                         continue
 
                     result_dict = {
                         "patient_id": study.patient_id,
-                        "modality": volume.modality,
-                        "VOI": mask.label,
+                        "modality": vol_dict["modality"],
+                        "VOI": mask_dict["label"],
                         "feature_name": key,
                         "feature_value": val,
                     }
                     result_dict.update({
-                        k: getattr(volume.dicom_header, k)
+                        k: getattr(vol_dict["dicom_header"], k)
                         for k in self.additional_dicom_tags
                     })
                     results_df = results_df.append(
