@@ -222,9 +222,9 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
             suv_peak = np.nan
             tlg = np.nan
         return OrderedDict({
-            "PET_MTV" + string_output: mtv,
-            "PET_TLG" + string_output: tlg,
-            "PET_SUVpeak" + string_output: suv_peak,
+            "original_firstorder_MTV" + string_output: mtv,
+            "original_firstorder_TLG" + string_output: tlg,
+            "original_firstorder_SUVpeak" + string_output: suv_peak,
         })
 
     def __call__(self, image_path, mask_path, **kwargs):
