@@ -11,16 +11,19 @@ with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
 requirements = [
-    "pydicom",
-    "pydicom_seg",
-    "scikit-image",
-    "pandas",
-    "numpy",
-    "click",
-    "tqdm",
-    "pyyaml",
     "SimpleITK",
+    "click",
+    "numpy",
+    "pandas",
+    "pydicom",
+    "pydicom-seg",
     "pyradiomics",
+    "python-gdcm",
+    "pyyaml",
+    "six",
+    "scikit-image",
+    "termcolor",
+    "tqdm",
 ],
 
 setup_requirements = []
