@@ -56,13 +56,24 @@ class DicomWalker():
             data, additional_tags=self.additional_dicom_tags),
                          path=str(file.resolve()))
 
+    def _get_files(self, input_dirpath):
+        if type(input_dirpath) == str or type(input_dirpath) == Path:
+            return [f for f in Path(input_dirpath).rglob("*") if f.is_file()]
+        if type(input_dirpath) == list:
+            return [
+                f for path in input_dirpath for f in Path(path).rglob("*")
+                if f.is_file()
+            ]
+        raise TypeError(f"input_dirpath must be a path or a list of paths, "
+                        f"string or pathlib.Path, not {type(input_dirpath)}")
+
     def _walk(self, input_dirpath, cores=None):
         '''
         Method to walk through the path given and fill the list of DICOM
         headers and sort them
         '''
         dicom_files = list()
-        files = [f for f in Path(input_dirpath).rglob("*") if f.is_file()]
+        files = self._get_files(input_dirpath)
         # to test wether a slice appear multiple times
         logger.info("Parsing the DICOM files")
         if cores is None:
