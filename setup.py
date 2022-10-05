@@ -11,11 +11,11 @@ with open('HISTORY.rst') as history_file:
     history = history_file.read()
 
 requirements = [
+    "numpy",
     "pydicom",
     "pydicom_seg",
     "scikit-image",
     "pandas",
-    "numpy",
     "click",
     "tqdm",
     "pyyaml",

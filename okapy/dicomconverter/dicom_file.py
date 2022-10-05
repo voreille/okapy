@@ -72,7 +72,10 @@ class DicomFileBase():
         return dcm_header.Modality
 
     @staticmethod
-    def from_dicom_slices(dicoms, study=None, submodalities=False):
+    def from_dicom_slices(dicoms,
+                          study=None,
+                          additional_dicom_tags=None,
+                          submodalities=False):
         if isinstance(dicoms[0], FileDataset):
             modality = DicomFileBase._check_modality(dicoms[0])
 
@@ -82,9 +85,11 @@ class DicomFileBase():
                     dicoms[0],
                     stop_before_pixels=True,
                 ))
-        return DicomFileBase.get(modality)(dicom_paths=dicoms,
-                                           study=study,
-                                           submodalities=submodalities)
+        return DicomFileBase.get(modality)(
+            dicom_paths=dicoms,
+            study=study,
+            additional_dicom_tags=additional_dicom_tags,
+            submodalities=submodalities)
 
     def __init__(
         self,
@@ -101,14 +106,21 @@ class DicomFileBase():
         self._reference_frame = reference_frame
         self.study = study
         self.slices = slices
-        self.additional_dicom_tags = additional_dicom_tags
+        if submodalities:
+            self.additional_dicom_tags = [
+                "SeriesDescription"
+            ] if additional_dicom_tags is None else additional_dicom_tags + [
+                "SeriesDescription"
+            ]
+        else:
+            self.additional_dicom_tags = additional_dicom_tags
         self.modality = self.name
         if submodalities:
             self.modality = self.modality + self._parse_submodalities()
 
     def _parse_submodalities(self):
         try:
-            return "_" + self.dicom_header.SeriesDescription.split(" --- ")[1]
+            return "_" + self.dicom_header.SeriesDescription.split(" --- ")[1].strip()
         except IndexError:
             return ""
 

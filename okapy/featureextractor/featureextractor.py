@@ -1,5 +1,3 @@
-from calendar import month_abbr
-from re import M
 import subprocess
 import json
 import six

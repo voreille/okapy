@@ -19,12 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 class DicomFile():
+
     def __init__(self, dicom_header=None, path=None):
         self.dicom_header = dicom_header
         self.path = path
 
 
 class DicomWalker():
+
     def __init__(
         self,
         input_dirpath=None,
@@ -100,10 +102,12 @@ class DicomWalker():
             # When the image changeschanges we store it as a whole
             current_study_uid = f.dicom_header.StudyInstanceUID
             if i == 0:
-                current_study = Study(study_instance_uid=current_study_uid,
-                                      study_date=f.dicom_header.StudyDate,
-                                      patient_id=f.dicom_header.PatientID,
-                                      submodalities=self.submodalities)
+                current_study = Study(
+                    study_instance_uid=current_study_uid,
+                    study_date=f.dicom_header.StudyDate,
+                    patient_id=f.dicom_header.PatientID,
+                    additional_dicom_tags=self.additional_dicom_tags,
+                    submodalities=self.submodalities)
 
             if i > 0 and not (f.dicom_header.SeriesInstanceUID
                               == previous_dcm_header.SeriesInstanceUID and
@@ -116,10 +120,12 @@ class DicomWalker():
                 # check if the study contains images, in case of lone RTSTRUCT
                 if len(current_study.volume_files) > 0:
                     studies.append(current_study)
-                current_study = Study(study_instance_uid=current_study_uid,
-                                      study_date=f.dicom_header.StudyDate,
-                                      patient_id=f.dicom_header.PatientID,
-                                      submodalities=self.submodalities)
+                current_study = Study(
+                    study_instance_uid=current_study_uid,
+                    study_date=f.dicom_header.StudyDate,
+                    patient_id=f.dicom_header.PatientID,
+                    additional_dicom_tags=self.additional_dicom_tags,
+                    submodalities=self.submodalities)
 
             # Only keeping files that are different
             if f.dicom_header != previous_dcm_header:
