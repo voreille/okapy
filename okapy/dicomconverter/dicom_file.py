@@ -72,7 +72,10 @@ class DicomFileBase():
         return dcm_header.Modality
 
     @staticmethod
-    def from_dicom_slices(dicoms, study=None, submodalities=False):
+    def from_dicom_slices(dicoms,
+                          study=None,
+                          additional_dicom_tags=None,
+                          submodalities=False):
         if isinstance(dicoms[0], FileDataset):
             modality = DicomFileBase._check_modality(dicoms[0])
 
@@ -82,9 +85,11 @@ class DicomFileBase():
                     dicoms[0],
                     stop_before_pixels=True,
                 ))
-        return DicomFileBase.get(modality)(dicom_paths=dicoms,
-                                           study=study,
-                                           submodalities=submodalities)
+        return DicomFileBase.get(modality)(
+            dicom_paths=dicoms,
+            study=study,
+            additional_dicom_tags=additional_dicom_tags,
+            submodalities=submodalities)
 
     def __init__(
         self,
@@ -101,14 +106,22 @@ class DicomFileBase():
         self._reference_frame = reference_frame
         self.study = study
         self.slices = slices
-        self.additional_dicom_tags = additional_dicom_tags
+        if submodalities:
+            self.additional_dicom_tags = [
+                "SeriesDescription"
+            ] if additional_dicom_tags is None else additional_dicom_tags + [
+                "SeriesDescription"
+            ]
+        else:
+            self.additional_dicom_tags = additional_dicom_tags
         self.modality = self.name
+        self._patient_weight = None
         if submodalities:
             self.modality = self.modality + self._parse_submodalities()
 
     def _parse_submodalities(self):
         try:
-            return "_" + self.dicom_header.SeriesDescription.split(" --- ")[1]
+            return "_" + self.dicom_header.SeriesDescription.split(" --- ")[1].strip()
         except IndexError:
             return ""
 
@@ -136,14 +149,17 @@ class DicomFileBase():
 
     @property
     def patient_weight(self):
+        if self._patient_weight:
+            return self._patient_weight
         if self.slices is None:
             self.read()
         patient_weight = getattr(self.slices[0], "PatientWeight", None)
         if patient_weight is None:
             raise MissingWeightException(
                 'Weight is missing in {}'.format(self))
-
-        return float(patient_weight)
+        patient_weight = float(patient_weight)
+        self._patient_weight = patient_weight
+        return patient_weight
 
     @property
     def reference_frame(self):
@@ -356,6 +372,8 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
 
     @property
     def patient_weight(self):
+        if self._patient_weight:
+            return self._patient_weight
         try:
             patient_weight = super().patient_weight
         except MissingWeightException:
@@ -376,6 +394,8 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
                                f" for patient {self.dicom_header.PatientID}")
                 patient_weight = 75.0
 
+        self._patient_weight = patient_weight
+
         return patient_weight
 
     def _get_physical_values_func(self, units):
@@ -384,6 +404,8 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
             return lambda x: self._get_suv_from_bqml(x, decay_time)
         elif units == 'CNTS':
             return self._get_suv_philips
+        elif units == 'GML':
+            return self._get_suv_from_gml
         else:
             raise PETUnitException('The {} units is not handled'.format(units))
 
@@ -458,6 +480,10 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
         return (float(s.RescaleSlope) * s.pixel_array +
                 float(s.RescaleIntercept)) * float(s[0x70531000].value)
 
+    def _get_suv_from_gml(self, s):
+        return (float(s.RescaleSlope) * s.pixel_array +
+                float(s.RescaleIntercept))
+
     def _get_suv_from_bqml(self, s, decay_time):
         # Get SUV from raw PET
         patient_weight = self.patient_weight
@@ -520,8 +546,8 @@ class SegFile(MaskFile, name="SEG"):
                     key=lambda x: x.dicom_header.Modality)
 
                 self._reference_image = self.study.volume_files[0]
-                logger.warning(f"The Reference image was not found for"
-                               f" the RTSTRUCT {str(self)}. The "
+                logger.warning(f"The reference image was not found for"
+                               f" the SEG {str(self)}. The "
                                f"{self._reference_image.dicom_header.Modality}"
                                f" image will be"
                                f" taken as reference.")
@@ -606,11 +632,14 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                     key=lambda x: x.dicom_header.Modality)
 
                 self._reference_image = self.study.volume_files[0]
-                logger.warning(f"The Reference image was not found for"
-                               f" the RTSTRUCT {str(self)}. The "
-                               f"{self._reference_image.dicom_header.Modality}"
-                               f" image will be"
-                               f" taken as reference.")
+                logger.warning(
+                    f"The reference image was not found for"
+                    f" the RTSTRUCT of patient {self.dicom_header.patient_id}"
+                    f" and study_id {self.dicom_header.study_instance_uid} "
+                    f"which contains the labels {self.labels}. The "
+                    f"{self._reference_image.dicom_header.Modality}"
+                    f" image will be"
+                    f" taken as reference.")
         return self._reference_image
 
     @property
@@ -696,7 +725,10 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             contour_sequence = self.slices[0].ROIContourSequence[
                 self.label_number_mapping[label]].ContourSequence
         except AttributeError:
-            logger.warning(f"{label} is empty")
+            logger.warning(
+                f"The RTSTRUCT for patient {self.dicom_header.patient_id}"
+                f" and study {self.dicom_header.study_instance_uid} has a label '{label}' "
+                f"which is empty")
             raise EmptyContourException()
 
         mask = self._compute_mask(contour_sequence, label=label)

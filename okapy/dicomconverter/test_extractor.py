@@ -30,7 +30,8 @@ class TestOkapy(unittest.TestCase):
         # input_path = '/home/val/python_wkspce/lymphangitis3.0/data/raw/PatientLC_51'
         # input_path = "/mnt/nas4/datasets/ToReadme/HECKTOR/training/dicom/HN-HMR-029"
         # input_path = "/mnt/nas4/datasets/ToReadme/HECKTOR/training/dicom/HN-CHUS-035"
-        input_path = "/mnt/nas4/datasets/ToReadme/HECKTOR/training/dicom/HN-CHUM-060"
+        # input_path = "/mnt/nas4/datasets/ToReadme/HECKTOR/training/dicom/HN-CHUM-060"
+        input_path = "/mnt/nas2/data/Personal/Valentin/okapy-problem-example/BRATS-MGMT-test/00008-6/"
         # input_path = "/home/val/Documents/test_okapy/dicom_without_seg/"
         # input_path1 = '/mnt/nas2/data/Personal/Roger/IMAGINE/NIFTI-SEG/'
         # input_path2 = ('/mnt/nas4/datasets/ToReadme/TCIA-Head-Neck-Radi'

@@ -258,7 +258,7 @@ class RieszFeatureExtractor(FeatureExtractor):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def __call__(self, image_path, labels_path, **kwargs):
+    def __call__(self, image_path, mask_path, **kwargs):
 
         path_of_this_file = os.path.dirname(os.path.abspath(__file__))
         path_of_executable = os.path.join(path_of_this_file, 'matlab_bin/RieszExtractor')
@@ -266,7 +266,7 @@ class RieszFeatureExtractor(FeatureExtractor):
         completed_matlab_process = subprocess.run(
             [
                 path_of_executable,
-                image_path, labels_path,
+                image_path, mask_path,
                 json.dumps(self.params)
             ],
             stdout=subprocess.PIPE,

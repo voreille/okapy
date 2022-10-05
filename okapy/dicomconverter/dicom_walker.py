@@ -19,12 +19,14 @@ logger = logging.getLogger(__name__)
 
 
 class DicomFile():
+
     def __init__(self, dicom_header=None, path=None):
         self.dicom_header = dicom_header
         self.path = path
 
 
 class DicomWalker():
+
     def __init__(
         self,
         input_dirpath=None,
@@ -54,13 +56,24 @@ class DicomWalker():
             data, additional_tags=self.additional_dicom_tags),
                          path=str(file.resolve()))
 
+    def _get_files(self, input_dirpath):
+        if type(input_dirpath) == str or type(input_dirpath) == Path:
+            return [f for f in Path(input_dirpath).rglob("*") if f.is_file()]
+        if type(input_dirpath) == list:
+            return [
+                f for path in input_dirpath for f in Path(path).rglob("*")
+                if f.is_file()
+            ]
+        raise TypeError(f"input_dirpath must be a path or a list of paths, "
+                        f"string or pathlib.Path, not {type(input_dirpath)}")
+
     def _walk(self, input_dirpath, cores=None):
         '''
         Method to walk through the path given and fill the list of DICOM
         headers and sort them
         '''
         dicom_files = list()
-        files = [f for f in Path(input_dirpath).rglob("*") if f.is_file()]
+        files = self._get_files(input_dirpath)
         # to test wether a slice appear multiple times
         logger.info("Parsing the DICOM files")
         if cores is None:
@@ -100,10 +113,12 @@ class DicomWalker():
             # When the image changeschanges we store it as a whole
             current_study_uid = f.dicom_header.StudyInstanceUID
             if i == 0:
-                current_study = Study(study_instance_uid=current_study_uid,
-                                      study_date=f.dicom_header.StudyDate,
-                                      patient_id=f.dicom_header.PatientID,
-                                      submodalities=self.submodalities)
+                current_study = Study(
+                    study_instance_uid=current_study_uid,
+                    study_date=f.dicom_header.StudyDate,
+                    patient_id=f.dicom_header.PatientID,
+                    additional_dicom_tags=self.additional_dicom_tags,
+                    submodalities=self.submodalities)
 
             if i > 0 and not (f.dicom_header.SeriesInstanceUID
                               == previous_dcm_header.SeriesInstanceUID and
@@ -116,10 +131,12 @@ class DicomWalker():
                 # check if the study contains images, in case of lone RTSTRUCT
                 if len(current_study.volume_files) > 0:
                     studies.append(current_study)
-                current_study = Study(study_instance_uid=current_study_uid,
-                                      study_date=f.dicom_header.StudyDate,
-                                      patient_id=f.dicom_header.PatientID,
-                                      submodalities=self.submodalities)
+                current_study = Study(
+                    study_instance_uid=current_study_uid,
+                    study_date=f.dicom_header.StudyDate,
+                    patient_id=f.dicom_header.PatientID,
+                    additional_dicom_tags=self.additional_dicom_tags,
+                    submodalities=self.submodalities)
 
             # Only keeping files that are different
             if f.dicom_header != previous_dcm_header:
