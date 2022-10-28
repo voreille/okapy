@@ -161,7 +161,8 @@ class NiftiConverter(BaseConverter):
     ):
         super().__init__(**kwargs)
         self.output_folder = Path(output_folder).resolve()
-        self.study_processor = SimpleStudyProcessor()
+        self.study_processor = kwargs.get("study_processor",
+                                          SimpleStudyProcessor())
         self.labels_startswith = labels_startswith
 
     @staticmethod
@@ -327,6 +328,7 @@ class ExtractorConverter(BaseConverter):
             mask_processor=mask_processor,
             padding=params["general"].get("padding", 10),
             combine_segmentation=combine_segmentation,
+            convert_image_without_seg=False
         )
 
         okapy_extractors = OkapyExtractors(params["feature_extraction"])
@@ -341,24 +343,26 @@ class ExtractorConverter(BaseConverter):
 
     def process_study(self, study, labels=None):
         results_df = pd.DataFrame()
+        index = 0
         for volume, masks in self.study_processor(study, labels=labels):
-            volume = self.write(volume, output_folder=self.output_folder)
+            volume_info = self.write(volume, output_folder=self.output_folder)
             for mask in masks:
                 mask.reference_modality = volume.modality
-                mask = self.write(mask,
-                                  is_mask=True,
-                                  output_folder=self.output_folder)
-                result = self.okapy_extractors(volume.path,
-                                               mask.path,
-                                               modality=volume.modality)
+                mask_info = self.write(mask,
+                                       is_mask=True,
+                                       output_folder=self.output_folder)
+                result = self.okapy_extractors(
+                    volume_info["path"],
+                    mask_info["path"],
+                    modality=volume_info["modality"])
                 for key, val in result.items():
                     if "diagnostics" in key:
                         continue
 
                     result_dict = {
                         "patient_id": study.patient_id,
-                        "modality": volume.modality,
-                        "VOI": mask.label,
+                        "modality": volume_info["modality"],
+                        "VOI": mask_info["label"],
                         "feature_name": key,
                         "feature_value": val,
                     }
@@ -366,10 +370,11 @@ class ExtractorConverter(BaseConverter):
                         k: getattr(volume.dicom_header, k)
                         for k in self.additional_dicom_tags
                     })
-                    results_df = results_df.append(
-                        result_dict,
-                        ignore_index=True,
-                    )
+                    results_df = pd.concat([
+                        results_df,
+                        pd.DataFrame(result_dict, index=[index]),
+                    ])
+                    index = index + 1
 
         return results_df
 

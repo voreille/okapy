@@ -241,26 +241,12 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         elif np.min(self.slice_spacing) == 0:
             raise RuntimeError("Some slices have the same position")
 
-        condition_missing_slice = (np.abs(self.d_slices - self.slice_spacing) >
-                                   0.9 * self.slice_spacing)
-        n_missing_slices = np.sum(condition_missing_slice)
-        if n_missing_slices == 1:
-            # If only one slice is missing
-            logger.warning(f"One slice is missing, we will soon replace "
-                           f"it by linear interpolation for patient"
-                           f"{self.dicom_header.PatientID}")
-            logger.warning(f"One slice is missing, "
-                           f"for patient "
-                           f"{self.dicom_header.PatientID}"
-                           f" and modality "
-                           f"{self.dicom_header.Modality}")
-            expected_n_slices = len(self.slices) + 1
-        elif n_missing_slices > 1:
-            raise RuntimeError("Multiple slices are missing")
-        else:
-            expected_n_slices = len(self.slices)
-
-        return expected_n_slices
+        slice_discontinuities = (np.abs(self.d_slices - self.slice_spacing) >
+                                 0.9 * self.slice_spacing)
+        n_missing_slices = np.round(
+            np.sum(self.d_slices[slice_discontinuities] / self.slice_spacing -
+                   1)).astype(int)
+        return n_missing_slices, slice_discontinuities
 
     def read(self):
         slices, dicom_paths = self._check_dicom_paths()
@@ -287,14 +273,16 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         ])
         self.slice_spacing = mode(np.round(self.d_slices, decimals=5))
 
-        self.expected_n_slices = self._check_missing_slices()
+        self.n_missing_slices, self.slice_discontinuities = self._check_missing_slices(
+        )
+        expected_n_slices = len(self.slices) + self.n_missing_slices
         slice_shape = (slices[0].Rows, slices[0].Columns)  # TO CHECK
         self._reference_frame = ReferenceFrame.from_slice_info(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,
             pixel_spacing=slices[0].PixelSpacing,
-            shape=slice_shape + (self.expected_n_slices, ))
+            shape=slice_shape + (expected_n_slices, ))
 
     def _interp_missing_slice(self, image):
         mean_slice_spacing = np.mean(self.d_slices)
@@ -309,13 +297,51 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             axis=2)
         return image
 
+    def _fill_discontinuity(self, image):
+        fill_constant = {
+            "PT": 0,
+            "CT": -1000,
+            "MR": 0,
+        }
+        idx_discontinuity = np.where(self.slice_discontinuities)[0][0]
+        fill_shape = image.shape[:2] + (self.n_missing_slices, )
+        return np.concatenate(
+            (
+                image[..., :idx_discontinuity + 1],
+                fill_constant.get(self.name, 0) * np.ones(fill_shape),
+                image[..., idx_discontinuity + 1:],
+            ),
+            axis=2,
+        )
+
     def get_volume(self):
         if self.slices is None:
             self.read()
+
+        if np.sum(self.slice_discontinuities) > 1:
+            raise ValueError("Too many discontinuities in the slices")
         image = self.get_physical_values()
         image = np.transpose(image, (1, 0, 2))
-        if self.expected_n_slices != len(self.slices):
+        if self.n_missing_slices == 1:
+            logger.warning(f"One slice is missing, we replace "
+                           f"it by linear interpolation for patient"
+                           f"{self.dicom_header.PatientID}"
+                           f" and modality "
+                           f"{self.dicom_header.Modality}")
             image = self._interp_missing_slice(image)
+
+        if (np.sum(self.slice_discontinuities) == 1
+                and self.n_missing_slices > 1):
+            logger.warning(f"Multiple slices are missing for patient"
+                           f"{self.dicom_header.PatientID}"
+                           f" and modality "
+                           f"{self.dicom_header.Modality} "
+                           "filling the void with zeros")
+            image = self._fill_discontinuity(image)
+            # if idx_discontinuity < len(self.slices) // 2:
+            #     self.slices = self.slices[idx_discontinuity + 1:]
+            # else:
+            #     self.slices = self.slices[:idx_discontinuity + 1]
 
         return Volume(image,
                       reference_frame=copy(self.reference_frame),
@@ -382,6 +408,13 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
                                f" for patient {self.dicom_header.PatientID}")
                 patient_weight = 75.0
 
+        if patient_weight < 1.0:
+            logger.warning(
+                f"The weight found in the dicom is {patient_weight}, "
+                "there is probably an error, "
+                "thus estimation of patient weight by 75.0 kg"
+                f" for patient {self.dicom_header.PatientID}")
+            patient_weight = 75.0
         self._patient_weight = patient_weight
 
         return patient_weight
@@ -420,12 +453,26 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
         times.sort()
         return times[0]
 
+    def _parse_time(self, t):
+        for fmt in ["%H:%M:%S", "%H%M%S", "%H%M%S.%f"]:
+            try:
+                return datetime.strptime(t, fmt).time()
+            except ValueError:
+                pass
+        raise ValueError("Could not parse time {}".format(t))
+
     def _get_decay_time(self):
         s = self.slices[0]
         acquisition_datetime = self._acquistion_datetime()
-        serie_datetime = datetime.strptime(
-            s[0x00080021].value + s[0x00080031].value.split('.')[0],
-            "%Y%m%d%H%M%S")
+        try:
+            serie_datetime = datetime.strptime(
+                s[0x00080021].value + s[0x00080031].value.split('.')[0],
+                "%Y%m%d%H%M%S")
+        except KeyError:
+            logger.warning(
+                f"No SeriesDate found for {self.dicom_header.PatientID}, AcquisitionDate is used"
+            )
+            serie_datetime = acquisition_datetime
 
         try:
             if (serie_datetime <= acquisition_datetime) and (
@@ -448,9 +495,12 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
 
             start_time_str = s.RadiopharmaceuticalInformationSequence[
                 0].RadiopharmaceuticalStartTime
-            start_time = time(int(start_time_str[0:2]),
-                              int(start_time_str[2:4]),
-                              int(start_time_str[4:6]))
+            try:
+                start_time = self._parse_time(start_time_str)
+            except ValueError:
+                raise ValueError(
+                    "There is an issue with the data for the DICOM"
+                    " tag 'RadiopharmaceuticalStartTime'")
             start_datetime = datetime.combine(scan_datetime.date(), start_time)
             decay_time = (scan_datetime - start_datetime).total_seconds()
         except KeyError:

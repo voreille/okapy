@@ -1,5 +1,3 @@
-from calendar import month_abbr
-from re import M
 import subprocess
 import json
 import six
@@ -269,7 +267,12 @@ class RieszFeatureExtractor(FeatureExtractor):
         print("MATLAB STDOUT!!!!!!!!!!!!!!")
         output = completed_matlab_process.stdout
         output_lines = output.splitlines()
-        results = json.loads(output_lines[-1])
+        try:
+            results = json.loads(output_lines[-1])
+        except IndexError:
+            raise Exception(
+                "MATLAB process failed, probably due to a missing MATLAB image"
+            )
 
         return results
 

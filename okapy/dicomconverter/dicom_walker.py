@@ -57,15 +57,19 @@ class DicomWalker():
                          path=str(file.resolve()))
 
     def _get_files(self, input_dirpath):
-        if type(input_dirpath) == str or type(input_dirpath) == Path:
-            return [f for f in Path(input_dirpath).rglob("*") if f.is_file()]
         if type(input_dirpath) == list:
             return [
                 f for path in input_dirpath for f in Path(path).rglob("*")
                 if f.is_file()
             ]
-        raise TypeError(f"input_dirpath must be a path or a list of paths, "
-                        f"string or pathlib.Path, not {type(input_dirpath)}")
+
+        try:
+            output = [f for f in Path(input_dirpath).rglob("*") if f.is_file()]
+        except Exception as e:
+            raise TypeError(
+                f"input_dirpath must be a path or a list of paths, "
+                f"string or pathlib.Path, not {type(input_dirpath)}")
+        return output
 
     def _walk(self, input_dirpath, cores=None):
         '''
