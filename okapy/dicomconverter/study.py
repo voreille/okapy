@@ -24,6 +24,7 @@ class Study():
                  study_instance_uid=None,
                  study_date=None,
                  submodalities=False,
+                 additional_dicom_tags=None,
                  patient_id=None):
         self.mask_files = list()
         self.volume_files = list()
@@ -31,6 +32,7 @@ class Study():
         self.study_date = study_date
         self.patient_id = patient_id
         self.submodalities = submodalities
+        self.additional_dicom_tags = additional_dicom_tags
 
     def _is_volume_matched(self, v):
         for m in self.mask_files:
@@ -59,6 +61,7 @@ class Study():
                         dicoms=[k.path for k in im_dicom_files],
                         study=self,
                         submodalities=self.submodalities,
+                        additional_dicom_tags=self.additional_dicom_tags,
                     ))
             except NotHandledModality as e:
                 warnings.warn(str(e))
