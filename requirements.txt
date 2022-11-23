@@ -11,5 +11,4 @@ pandas
 matplotlib
 scikit_learn
 SimpleITK
-tensorflow
 termcolor
