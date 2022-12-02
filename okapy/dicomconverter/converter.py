@@ -157,12 +157,18 @@ class NiftiConverter(BaseConverter):
         self,
         output_folder=".",
         labels_startswith=None,
+        additional_dicom_tags=None,
+        combine_segmentation=False,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.output_folder = Path(output_folder).resolve()
         self.study_processor = SimpleStudyProcessor()
         self.labels_startswith = labels_startswith
+        self.dicom_walker.additional_dicom_tags = additional_dicom_tags
+        self._additional_dicom_tags = additional_dicom_tags
+        self._combine_segmentation = False
+        self._combine_segmentation = combine_segmentation
 
     @staticmethod
     def from_params(params_path):
