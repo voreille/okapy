@@ -208,13 +208,13 @@ class NiftiConverter(BaseConverter):
             combine_segmentation=combine_segmentation,
         )
 
-    def process_study(self, study, output_folder=None):
+    def process_study(self, study, output_folder=None, labels=None):
         logger.debug(
             f"Start of processing study for patient {study.patient_id}")
         try:
             volumes, masks = self.study_processor(
                 study,
-                labels=self.list_labels,
+                labels=labels,
                 labels_startswith=self.labels_startswith)
         except Exception as e:
             logger.error(
@@ -240,7 +240,7 @@ class NiftiConverter(BaseConverter):
             "status": "OK",
         }
 
-    def __call__(self, input_folder, output_folder=None):
+    def __call__(self, input_folder, output_folder=None, labels=None):
         if output_folder is not None:
             self.output_folder = output_folder
 
@@ -253,7 +253,7 @@ class NiftiConverter(BaseConverter):
         else:
             result = list()
             for study in tqdm(studies_list):
-                result.append(self.process_study(study))
+                result.append(self.process_study(study, labels=labels))
 
         logger.debug(
             f"End of processing studies for {len(studies_list)} studies")
