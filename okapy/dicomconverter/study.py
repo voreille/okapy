@@ -193,7 +193,8 @@ class StudyProcessor():
                 print(e)
                 continue
 
-            if len(masks) == 0:
+            # TODO - Check with Valentin if this is the correct way to do it (not ==)
+            if len(masks) != 0:
                 new_reference_frame = self._get_new_reference_frame(
                     volume, masks)
             else:
