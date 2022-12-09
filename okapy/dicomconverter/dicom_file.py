@@ -134,13 +134,13 @@ class DicomFileBase():
     @property
     def dicom_header(self):
         if self._dicom_header is None and not type(
-                self.dicom_paths[0]) == FileDataset:
+            self.dicom_paths[0]) == FileDataset:
             self._dicom_header = DicomHeader.from_file(
                 self.dicom_paths[0],
                 additional_tags=self.additional_dicom_tags)
 
         elif self._dicom_header is None and type(
-                self.dicom_paths[0]) == FileDataset:
+            self.dicom_paths[0]) == FileDataset:
             self._dicom_header = DicomHeader.from_pydicom(
                 self.dicom_paths[0],
                 additional_tags=self.additional_dicom_tags)
@@ -267,11 +267,11 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
         (slices, dicom_paths,
          orthogonal_positions) = self._check_shape_consistency(
-             slices, dicom_paths, orthogonal_positions, dimension="Rows")
+            slices, dicom_paths, orthogonal_positions, dimension="Rows")
 
         (slices, dicom_paths,
          orthogonal_positions) = self._check_shape_consistency(
-             slices, dicom_paths, orthogonal_positions, dimension="Columns")
+            slices, dicom_paths, orthogonal_positions, dimension="Columns")
 
         (slices, dicom_paths, orthogonal_positions) = self._check_redundancy(
             slices, dicom_paths, orthogonal_positions)
@@ -285,8 +285,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         ])
         self.slice_spacing = mode(np.round(self.d_slices, decimals=5))
 
-        self.n_missing_slices, self.slice_discontinuities = self._check_missing_slices(
-        )
+        self.n_missing_slices, self.slice_discontinuities = self._check_missing_slices()
         expected_n_slices = len(self.slices) + self.n_missing_slices
         slice_shape = (slices[0].Rows, slices[0].Columns)  # TO CHECK
         self._reference_frame = ReferenceFrame.from_slice_info(
@@ -294,7 +293,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             origin_last_slice=slices[-1].ImagePositionPatient,
             orientation=slices[0].ImageOrientationPatient,
             pixel_spacing=slices[0].PixelSpacing,
-            shape=slice_shape + (expected_n_slices, ))
+            shape=slice_shape + (expected_n_slices,))
 
     def _interp_missing_slice(self, image):
         mean_slice_spacing = np.mean(self.d_slices)
@@ -316,7 +315,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             "MR": 0,
         }
         idx_discontinuity = np.where(self.slice_discontinuities)[0][0]
-        fill_shape = image.shape[:2] + (self.n_missing_slices, )
+        fill_shape = image.shape[:2] + (self.n_missing_slices,)
         return np.concatenate(
             (
                 image[..., :idx_discontinuity + 1],
@@ -343,7 +342,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             image = self._interp_missing_slice(image)
 
         if (np.sum(self.slice_discontinuities) == 1
-                and self.n_missing_slices > 1):
+            and self.n_missing_slices > 1):
             logger.warning(f"Multiple slices are missing for patient"
                            f"{self.dicom_header.PatientID}"
                            f" and modality "
@@ -488,7 +487,7 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
 
         try:
             if (serie_datetime <= acquisition_datetime) and (
-                    serie_datetime > datetime(1950, 1, 1)):
+                serie_datetime > datetime(1950, 1, 1)):
                 scan_datetime = serie_datetime
             elif 0x0009100d in s:
                 scan_datetime_value = s[0x0009100d].value
@@ -542,7 +541,7 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
             s.RadiopharmaceuticalInformationSequence[0].RadionuclideHalfLife)
         total_dose = float(
             s.RadiopharmaceuticalInformationSequence[0].RadionuclideTotalDose)
-        decay = 2**(-decay_time / half_life)
+        decay = 2 ** (-decay_time / half_life)
         actual_activity = total_dose * decay
 
         return pet * patient_weight * 1000 / actual_activity
@@ -586,7 +585,7 @@ class SegFile(MaskFile, name="SEG"):
             found = False
             for f in self.study.volume_files:
                 if (self.reference_image_uid ==
-                        f.dicom_header.SeriesInstanceUID):
+                    f.dicom_header.SeriesInstanceUID):
                     self._reference_image = f
                     found = True
                     break
@@ -672,7 +671,7 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
             found = False
             for f in self.study.volume_files:
                 if (self.reference_image_uid ==
-                        f.dicom_header.SeriesInstanceUID):
+                    f.dicom_header.SeriesInstanceUID):
                     self._reference_image = f
                     found = True
                     break
@@ -722,14 +721,13 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         self.label_number_mapping = {}
         for dcm in self.slices:
             if (self.reference_image_uid !=
-                    RtstructFile.get_reference_image_uid(dcm)):
+                RtstructFile.get_reference_image_uid(dcm)):
                 raise RuntimeError(
                     "The different instances of the rtstruct do not"
                     " point to the same reference image")
             for i, roi_seq in enumerate(dcm.StructureSetROISequence):
-
                 assert dcm.ROIContourSequence[
-                    i].ReferencedROINumber == roi_seq.ROINumber
+                           i].ReferencedROINumber == roi_seq.ROINumber
 
                 label = roi_seq.ROIName
 
@@ -756,12 +754,12 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
                     [nodes[k, 0], nodes[k, 1], nodes[k, 2]])
                 for k in range(nodes.shape[0])
             ],
-                                  axis=0)
+                axis=0)
             rr, cc = polygon(vx_indices[:, 0], vx_indices[:, 1])
             if len(rr) > 0 and len(cc) > 0:
                 if (np.min(rr) < 0 or np.min(cc) < 0
-                        or np.max(rr) > mask.shape[0]
-                        or np.min(cc) > mask.shape[1]):
+                    or np.max(rr) > mask.shape[0]
+                    or np.min(cc) > mask.shape[1]):
                     raise Exception(f"The RTSTRUCT file is compromised, "
                                     f"it seems that the contour with "
                                     f"label {label} is out of bound")
