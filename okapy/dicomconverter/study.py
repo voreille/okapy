@@ -102,13 +102,13 @@ class StudyProcessor():
         mask_processor=None,
         padding="whole_image",
         combine_segmentation=False,
-        only_segmented_image=False,
+        convert_image_without_seg=False,
     ):
         self.volume_processor = volume_processor
         self.mask_processor = mask_processor
         self.padding = padding
         self.combine_segmentation = combine_segmentation
-        self.only_segmented_image = only_segmented_image
+        self.convert_image_without_seg = convert_image_without_seg
 
     @staticmethod
     def _extract_volume_of_interest(mask_files, labels=None):
@@ -174,7 +174,7 @@ class StudyProcessor():
                     m for m in study.mask_files if m.reference_image_uid ==
                     f.dicom_header.series_instance_uid
                 ]
-            if len(mask_files) == 0 and self.only_segmented_image:
+            if len(mask_files) == 0 and not self.convert_image_without_seg:
                 logger.warning(f"Discarding {f.dicom_header.Modality} "
                                f"image {f.dicom_header.SeriesInstanceUID} "
                                f"since no VOI was found")
@@ -193,7 +193,11 @@ class StudyProcessor():
                 print(e)
                 continue
 
-            new_reference_frame = self._get_new_reference_frame(volume, masks)
+            if len(masks) == 0:
+                new_reference_frame = self._get_new_reference_frame(
+                    volume, masks)
+            else:
+                new_reference_frame = volume.reference_frame
 
             logger.info(f"Preprocessing image {f.modality}")
             if self.volume_processor:

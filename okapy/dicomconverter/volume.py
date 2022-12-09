@@ -57,18 +57,21 @@ def get_bb_diagonal_frame(mask, resampling_spacing=(1, 1, 1)):
 
 
 class ReferenceFrame():
+
     def __init__(
         self,
         origin=None,
         orientation_matrix=None,
         voxel_spacing=None,
         last_point_coordinate=None,
+        shape=None,
     ):
         super().__init__()
         self.origin = np.array(origin)
         self.orientation_matrix = np.array(orientation_matrix)
         self.voxel_spacing = np.array(voxel_spacing)
         self.last_point_coordinate = np.array(last_point_coordinate)
+        self._shape = shape
 
     @staticmethod
     def from_slice_info(
@@ -98,10 +101,13 @@ class ReferenceFrame():
         last_point_coordinate = np.dot(matrix,
                                        np.array(shape + (1, )) -
                                        (1, 1, 1, 0))[:3]
-        return ReferenceFrame(origin=origin,
-                              orientation_matrix=orientation_matrix,
-                              voxel_spacing=voxel_spacing,
-                              last_point_coordinate=last_point_coordinate)
+        return ReferenceFrame(
+            origin=origin,
+            orientation_matrix=orientation_matrix,
+            voxel_spacing=voxel_spacing,
+            last_point_coordinate=last_point_coordinate,
+            shape=shape,
+        )
 
     @staticmethod
     def get_diagonal_reference_frame(
@@ -137,8 +143,10 @@ class ReferenceFrame():
 
     @property
     def shape(self):
-        return np.ceil(self.mm_to_vx(
-            self.last_point_coordinate)).astype(int) + 1
+        if self._shape is None:
+            self._shape = np.ceil(self.mm_to_vx(
+                self.last_point_coordinate)).astype(int) + 1
+        return self._shape
 
     @property
     def inv_coordinate_matrix(self):
@@ -222,6 +230,7 @@ class ReferenceFrame():
 
 
 class VolumeBase():
+
     def __init__(self,
                  array=None,
                  reference_frame=None,
@@ -261,6 +270,7 @@ class VolumeBase():
 
 
 class Volume(VolumeBase):
+
     def __init__(self,
                  array=None,
                  reference_frame=None,
@@ -281,6 +291,7 @@ class Volume(VolumeBase):
 
 
 class BinaryVolume(VolumeBase):
+
     def __init__(self,
                  *args,
                  label=None,

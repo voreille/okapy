@@ -44,8 +44,8 @@ setup(
         'Programming Language :: Python :: 3.7',
         'Programming Language :: Python :: 3.8',
     ],
-    description=
-    "toolbox for biomedical analysis from preprocessing to model evaluation",
+    description=("toolbox for biomedical analysis from "
+                 "preprocessing to model evaluation"),
     entry_points={
         'console_scripts': [
             'okapy=okapy.cli:main',

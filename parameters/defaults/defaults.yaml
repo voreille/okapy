@@ -1,6 +1,6 @@
 general:
   padding: 10
-  submodalities: True
+  submodalities: False
   combine_segmentation: False
   result_format: "long"
   additional_dicom_tags:

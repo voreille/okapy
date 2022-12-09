@@ -1,4 +1,5 @@
 from abc import abstractmethod
+from doctest import ELLIPSIS_MARKER
 from pathlib import Path
 from functools import partial
 from tempfile import mkdtemp
@@ -13,7 +14,7 @@ from tqdm import tqdm
 
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.volume_processor import VolumeProcessorStack
-from okapy.dicomconverter.study import StudyProcessor
+from okapy.dicomconverter.study import StudyProcessor, SimpleStudyProcessor
 from okapy.featureextractor.featureextractor import OkapyExtractors
 import okapy.yaml.yaml as yaml
 
@@ -149,6 +150,110 @@ class BaseConverter():
     def __call__(self, input_folder, output_folder=None):
         pass
 
+
+class NiftiConverter(BaseConverter):
+
+    def __init__(
+        self,
+        output_folder=".",
+        labels_startswith=None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.output_folder = Path(output_folder).resolve()
+        self.study_processor = SimpleStudyProcessor()
+        self.labels_startswith = labels_startswith
+
+    @staticmethod
+    def from_params(params_path):
+        if type(params_path) == dict:
+            params = params_path
+        else:
+            with open(params_path, 'r') as f:
+                params = yaml.load(f)
+
+        additional_dicom_tags = params["general"].get("additional_dicom_tags",
+                                                      [])
+        combine_segmentation = params["general"].get("combine_segmentation",
+                                                     False)
+
+        dicom_walker = DicomWalker(
+            additional_dicom_tags=additional_dicom_tags,
+            submodalities=params["general"].get("submodalities", False),
+        )
+
+        mask_processor = VolumeProcessorStack.from_params(
+            params["mask_preprocessing"])
+
+        volume_processor = VolumeProcessorStack.from_params(
+            params["volume_preprocessing"], mask_resampler=mask_processor)
+
+        study_processor = StudyProcessor(
+            volume_processor=volume_processor,
+            mask_processor=mask_processor,
+            padding=params["general"].get("padding", 10),
+            combine_segmentation=combine_segmentation,
+        )
+
+        return NiftiConverter(
+            dicom_walker=dicom_walker,
+            study_processor=study_processor,
+            additional_dicom_tags=additional_dicom_tags,
+            combine_segmentation=combine_segmentation,
+        )
+
+    def process_study(self, study, output_folder=None):
+        logger.debug(
+            f"Start of processing study for patient {study.patient_id}")
+        try:
+            volumes, masks = self.study_processor(
+                study,
+                labels=self.list_labels,
+                labels_startswith=self.labels_startswith)
+        except Exception as e:
+            logger.error(
+                f"Error while processing patient_id {study.patient_id}"
+                f" error_message: {e}")
+            return {
+                "patient_id": study.patient_id,
+                "study_id": study.study_instance_uid,
+                "error": str(e),
+                "status": "failed",
+            }
+        for volume in volumes:
+            volume = self.write(volume, output_folder=output_folder)
+
+        for mask in masks:
+            # mask.reference_modality = volume.modality
+            mask = self.write(mask, is_mask=True, output_folder=output_folder)
+
+        logger.debug(f"Patient {study.patient_id} sucessfully processed")
+        return {
+            "patient_id": study.patient_id,
+            "study_id": study.study_instance_uid,
+            "status": "OK",
+        }
+
+    def __call__(self, input_folder, output_folder=None):
+        if output_folder is not None:
+            self.output_folder = output_folder
+
+        studies_list = self.dicom_walker(input_folder, cores=self.cores)
+        if self.cores:
+            with Pool(self.cores) as p:
+                result = list(
+                    tqdm(p.imap(self.process_study, studies_list),
+                         total=len(studies_list)))
+        else:
+            result = list()
+            for study in tqdm(studies_list):
+                result.append(self.process_study(study))
+
+        logger.debug(
+            f"End of processing studies for {len(studies_list)} studies")
+        return result
+
+
 class ExtractorConverter(BaseConverter):
 
     def __init__(self,
@@ -222,6 +327,7 @@ class ExtractorConverter(BaseConverter):
             mask_processor=mask_processor,
             padding=params["general"].get("padding", 10),
             combine_segmentation=combine_segmentation,
+            convert_image_without_seg=False
         )
 
         okapy_extractors = OkapyExtractors(params["feature_extraction"]) if "feature_extraction" in params else None
@@ -236,38 +342,38 @@ class ExtractorConverter(BaseConverter):
 
     def process_study(self, study, labels=None):
         results_df = pd.DataFrame() if self.okapy_extractors else None
-
+        index = 0
         for volume, masks in self.study_processor(study, labels=labels):
-            vol_dict = self.write(volume, output_folder=self.output_folder)
+            volume_info = self.write(volume, output_folder=self.output_folder)
             for mask in masks:
-                mask.reference_modality = vol_dict["modality"]
-                mask_dict = self.write(mask,
-                                  is_mask=True,
-                                  output_folder=self.output_folder)
+                mask.reference_modality = volume.modality
+                mask_info = self.write(mask,
+                                       is_mask=True,
+                                       output_folder=self.output_folder)
+                result = self.okapy_extractors(
+                    volume_info["path"],
+                    mask_info["path"],
+                    modality=volume_info["modality"])
+                for key, val in result.items():
+                    if "diagnostics" in key:
+                        continue
 
-                if self.okapy_extractors:
-                    result = self.okapy_extractors(vol_dict["path"],
-                                                   mask_dict["path"],
-                                                   modality=vol_dict["modality"])
-                    for key, val in result.items():
-                        if "diagnostics" in key:
-                            continue
-
-                        result_dict = {
-                            "patient_id": study.patient_id,
-                            "modality": vol_dict["modality"],
-                            "VOI": mask_dict["label"],
-                            "feature_name": key,
-                            "feature_value": val,
-                        }
-                        result_dict.update({
-                            k: getattr(vol_dict["dicom_header"], k)
-                            for k in self.additional_dicom_tags
-                        })
-                        results_df = results_df.append(
-                            result_dict,
-                            ignore_index=True,
-                        )
+                    result_dict = {
+                        "patient_id": study.patient_id,
+                        "modality": volume_info["modality"],
+                        "VOI": mask_info["label"],
+                        "feature_name": key,
+                        "feature_value": val,
+                    }
+                    result_dict.update({
+                        k: getattr(volume.dicom_header, k)
+                        for k in self.additional_dicom_tags
+                    })
+                    results_df = pd.concat([
+                        results_df,
+                        pd.DataFrame(result_dict, index=[index]),
+                    ])
+                    index = index + 1
 
         return results_df
 
