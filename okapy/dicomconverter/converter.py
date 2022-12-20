@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from okapy.dicomconverter.dicom_walker import DicomWalker
 from okapy.dicomconverter.volume_processor import VolumeProcessorStack
-from okapy.dicomconverter.study import StudyProcessor
+from okapy.dicomconverter.study import StudyProcessor, StudyProcessorDeep
 from okapy.featureextractor.featureextractor import OkapyExtractors
 import okapy.yaml.yaml as yaml
 
@@ -62,11 +62,11 @@ class BaseConverter():
             raise ValueError(
                 "padding must be a positive float or 'whole_image'")
 
-    def get_path(self, volume, is_mask=False, ouput_folder=None):
+    def get_path(self, volume, include_roi=False, is_mask=False, ouput_folder=None):
         if is_mask:
             name = self._get_name_mask(volume)
         else:
-            name = self._get_name_volume(volume)
+            name = self._get_name_volume(volume, include_roi)
         if ouput_folder is None:
             return Path(self.output_folder) / name
         else:
@@ -94,21 +94,21 @@ class BaseConverter():
                 f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}"
                 f".{self.extension}")
 
-    def _get_name_volume(self, volume):
+    def _get_name_volume(self, volume, include_roi=False):
         if self.naming == 0:
-            return (f"{volume.PatientID}__{volume.modality}"
+            return (f"{volume.PatientID}__{volume.modality}{'__' if include_roi else ''}{include_roi if include_roi else ''}"
                     f".{self.extension}")
         elif self.naming == 1:
-            return (f"{volume.PatientID}__{volume.modality}__"
+            return (f"{volume.PatientID}__{volume.modality}{'__' if include_roi else ''}{include_roi if include_roi else ''}__"
                     f"{volume.SeriesNumber}.{self.extension}")
         elif self.naming == 2:
             return (
-                f"{volume.PatientID}__{volume.modality}__"
+                f"{volume.PatientID}__{volume.modality}{'__' if include_roi else ''}{include_roi if include_roi else ''}__"
                 f"{volume.SeriesNumber}__"
                 f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}"
                 f".{self.extension}")
 
-    def write(self, volume, is_mask=False, dtype=None, output_folder=None):
+    def write(self, volume, include_roi=False, is_mask=False, dtype=None, output_folder=None):
         if dtype:
             volume = volume.astype(dtype)
         elif self.volume_dtype and not is_mask:
@@ -118,6 +118,7 @@ class BaseConverter():
 
         counter = 0
         path = self.get_path(volume,
+                             include_roi=include_roi,
                              is_mask=is_mask,
                              ouput_folder=output_folder)
         new_path = path
@@ -218,12 +219,16 @@ class ExtractorConverter(BaseConverter):
         volume_processor = VolumeProcessorStack.from_params(
             params["volume_preprocessing"], mask_resampler=mask_processor)
 
-        study_processor = StudyProcessor(
+        # TODO - Don't hard-code this here
+        study_processor_class = StudyProcessorDeep if params["general"].get("study_processor", None) == "studyprocessor_deep" else StudyProcessor
+
+        study_processor = study_processor_class(
             volume_processor=volume_processor,
             mask_processor=mask_processor,
             padding=params["general"].get("padding", 10),
             combine_segmentation=combine_segmentation,
-            convert_image_without_seg=False
+            convert_image_without_seg=False,
+            patch_size=params["general"].get("patch_size", None)
         )
 
         okapy_extractors = OkapyExtractors(params["feature_extraction"]) if "feature_extraction" in params else None
@@ -240,7 +245,13 @@ class ExtractorConverter(BaseConverter):
         results_df = pd.DataFrame() if self.okapy_extractors else None
         index = 0
         for volume, masks in self.study_processor(study, labels=labels):
-            volume_info = self.write(volume, output_folder=self.output_folder)
+
+            # TODO - Handle this more elegantly
+            if isinstance(self.study_processor, StudyProcessorDeep):
+                volume_info = self.write(volume, include_roi=masks[0].label, output_folder=self.output_folder)
+            else:
+                volume_info = self.write(volume, output_folder=self.output_folder)
+
             for mask in masks:
                 mask.reference_modality = volume.modality
                 mask_info = self.write(mask,

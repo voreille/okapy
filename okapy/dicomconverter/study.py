@@ -103,6 +103,7 @@ class StudyProcessor():
         padding="whole_image",
         combine_segmentation=False,
         convert_image_without_seg=False,
+        **kwargs
     ):
         self.volume_processor = volume_processor
         self.mask_processor = mask_processor
@@ -135,7 +136,7 @@ class StudyProcessor():
                                    reference_frame.coordinate_matrix)
         projected_points = np.stack(
             [np.dot(projection_matrix, p)[:3] for p in points], axis=-1)
-        bb_proj = np.zeros((6, ))
+        bb_proj = np.zeros((6,))
         bb_proj[:3] = np.min(projected_points, axis=-1)
         bb_proj[3:] = np.max(projected_points, axis=-1)
         return bb_proj
@@ -172,7 +173,7 @@ class StudyProcessor():
             else:
                 mask_files = [
                     m for m in study.mask_files if m.reference_image_uid ==
-                    f.dicom_header.series_instance_uid
+                                                   f.dicom_header.series_instance_uid
                 ]
             if len(mask_files) == 0 and not self.convert_image_without_seg:
                 logger.warning(f"Discarding {f.dicom_header.Modality} "
@@ -217,5 +218,99 @@ class StudyProcessor():
 
             logger.info(f"Preprocessing of {f.modality} image is done.")
             results.append((volume, masks))
+
+        return results
+
+
+class StudyProcessorDeep(StudyProcessor):
+
+    def __init__(self, volume_processor=None,
+                 mask_processor=None,
+                 padding="whole_image",
+                 combine_segmentation=False,
+                 convert_image_without_seg=False,
+                 patch_size=64):
+        super().__init__(volume_processor, mask_processor, padding, combine_segmentation, convert_image_without_seg)
+        self.patch_size = patch_size
+
+    def _get_new_reference_frame(self, volume, mask):
+        bb_vx = self._project_bb(mask.bb_vx, mask.reference_frame, volume.reference_frame)
+
+        bb_center = [(bb_vx[0] + bb_vx[3]) / 2, (bb_vx[1] + bb_vx[4]) / 2, (bb_vx[2] + bb_vx[5]) / 2]
+        bb_center = np.floor(bb_center)
+
+        bb_vx[:3] = bb_center[:3] - np.floor(self.patch_size / 2/ volume.reference_frame.voxel_spacing)
+        bb_vx[3:] = bb_center[:3] + np.floor(self.patch_size / 2/ volume.reference_frame.voxel_spacing)
+
+        bb_volume = np.concatenate([[0, 0, 0], volume.reference_frame.shape])
+        bb_vx = bb_intersection([bb_volume, bb_vx])
+
+        return ReferenceFrame(
+            origin=volume.reference_frame.vx_to_mm(bb_vx[:3]),
+            orientation_matrix=volume.reference_frame.orientation_matrix,
+            voxel_spacing=volume.reference_frame.voxel_spacing,
+            last_point_coordinate=volume.reference_frame.vx_to_mm(bb_vx[3:]),
+        )
+
+    def __call__(self, study, labels=None):
+        results = list()
+        for f in study.volume_files:
+            logger.info(f"Start preprocessing image {f.modality}")
+            if self.combine_segmentation:
+                mask_files = study.mask_files
+            else:
+                mask_files = [
+                    m for m in study.mask_files if m.reference_image_uid ==
+                                                   f.dicom_header.series_instance_uid
+                ]
+            if len(mask_files) == 0 and not self.convert_image_without_seg:
+                logger.warning(f"Discarding {f.dicom_header.Modality} "
+                               f"image {f.dicom_header.SeriesInstanceUID} "
+                               f"since no VOI was found")
+                continue
+
+            masks = self._extract_volume_of_interest(mask_files, labels=labels)
+
+            if len(masks) == 0 and len(mask_files) > 0:
+                raise MissingSegmentationException(
+                    f"No segmentation found for study with"
+                    f" StudyInstanceUID {study.study_instance_uid}")
+
+            try:
+                volume_original = f.get_volume()
+            except PETUnitException as e:
+                print(e)
+                continue
+
+            if len(masks) == 0:
+                new_reference_frame = volume_original.reference_frame
+                if self.volume_processor:
+                    volume = self.volume_processor(
+                        volume_original,
+                        mask_files=mask_files,
+                        new_reference_frame=new_reference_frame)
+                logger.info(f"Preprocessing VOIs for {f.modality} image")
+                results.append((volume, masks))
+
+            for mask in masks:
+                new_reference_frame = self._get_new_reference_frame(volume_original, mask)
+
+                logger.info(f"Preprocessing image {f.modality}")
+                if self.volume_processor:
+                    volume = self.volume_processor(
+                        volume_original,
+                        mask_files=mask_files,
+                        new_reference_frame=new_reference_frame)
+                logger.info(f"Preprocessing VOIs for {f.modality} image")
+                if self.mask_processor:
+                    masks = [
+                        self.mask_processor(
+                            mask,
+                            new_reference_frame=volume.reference_frame,
+                        )
+                    ]
+
+                logger.info(f"Preprocessing of {f.modality} image is done.")
+                results.append((volume, masks))
 
         return results
