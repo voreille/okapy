@@ -134,7 +134,7 @@
           <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
         </button>
       </div>
-      <label class="toc-overlay-icon toc-header-icon no-toc" for="__toc">
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
         <div class="visually-hidden">Toggle table of contents sidebar</div>
         <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
       </label>
@@ -191,7 +191,7 @@
               <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
             </button>
           </div>
-          <label class="toc-overlay-icon toc-content-icon no-toc" for="__toc">
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
             <div class="visually-hidden">Toggle table of contents sidebar</div>
             <i class="icon"><svg><use href="#svg-toc"></use></svg></i>
           </label>
@@ -233,6 +233,125 @@ with the <cite>labels_startswith</cite> parameter that can be passe to the const
 To use the converter this way, one must ensure that segmentation are present for each studies in the form of SEG or RTSTRUCT files.
 For PET images, one might want to use a RSTRUCT drawn on the CT, this can be achieved with the parameter <code class="code docutils literal notranslate"><span class="pre">combine_segmentation:</span> <span class="pre">True</span></code> in the
 parameter file. More details are provided below for the parameter file.</p>
+<section id="parameter-file">
+<h2>Parameter File<a class="headerlink" href="#parameter-file" title="Link to this heading">#</a></h2>
+<p>The parameter file for OkaPy is a YAML file containing configuration settings for various aspects of the processing pipeline. Here is an example:</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">general</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">padding</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span><span class="w"> </span><span class="c1"># padding in [mm] around the union of the segmentations to avoid resampling huge image, &quot;whole_image&quot; is a possible value if you want to resample the whole image</span>
+<span class="w">  </span><span class="nt">submodalities</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">False</span><span class="w"> </span><span class="c1"># used for MR, if true okapy parse the SeriesDescription DICOM tag for ` --- ` and append the following string to the modality</span>
+<span class="w">  </span><span class="nt">combine_segmentation</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">False</span><span class="w"> </span><span class="c1"># If the segmentation within a study should be used for all modality (can be useful for PT when the RTSTRUCT is drawn on the CT)</span>
+<span class="w">  </span><span class="nt">result_format</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;long&quot;</span><span class="w"> </span><span class="c1"># &quot;long&quot; or &quot;multiindex&quot;, &quot;long&quot; should be used</span>
+<span class="w">  </span><span class="nt">additional_dicom_tags</span><span class="p">:</span><span class="w"> </span><span class="c1"># Add DICOM tag here, they will be added in the final Dataframe</span>
+<span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;SeriesInstanceUID&quot;</span>
+
+<span class="nt">volume_preprocessing</span><span class="p">:</span><span class="w"> </span><span class="c1"># all the preprocessing applied to the images by modality</span>
+<span class="w">  </span><span class="nt">common</span><span class="p">:</span><span class="w"> </span><span class="c1"># to apply to all the images</span>
+<span class="w">  </span><span class="nt">PT</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">bspline_resampler</span><span class="p">:</span><span class="w"> </span><span class="c1"># name defined when subclassing `okapy.dicomconverter.volume_processor.VolumeProcessor`</span>
+<span class="w">      </span><span class="nt">resampling_spacing</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">2.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">2.0</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">order</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<span class="w">  </span><span class="nt">CT</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">bspline_resampler</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">resampling_spacing</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="nv">1.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1.0</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="nv">1.0</span><span class="p p-Indicator">]</span>
+<span class="w">      </span><span class="nt">order</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<span class="w">  </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="c1"># to apply if the modality is not defined</span>
+
+<span class="nt">mask_preprocessing</span><span class="p">:</span><span class="w"> </span><span class="c1"># all the preprocessing applied to the segmentation (RTSTRUCT or SEG), the &quot;pixel_spacing&quot; is inferred on the image it corresponds to</span>
+<span class="w">  </span><span class="nt">default</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">binary_bspline_resampler</span><span class="p">:</span>
+<span class="w">      </span><span class="nt">order</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+
+<span class="nt">feature_extraction</span><span class="p">:</span><span class="w"> </span><span class="c1"># parameters for the feature extraction, can be defined for each modality/submodality</span>
+<span class="w">  </span><span class="nt">MR</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">pyradiomics</span><span class="p">:</span><span class="w"> </span><span class="c1"># The following are the parameters for pyradiomics, you can paste parameters.yaml from their github with the right indentation</span>
+<span class="w">      </span><span class="nt">original</span><span class="p">:</span>
+<span class="w">        </span><span class="nt">imageType</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">Original</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{}</span>
+<span class="w">        </span><span class="nt">featureClass</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">shape</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">firstorder</span><span class="p">:</span>
+
+<span class="w">        </span><span class="nt">setting</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">normalize</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">False</span>
+<span class="w">          </span><span class="nt">normalizeScale</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100</span><span class="w">  </span><span class="c1"># This allows you to use more or less the same bin width.</span>
+<span class="w">          </span><span class="nt">binWidth</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5</span>
+<span class="w">          </span><span class="nt">voxelArrayShift</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+<span class="w">          </span><span class="nt">label</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<span class="w">  </span><span class="nt">common</span><span class="p">:</span><span class="w"> </span><span class="c1"># Feature extraction applied to all modalities</span>
+<span class="w">      </span><span class="nt">riesz</span><span class="p">:</span><span class="w"> </span><span class="c1"># Not supported out of the box, a MATLAB image of QuantImage v1 is used for that</span>
+<span class="w">        </span><span class="nt">extractor0</span><span class="p">:</span>
+<span class="w">          </span><span class="nt">RieszOrder</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<span class="w">          </span><span class="nt">RieszScales</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">4</span>
+</pre></div>
+</div>
+<p>Other examples can be found in <code class="file docutils literal notranslate"><span class="pre">parameters/</span></code>.
+The preprocessing applied to the images and segmentations can be tailored to your need. This step is abstracted by the class <code class="xref py py-class docutils literal notranslate"><span class="pre">okapy.dicomconverter.volume_processor.VolumeProcessor</span></code>.
+By subclassing this class it is possible to define your own preprocessing step.</p>
+</section>
+<section id="subclassing-volumeprocessor">
+<h2>Subclassing <code class="xref py py-class docutils literal notranslate"><span class="pre">VolumeProcessor</span></code><a class="headerlink" href="#subclassing-volumeprocessor" title="Link to this heading">#</a></h2>
+<p>You can create a custom processor by subclassing <code class="xref py py-class docutils literal notranslate"><span class="pre">okapy.dicomconverter.volume_processor.VolumeProcessor</span></code>.
+When doing so, it’s essential to specify a <cite>name</cite> parameter for reference in the parameter YAML file. Here’s an example:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span> <span class="nc">MyImageProcessor</span><span class="p">(</span><span class="n">VolumeProcessor</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;my_image_processor&quot;</span><span class="p">):</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">my_arg1</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">my_arg2</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">my_arg1</span> <span class="o">=</span> <span class="n">my_arg1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">my_arg2</span> <span class="o">=</span> <span class="n">my_arg2</span>
+
+    <span class="k">def</span> <span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">mask_file</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="c1"># your processing</span>
+        <span class="k">return</span> <span class="n">volume</span>
+</pre></div>
+</div>
+<p>The <cite>MyImageProcessor</cite> example demonstrates subclassing <cite>VolumeProcessor</cite>, specifying initialization arguments through <cite>__init__</cite>, and implementing the processing logic in the <cite>process</cite> method. Ensure to provide the required <cite>name</cite> parameter.</p>
+<p>Requirements for the subclass:
+- Implement the <code class="xref py py-meth docutils literal notranslate"><span class="pre">__init__()</span></code> method specifying preprocessing arguments.
+- Implement the <code class="xref py py-meth docutils literal notranslate"><span class="pre">process()</span></code> method, which receives the image (<cite>volume</cite> variable) and segmentation (<cite>mask_file</cite> variable).</p>
+<p>The base class, <code class="xref py py-class docutils literal notranslate"><span class="pre">okapy.dicomconverter.volume_processor.VolumeProcessor</span></code>, provides access to the segmentation resampler through the <cite>mask_resampler</cite> attribute.</p>
+</section>
+<section id="additional-example-masked-standardizer">
+<h2>Additional Example: Masked Standardizer<a class="headerlink" href="#additional-example-masked-standardizer" title="Link to this heading">#</a></h2>
+<p>Here’s an additional example illustrating a processor that standardizes an image within a region defined by a specific label:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">class</span> <span class="nc">MaskedStandardizer</span><span class="p">(</span><span class="n">VolumeProcessor</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s2">&quot;masked_standardizer&quot;</span><span class="p">):</span>
+
+    <span class="k">def</span> <span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="n">mask_label</span><span class="o">=</span><span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="n">mask_resampler</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mask_label</span> <span class="o">=</span> <span class="n">mask_label</span>
+        <span class="k">if</span> <span class="n">mask_resampler</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="s2">&quot;mask_resampler cannot be None&quot;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">mask_resampler</span> <span class="o">=</span> <span class="n">mask_resampler</span>
+
+    <span class="k">def</span> <span class="nf">_get_mask_array</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mask_files</span><span class="p">,</span> <span class="n">reference_frame</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">mask_files</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask_label</span> <span class="ow">in</span> <span class="n">f</span><span class="o">.</span><span class="n">labels</span><span class="p">:</span>
+                <span class="n">mask</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">get_volume</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">mask_label</span><span class="p">)</span>
+                <span class="k">break</span>
+        <span class="k">if</span> <span class="n">mask</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">MissingSegmentationException</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;The label </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">mask_label</span><span class="si">}</span><span class="s2"> was not found.&quot;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">mask_resampler</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="n">new_reference_frame</span><span class="o">=</span><span class="n">reference_frame</span><span class="p">)</span><span class="o">.</span><span class="n">array</span> <span class="o">!=</span> <span class="mi">0</span>
+
+    <span class="k">def</span> <span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">volume</span><span class="p">,</span> <span class="n">mask_files</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="n">array</span> <span class="o">=</span> <span class="n">volume</span><span class="o">.</span><span class="n">array</span>
+        <span class="n">mask_array</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_mask_array</span><span class="p">(</span>
+            <span class="n">mask_files</span><span class="p">,</span> <span class="n">reference_frame</span><span class="o">=</span><span class="n">volume</span><span class="o">.</span><span class="n">reference_frame</span><span class="p">)</span>
+        <span class="n">mean</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span><span class="n">array</span><span class="p">[</span><span class="n">mask_array</span><span class="p">])</span>
+        <span class="n">std</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">array</span><span class="p">[</span><span class="n">mask_array</span><span class="p">])</span>
+        <span class="n">array</span> <span class="o">=</span> <span class="p">(</span><span class="n">array</span> <span class="o">-</span> <span class="n">mean</span><span class="p">)</span> <span class="o">/</span> <span class="n">std</span>
+        <span class="n">volume</span><span class="o">.</span><span class="n">array</span> <span class="o">=</span> <span class="n">array</span>
+        <span class="k">return</span> <span class="n">volume</span>
+</pre></div>
+</div>
+<p>Now if you want to use the <cite>MaskedStandardizer</cite> in your pipeline, simply write this in your YAML file (under the section preprocesing):</p>
+<div class="highlight-yaml notranslate"><div class="highlight"><pre><span></span><span class="nt">volume_preprocessing</span><span class="p">:</span>
+<span class="w">  </span><span class="nt">MR</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">masked_standardizer</span><span class="p">:</span><span class="w"> </span><span class="c1"># the name you defined during suclassing</span>
+<span class="w">      </span><span class="nt">mask_label</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;edema&quot;</span><span class="w"> </span><span class="c1"># the argument you define, here as an example we took edema</span>
+</pre></div>
+</div>
+</section>
 </section>
 
         </article>
@@ -278,8 +397,29 @@ parameter file. More details are provided below for the parameter file.</p>
         
       </footer>
     </div>
-    <aside class="toc-drawer no-toc">
+    <aside class="toc-drawer">
       
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Usage</a><ul>
+<li><a class="reference internal" href="#parameter-file">Parameter File</a></li>
+<li><a class="reference internal" href="#subclassing-volumeprocessor">Subclassing <code class="xref py py-class docutils literal notranslate"><span class="pre">VolumeProcessor</span></code></a></li>
+<li><a class="reference internal" href="#additional-example-masked-standardizer">Additional Example: Masked Standardizer</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
       
       
     </aside>

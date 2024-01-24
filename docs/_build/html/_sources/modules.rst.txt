@@ -15,7 +15,7 @@ okapy.dicomconverter.dicom_walker
    :members:
 
 okapy.dicomconverter.study
----------------------------------
+--------------------------
 
 .. automodule:: okapy.dicomconverter.study
    :members:
