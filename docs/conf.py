@@ -20,6 +20,7 @@
 #
 import os
 import sys
+
 sys.path.insert(0, os.path.abspath('..'))
 
 import okapy
@@ -32,7 +33,13 @@ import okapy
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
-extensions = ['sphinx.ext.autodoc', 'sphinx.ext.viewcode']
+extensions = [
+    'sphinx.ext.viewcode',
+    'sphinx.ext.duration',
+    'sphinx.ext.doctest',
+    'sphinx.ext.autodoc',
+    'sphinx.ext.autosummary',
+]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -65,7 +72,7 @@ release = okapy.__version__
 #
 # This is also used if you do content translation via gettext catalogs.
 # Usually you set "language" from the command line for these cases.
-language = None
+language = 'en'
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
@@ -78,13 +85,12 @@ pygments_style = 'sphinx'
 # If true, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = True
 
-
 # -- Options for HTML output -------------------------------------------
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'alabaster'
+html_theme = 'sphinx_rtd_theme'
 
 # Theme options are theme-specific and customize the look and feel of a
 # theme further.  For a list of options available for each theme, see the
@@ -97,12 +103,10 @@ html_theme = 'alabaster'
 # so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ['_static']
 
-
 # -- Options for HTMLHelp output ---------------------------------------
 
 # Output file base name for HTML help builder.
 htmlhelp_basename = 'okapydoc'
-
 
 # -- Options for LaTeX output ------------------------------------------
 
@@ -128,22 +132,15 @@ latex_elements = {
 # (source start file, target name, title, author, documentclass
 # [howto, manual, or own class]).
 latex_documents = [
-    (master_doc, 'okapy.tex',
-     u'OkaPy Documentation',
-     u'Valentin Oreiller', 'manual'),
+    (master_doc, 'okapy.tex', u'OkaPy Documentation', u'Valentin Oreiller',
+     'manual'),
 ]
-
 
 # -- Options for manual page output ------------------------------------
 
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
-man_pages = [
-    (master_doc, 'okapy',
-     u'OkaPy Documentation',
-     [author], 1)
-]
-
+man_pages = [(master_doc, 'okapy', u'OkaPy Documentation', [author], 1)]
 
 # -- Options for Texinfo output ----------------------------------------
 
@@ -151,13 +148,6 @@ man_pages = [
 # (source start file, target name, title, author,
 #  dir menu entry, description, category)
 texinfo_documents = [
-    (master_doc, 'okapy',
-     u'OkaPy Documentation',
-     author,
-     'okapy',
-     'One line description of project.',
-     'Miscellaneous'),
+    (master_doc, 'okapy', u'OkaPy Documentation', author, 'okapy',
+     'One line description of project.', 'Miscellaneous'),
 ]
-
-
-

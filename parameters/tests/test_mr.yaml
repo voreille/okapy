@@ -1,0 +1,83 @@
+general:
+  padding: 10
+  submodalities: True
+  combine_segmentation: False
+  result_format: "long"
+  additional_dicom_tags:
+    - "SeriesInstanceUID"
+
+volume_preprocessing:
+  common:
+    bspline_resampler:
+      resampling_spacing: [1.0, 1.0, 1.0]
+      order: 3
+    masked_standardizer:
+      mask_label: " edema"
+  default:
+
+mask_preprocessing:
+  default:
+    binary_bspline_resampler:
+      order: 3
+
+feature_extraction:
+  MR_FLAIR:
+    pyradiomics:
+      original:
+        imageType:
+          Original: {}
+        featureClass:
+          shape:
+          firstorder:
+
+        setting:
+          normalize: False
+          normalizeScale: 100 # This allows you to use more or less the same bin width.
+          binWidth: 5
+          voxelArrayShift: 0
+          label: 1
+  MR_T1c:
+    pyradiomics:
+      original:
+        imageType:
+          Original: {}
+        featureClass:
+          shape:
+          firstorder:
+
+        setting:
+          normalize: False
+          normalizeScale: 100 # This allows you to use more or less the same bin width.
+          binWidth: 5
+          voxelArrayShift: 0
+          label: 1
+  MR_T1:
+    pyradiomics:
+      original:
+        imageType:
+          Original: {}
+        featureClass:
+          shape:
+          firstorder:
+
+        setting:
+          normalize: False
+          normalizeScale: 100 # This allows you to use more or less the same bin width.
+          binWidth: 5
+          voxelArrayShift: 0
+          label: 1
+  MR_T2:
+    pyradiomics:
+      original:
+        imageType:
+          Original: {}
+        featureClass:
+          shape:
+          firstorder:
+
+        setting:
+          normalize: False
+          normalizeScale: 100 # This allows you to use more or less the same bin width.
+          binWidth: 5
+          voxelArrayShift: 0
+          label: 1

@@ -16,7 +16,8 @@ OkaPy
 
 
 
-toolbox for biomedical analysis from preprocessing to model evaluation
+Toolbox for the conversion of 3D DICOM images to NIfTI format and also the extraction of radiomics features 
+directly from the DICOM files.
 
 
 * Free software: MIT license
@@ -26,7 +27,9 @@ toolbox for biomedical analysis from preprocessing to model evaluation
 Features
 --------
 
-* TODO
+* Conversion of DICOM to NIfTI
+* Conversion of DICOM RTSTRUCT to NIfTI
+* Radiomics features extraction from diverse modalities, mainly using `PyRadiomics <https://www.radiomics.io/pyradiomics.html>`_ 
 
 Credits
 -------

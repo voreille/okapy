@@ -26,6 +26,10 @@ class DicomFile():
 
 
 class DicomWalker():
+    """
+    Instances of this class are used to crawl in the arborescence of a directory
+    and sort all the DICOM found and order them into :class:`okapy.dicomconverter.study.Study`
+    """
 
     def __init__(
         self,

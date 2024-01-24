@@ -2,7 +2,7 @@ Welcome to OkaPy's documentation!
 ======================================
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 6
    :caption: Contents:
 
    readme
