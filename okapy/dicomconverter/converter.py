@@ -152,6 +152,15 @@ class BaseConverter():
 
 
 class NiftiConverter(BaseConverter):
+    """
+    An instance of this class is used to convert a folder containing 
+    DICOM files to NIfTI files. The DICOM files are first sorted by 
+    a okapy.dicomconverter.dicom_walker.DicomWalker. The files are
+    then organized by StudyInstanceUID as instances of
+    okapy.dicomconverter.study.Study. Then, the Study instances are processed
+    one by one. This allow to use the same segmentation (as the form of a RTSTRUCT or a SEG)
+    on different modalities within the same study.
+    """
 
     def __init__(
         self,
