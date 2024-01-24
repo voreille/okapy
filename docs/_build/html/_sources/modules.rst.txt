@@ -1,7 +1,5 @@
 Modules
 =======
 
-.. autosummary::
-    :toctree: generated
-
-    okapy
+.. automodule:: okapy.dicomconverter.converter
+   :members:

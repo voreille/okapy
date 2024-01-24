@@ -153,13 +153,12 @@ class BaseConverter():
 
 class NiftiConverter(BaseConverter):
     """
-    An instance of this class is used to convert a folder containing 
-    DICOM files to NIfTI files. The DICOM files are first sorted by 
-    a okapy.dicomconverter.dicom_walker.DicomWalker. The files are
-    then organized by StudyInstanceUID as instances of
-    okapy.dicomconverter.study.Study. Then, the Study instances are processed
-    one by one. This allow to use the same segmentation (as the form of a RTSTRUCT or a SEG)
-    on different modalities within the same study.
+    This class represents an instance used for converting a folder containing DICOM files
+    to NIfTI files. The DICOM files are initially sorted using okapy.dicomconverter.dicom_walker.DicomWalker.
+    Subsequently, the files are organized based on StudyInstanceUID, creating instances of
+    okapy.dicomconverter.study.Study. The processing is then carried out sequentially on each Study instances.
+    This approach allows for application of the same segmentation (in the form of RTSTRUCT or SEG)
+    across different modalities within the same study.
     """
 
     def __init__(
@@ -265,6 +264,29 @@ class NiftiConverter(BaseConverter):
 
 
 class ExtractorConverter(BaseConverter):
+    """
+    This class represents an instance used for converting a folder containing DICOM files
+    to NIfTI files. The DICOM files are initially sorted using okapy.dicomconverter.dicom_walker.DicomWalker.
+    Subsequently, the files are organized based on StudyInstanceUID, creating instances of
+    okapy.dicomconverter.study.Study. The processing is then carried out sequentially on each Study instance,
+    enabling the application of the same segmentation (in the form of RTSTRUCT or SEG)
+    across different modalities within the same study.
+
+    Additionally, this class performs feature extraction on the NIfTI files if segmentation is provided.
+    To instantiate this class, use the ExtractorConverter.from_params(params_path) method.
+    The `params_path` is a path pointing to a .yaml file containing all the relevant parameters.
+    An example of a parameters file can be found in the parameters/ folder.
+
+    Example usage:
+    ```python
+    params_path = "path/to/parameters.yaml"
+    converter = okapy.dicomconverter.converter.ExtractorConverter.from_params(params_path)
+    results = converter(folder_path)
+    ```
+    
+    `results` is a pandas dataframe with the features values for each different images and modalities.
+
+    """
 
     def __init__(self,
                  okapy_extractors=None,
@@ -337,8 +359,7 @@ class ExtractorConverter(BaseConverter):
             mask_processor=mask_processor,
             padding=params["general"].get("padding", 10),
             combine_segmentation=combine_segmentation,
-            convert_image_without_seg=False
-        )
+            convert_image_without_seg=False)
 
         okapy_extractors = OkapyExtractors(params["feature_extraction"])
 
