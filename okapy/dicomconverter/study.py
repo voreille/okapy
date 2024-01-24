@@ -19,6 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 class Study():
+    """
+    This class serves as an abstraction for the StudyInstanceUID in the DICOM context.
+
+    Instances of this class are created by the :class:`okapy.dicomconverter.dicom_walker.DicomWalker`
+    and are designed to store DICOM file paths, organized by modality (and optionally by submodalities).
+
+    """
 
     def __init__(self,
                  study_instance_uid=None,

@@ -16,11 +16,13 @@ You can either clone the public repository:
 
     $ git clone git://github.com/voreille/okapy
 
-Once you have a copy of the source, you can install it with:
+Once you have a copy of the source open a terminal within the okapy director
+and  you can install it with:
 
 .. code-block:: console
 
-    $ python setup.py install
+    $ pip install numpy # if not already installed
+    $ pip install -e .
 
 
 .. _Github repo: https://github.com/voreille/okapy

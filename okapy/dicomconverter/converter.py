@@ -156,7 +156,7 @@ class NiftiConverter(BaseConverter):
     This class represents an instance used for converting a folder containing DICOM files
     to NIfTI files. The DICOM files are initially sorted using okapy.dicomconverter.dicom_walker.DicomWalker.
     Subsequently, the files are organized based on StudyInstanceUID, creating instances of
-    okapy.dicomconverter.study.Study. The processing is then carried out sequentially on each Study instances.
+    :class:`okapy.dicomconverter.study.Study`. The processing is then carried out sequentially on each Study instances.
     This approach allows for application of the same segmentation (in the form of RTSTRUCT or SEG)
     across different modalities within the same study.
     """
@@ -277,12 +277,16 @@ class ExtractorConverter(BaseConverter):
     The `params_path` is a path pointing to a .yaml file containing all the relevant parameters.
     An example of a parameters file can be found in the parameters/ folder.
 
-    Example usage:
-    ```python
-    params_path = "path/to/parameters.yaml"
-    converter = okapy.dicomconverter.converter.ExtractorConverter.from_params(params_path)
-    results = converter(folder_path)
-    ```
+    Once the features are extracted, the NIfTI files are deleted. By default they are stored in a temp
+    folder using the python function :mod:`tempfile.mkdtemp`.
+
+    Example usage::
+
+        from okapy.dicomconverter.converter import ExtractorConverter
+
+        params_path = "path/to/parameters.yaml" 
+        converter = ExtractorConverter.from_params(params_path)
+        results = converter(folder_path)
     
     `results` is a pandas dataframe with the features values for each different images and modalities.
 

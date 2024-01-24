@@ -197,8 +197,10 @@
           </label>
         </div>
         <article role="main">
-          <section id="module-okapy.dicomconverter.converter">
-<span id="modules"></span><h1>Modules<a class="headerlink" href="#module-okapy.dicomconverter.converter" title="Link to this heading">#</a></h1>
+          <section id="modules">
+<h1>Modules<a class="headerlink" href="#modules" title="Link to this heading">#</a></h1>
+<section id="module-okapy.dicomconverter.converter">
+<span id="okapy-dicomconverter-converter"></span><h2>okapy.dicomconverter.converter<a class="headerlink" href="#module-okapy.dicomconverter.converter" title="Link to this heading">#</a></h2>
 <dl class="py class">
 <dt class="sig sig-object py" id="okapy.dicomconverter.converter.ExtractorConverter">
 <em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.converter.</span></span><span class="sig-name descname"><span class="pre">ExtractorConverter</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">okapy_extractors</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">result_format</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'long'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">additional_dicom_tags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">combine_segmentation</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/converter.html#ExtractorConverter"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.converter.ExtractorConverter" title="Link to this definition">#</a></dt>
@@ -212,12 +214,16 @@ across different modalities within the same study.</p>
 To instantiate this class, use the ExtractorConverter.from_params(params_path) method.
 The <cite>params_path</cite> is a path pointing to a .yaml file containing all the relevant parameters.
 An example of a parameters file can be found in the parameters/ folder.</p>
-<p>Example usage:
-<code class="docutils literal notranslate"><span class="pre">`python</span>
-<span class="pre">params_path</span> <span class="pre">=</span> <span class="pre">&quot;path/to/parameters.yaml&quot;</span>
-<span class="pre">converter</span> <span class="pre">=</span> <span class="pre">okapy.dicomconverter.converter.ExtractorConverter.from_params(params_path)</span>
-<span class="pre">results</span> <span class="pre">=</span> <span class="pre">converter(folder_path)</span>
-<span class="pre">`</span></code></p>
+<p>Once the features are extracted, the NIfTI files are deleted. By default they are stored in a temp
+folder using the python function <code class="xref py py-mod docutils literal notranslate"><span class="pre">tempfile.mkdtemp</span></code>.</p>
+<p>Example usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">okapy.dicomconverter.converter</span> <span class="kn">import</span> <span class="n">ExtractorConverter</span>
+
+<span class="n">params_path</span> <span class="o">=</span> <span class="s2">&quot;path/to/parameters.yaml&quot;</span> 
+<span class="n">converter</span> <span class="o">=</span> <span class="n">ExtractorConverter</span><span class="o">.</span><span class="n">from_params</span><span class="p">(</span><span class="n">params_path</span><span class="p">)</span>
+<span class="n">results</span> <span class="o">=</span> <span class="n">converter</span><span class="p">(</span><span class="n">folder_path</span><span class="p">)</span>
+</pre></div>
+</div>
 <p><cite>results</cite> is a pandas dataframe with the features values for each different images and modalities.</p>
 </dd></dl>
 
@@ -227,11 +233,35 @@ An example of a parameters file can be found in the parameters/ folder.</p>
 <dd><p>This class represents an instance used for converting a folder containing DICOM files
 to NIfTI files. The DICOM files are initially sorted using okapy.dicomconverter.dicom_walker.DicomWalker.
 Subsequently, the files are organized based on StudyInstanceUID, creating instances of
-okapy.dicomconverter.study.Study. The processing is then carried out sequentially on each Study instances.
+<a class="reference internal" href="#okapy.dicomconverter.study.Study" title="okapy.dicomconverter.study.Study"><code class="xref py py-class docutils literal notranslate"><span class="pre">okapy.dicomconverter.study.Study</span></code></a>. The processing is then carried out sequentially on each Study instances.
 This approach allows for application of the same segmentation (in the form of RTSTRUCT or SEG)
 across different modalities within the same study.</p>
 </dd></dl>
 
+</section>
+<section id="module-okapy.dicomconverter.dicom_walker">
+<span id="okapy-dicomconverter-dicom-walker"></span><h2>okapy.dicomconverter.dicom_walker<a class="headerlink" href="#module-okapy.dicomconverter.dicom_walker" title="Link to this heading">#</a></h2>
+<p>TODO: Is it better to create a class for just the header and another for the
+files?</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="okapy.dicomconverter.dicom_walker.DicomWalker">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.dicom_walker.</span></span><span class="sig-name descname"><span class="pre">DicomWalker</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_dirpath</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">cores</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">additional_dicom_tags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">submodalities</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/dicom_walker.html#DicomWalker"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.dicom_walker.DicomWalker" title="Link to this definition">#</a></dt>
+<dd><p>Instances of this class are used to crawl in the arborescence of a directory
+and sort all the DICOM found and order them into <a class="reference internal" href="#okapy.dicomconverter.study.Study" title="okapy.dicomconverter.study.Study"><code class="xref py py-class docutils literal notranslate"><span class="pre">okapy.dicomconverter.study.Study</span></code></a></p>
+</dd></dl>
+
+</section>
+<section id="module-okapy.dicomconverter.study">
+<span id="okapy-dicomconverter-study"></span><h2>okapy.dicomconverter.study<a class="headerlink" href="#module-okapy.dicomconverter.study" title="Link to this heading">#</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="okapy.dicomconverter.study.Study">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.study.</span></span><span class="sig-name descname"><span class="pre">Study</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">study_instance_uid</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">study_date</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">submodalities</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">additional_dicom_tags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">patient_id</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/study.html#Study"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.study.Study" title="Link to this definition">#</a></dt>
+<dd><p>This class serves as an abstraction for the StudyInstanceUID in the DICOM context.</p>
+<p>Instances of this class are created by the <a class="reference internal" href="#okapy.dicomconverter.dicom_walker.DicomWalker" title="okapy.dicomconverter.dicom_walker.DicomWalker"><code class="xref py py-class docutils literal notranslate"><span class="pre">okapy.dicomconverter.dicom_walker.DicomWalker</span></code></a>
+and are designed to store DICOM file paths, organized by modality (and optionally by submodalities).</p>
+</dd></dl>
+
+</section>
 </section>
 
         </article>
@@ -290,8 +320,19 @@ across different modalities within the same study.</p>
           <div class="toc-tree">
             <ul>
 <li><a class="reference internal" href="#">Modules</a><ul>
+<li><a class="reference internal" href="#module-okapy.dicomconverter.converter">okapy.dicomconverter.converter</a><ul>
 <li><a class="reference internal" href="#okapy.dicomconverter.converter.ExtractorConverter"><code class="docutils literal notranslate"><span class="pre">ExtractorConverter</span></code></a></li>
 <li><a class="reference internal" href="#okapy.dicomconverter.converter.NiftiConverter"><code class="docutils literal notranslate"><span class="pre">NiftiConverter</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#module-okapy.dicomconverter.dicom_walker">okapy.dicomconverter.dicom_walker</a><ul>
+<li><a class="reference internal" href="#okapy.dicomconverter.dicom_walker.DicomWalker"><code class="docutils literal notranslate"><span class="pre">DicomWalker</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#module-okapy.dicomconverter.study">okapy.dicomconverter.study</a><ul>
+<li><a class="reference internal" href="#okapy.dicomconverter.study.Study"><code class="docutils literal notranslate"><span class="pre">Study</span></code></a></li>
+</ul>
+</li>
 </ul>
 </li>
 </ul>

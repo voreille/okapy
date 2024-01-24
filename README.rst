@@ -21,7 +21,7 @@ directly from the DICOM files.
 
 
 * Free software: MIT license
-* Documentation: https://okapy.readthedocs.io.
+* Documentation: https://voreille.github.io/okapy/
 
 
 Features

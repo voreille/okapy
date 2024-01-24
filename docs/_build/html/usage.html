@@ -159,10 +159,7 @@
 <li class="toctree-l1"><a class="reference internal" href="readme.html">OkaPy</a></li>
 <li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
 <li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Usage</a></li>
-<li class="toctree-l1 has-children"><a class="reference internal" href="modules.html">Modules</a><input class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><div class="visually-hidden">Toggle navigation of Modules</div><i class="icon"><svg><use href="#svg-arrow-right"></use></svg></i></label><ul>
-<li class="toctree-l2"><a class="reference internal" href="generated/okapy.html">okapy</a></li>
-</ul>
-</li>
+<li class="toctree-l1"><a class="reference internal" href="modules.html">Modules</a></li>
 <li class="toctree-l1"><a class="reference internal" href="contributing.html">Contributing</a></li>
 <li class="toctree-l1"><a class="reference internal" href="authors.html">Credits</a></li>
 <li class="toctree-l1"><a class="reference internal" href="history.html">History</a></li>
@@ -202,7 +199,15 @@
         <article role="main">
           <section id="usage">
 <h1>Usage<a class="headerlink" href="#usage" title="Link to this heading">#</a></h1>
-<p>To use OkaPy in a project:</p>
+<p>OkaPy is designed for processing 3D DICOM images.</p>
+<p>There are two primary use cases for OkaPy:</p>
+<ol class="arabic simple">
+<li><p><strong>Conversion to NIfTI Files:</strong>
+OkaPy allows you to convert unsorted DICOM files to NIfTI files, specifically handling 3D images.</p></li>
+<li><p><strong>Feature Extraction from DICOM Files:</strong>
+Another usage involves extracting features directly from unsorted DICOM files. In this scenario, OkaPy first converts the DICOM files to NIfTI format and then utilizes <a class="reference external" href="https://www.radiomics.io/pyradiomics.html">PyRadiomics</a> to perform feature extraction.</p></li>
+</ol>
+<p>Example of the first usage:</p>
 <div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">okapy</span>
 </pre></div>
 </div>
