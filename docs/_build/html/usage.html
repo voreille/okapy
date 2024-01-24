@@ -208,9 +208,31 @@ OkaPy allows you to convert unsorted DICOM files to NIfTI files, specifically ha
 Another usage involves extracting features directly from unsorted DICOM files. In this scenario, OkaPy first converts the DICOM files to NIfTI format and then utilizes <a class="reference external" href="https://www.radiomics.io/pyradiomics.html">PyRadiomics</a> to perform feature extraction.</p></li>
 </ol>
 <p>Example of the first usage:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span> <span class="nn">okapy</span>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">okapy.dicomconverter.converter</span> <span class="kn">import</span> <span class="n">NiftiConverter</span>
+
+<span class="n">path_input</span> <span class="o">=</span> <span class="s2">&quot;path/to/DICOM/folder&quot;</span>
+<span class="n">path_output</span> <span class="o">=</span> <span class="s2">&quot;path/to/NIfTI/folder&quot;</span>
+<span class="n">converter</span> <span class="o">=</span> <span class="n">NiftiConverter</span><span class="p">()</span>
+<span class="n">result_conversion</span> <span class="o">=</span> <span class="n">converter</span><span class="p">(</span><span class="n">path_input</span><span class="p">,</span> <span class="n">output_folder</span><span class="o">=</span><span class="n">output_folder</span><span class="p">)</span>
 </pre></div>
 </div>
+<p>The <cite>result_conversion</cite> is a summary of the conversion. Calling <a class="reference internal" href="modules.html#okapy.dicomconverter.converter.NiftiConverter" title="okapy.dicomconverter.converter.NiftiConverter"><code class="xref py py-class docutils literal notranslate"><span class="pre">okapy.dicomconverter.converter.NiftiConverter</span></code></a> like this will
+read all the DICOM files from the <cite>path_input</cite> and convert all the images to NIfTI and store it in the <cite>path_output</cite> folder.
+If RTSTRUCT are present, all the labels contained in the RTSTRUCT files will be stored in different NIfTI files (this behaviour can be controlled
+with the <cite>labels_startswith</cite> parameter that can be passe to the constructor of <a class="reference internal" href="modules.html#okapy.dicomconverter.converter.NiftiConverter" title="okapy.dicomconverter.converter.NiftiConverter"><code class="xref py py-class docutils literal notranslate"><span class="pre">okapy.dicomconverter.converter.NiftiConverter</span></code></a>).</p>
+<p>Example of the second usage:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span> <span class="nn">okapy.dicomconverter.converter</span> <span class="kn">import</span> <span class="n">ExtractorConverter</span>
+
+<span class="n">path_input</span> <span class="o">=</span> <span class="s2">&quot;path/to/DICOM/folder&quot;</span>
+<span class="n">path_to_params</span> <span class="o">=</span> <span class="s2">&quot;path/to/parameters.yaml&quot;</span>
+<span class="n">converter</span> <span class="o">=</span> <span class="n">ExtractorConverter</span><span class="o">.</span><span class="n">from_params</span><span class="p">(</span><span class="n">path_to_params</span><span class="p">)</span>
+<span class="n">result_conversion</span> <span class="o">=</span> <span class="n">converter</span><span class="p">(</span><span class="n">path_input</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The <cite>result_conversion</cite> is <code class="xref py py-class docutils literal notranslate"><span class="pre">pandas.DataFrame</span></code> containing all the feature values for each images.
+To use the converter this way, one must ensure that segmentation are present for each studies in the form of SEG or RTSTRUCT files.
+For PET images, one might want to use a RSTRUCT drawn on the CT, this can be achieved with the parameter <code class="code docutils literal notranslate"><span class="pre">combine_segmentation:</span> <span class="pre">True</span></code> in the
+parameter file. More details are provided below for the parameter file.</p>
 </section>
 
         </article>
