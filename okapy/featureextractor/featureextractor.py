@@ -132,7 +132,7 @@ class FeatureExtractorPyradiomics(FeatureExtractor):
             kwargs.get("params"))
 
     def __call__(self, image_path, mask_path, **kwargs):
-        kwargs = {k: i for k, i in kwargs.items() if k is not "modality"}
+        kwargs = {k: i for k, i in kwargs.items() if k != "modality"}
         image = check_image(image_path)
         mask = check_image(mask_path)
         results = self.radiomics_extractor.execute(image, mask, **kwargs)

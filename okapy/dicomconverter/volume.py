@@ -99,8 +99,8 @@ class ReferenceFrame():
         voxel_spacing = ReferenceFrame.get_voxel_spacing(matrix)
         orientation_matrix = matrix[:3, :3] / voxel_spacing
         last_point_coordinate = np.dot(matrix,
-                                       np.array(shape + (1, )) -
-                                       (1, 1, 1, 0))[:3]
+                                       np.array(
+                                           (*shape, 1)) - (1, 1, 1, 0))[:3]
         return ReferenceFrame(
             origin=origin,
             orientation_matrix=orientation_matrix,

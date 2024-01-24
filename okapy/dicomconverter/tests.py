@@ -1,16 +1,10 @@
 import unittest
 from pathlib import Path
 
-from click.testing import CliRunner
-import numpy as np
-import pydicom as pdcm
 import SimpleITK as sitk
 
 from okapy.dicomconverter.dicom_walker import DicomWalker
-from okapy.dicomconverter.volume import ReferenceFrame
-from okapy.dicomconverter.dicom_file import DicomFileMR
 from okapy.dicomconverter.converter import NiftiConverter, ExtractorConverter
-from okapy.dicomconverter.utils import get_sitk_image, get_sitk_mask, get_mask_file
 
 
 class TestOkapy(unittest.TestCase):
@@ -53,6 +47,8 @@ class TestOkapy(unittest.TestCase):
                 suv_probed_values[patient_id][3],
                 places=3,
             )
+        print("Test conversion is finished here an overview of the output")
+        print(conversion_results)
 
     def test_feature_extraction(self):
         dicom_path = "data/test_files/dicom/MR"
@@ -72,7 +68,11 @@ class TestOkapy(unittest.TestCase):
             & (results["VOI"] == " edema") &
             (results["modality"] == "MR_T2")]["feature_value"].values[0]
         self.assertAlmostEqual(mean_edema_flair, 0)
-        self.assertAlmostEqual(mean_edema_flair, 0)
+        self.assertAlmostEqual(mean_edema_t2, 0)
+        print(
+            "Test feature extraction is finished here an overview of the output"
+        )
+        print(results)
 
 
 if __name__ == '__main__':
