@@ -412,9 +412,12 @@ class ExtractorConverter(BaseConverter):
 
         return results_df
 
-    def __call__(self, input_folder, labels=None):
+    def __call__(self, input_folder, output_folder=None, labels=None):
         try:
-            self.output_folder = mkdtemp()
+            if output_folder is None:
+                self.output_folder = mkdtemp()
+            else:
+                self.output_folder = output_folder
             studies_list = self.dicom_walker(input_folder, cores=self.cores)
             if self.cores is None:
                 result_dfs = list()
@@ -428,10 +431,12 @@ class ExtractorConverter(BaseConverter):
                                     studies_list),
                              total=len(studies_list)))
 
-            rmtree(self.output_folder, True)
+            if output_folder is None:
+                rmtree(self.output_folder, True)
             self.output_folder = None
         except Exception as e:
-            rmtree(self.output_folder, True)
+            if output_folder is None:
+                rmtree(self.output_folder, True)
             self.output_folder = None
             raise e
 
