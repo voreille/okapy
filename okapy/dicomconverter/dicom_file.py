@@ -30,6 +30,9 @@ def is_approx_equal(x, y, tolerance=0.05):
 
 
 class DicomFileBase():
+    """
+    
+    """
     _registry = {}  # class var that store the different daughter
 
     def __init_subclass__(cls, name, **kwargs):
