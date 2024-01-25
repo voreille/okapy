@@ -30,9 +30,15 @@ def is_approx_equal(x, y, tolerance=0.05):
 
 
 class DicomFileBase():
+
     """
-    
+    Subclasses of this class represent abstractions of DICOM series, each corresponding to a specific modality
+    (e.g., CT, PT, MR, RTSTRUCT, and SEG). These classes store the DICOM paths of the series and provide
+    a method :meth:`get_volume` that returns a :class:`okapy.dicomconverter.volume.Volume`. The `Volume` class encapsulates a 3D image along with its reference frame.
+
+    The :meth:`get_volume` method is unique for each subclass and defines how to compute pixel values from DICOM files based on the specific modality.
     """
+
     _registry = {}  # class var that store the different daughter
 
     def __init_subclass__(cls, name, **kwargs):

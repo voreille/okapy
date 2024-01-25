@@ -261,6 +261,52 @@ and are designed to store DICOM file paths, organized by modality (and optionall
 </dd></dl>
 
 </section>
+<section id="module-okapy.dicomconverter.dicom_file">
+<span id="okapy-dicomconverter-dicom-file"></span><h2>okapy.dicomconverter.dicom_file<a class="headerlink" href="#module-okapy.dicomconverter.dicom_file" title="Link to this heading">#</a></h2>
+<p>TODO: check NumberOfSlices as dicom tag</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="okapy.dicomconverter.dicom_file.DicomFileBase">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.dicom_file.</span></span><span class="sig-name descname"><span class="pre">DicomFileBase</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dicom_header</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dicom_paths</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">[]</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reference_frame</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">study</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">additional_dicom_tags</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">submodalities</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">slices</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/dicom_file.html#DicomFileBase"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.dicom_file.DicomFileBase" title="Link to this definition">#</a></dt>
+<dd><p>Subclasses of this class represent abstractions of DICOM series, each corresponding to a specific modality (e.g., CT, PT, MR, RTSTRUCT, and SEG). These classes store the DICOM paths of the series and provide a method <code class="xref py py-meth docutils literal notranslate"><span class="pre">get_volume()</span></code> that returns a <code class="xref py py-class docutils literal notranslate"><span class="pre">okapy.dicomconverter.volume.Volume</span></code>. The <cite>Volume</cite> class encapsulates a 3D image along with its reference frame.</p>
+<p>The <code class="xref py py-meth docutils literal notranslate"><span class="pre">get_volume()</span></code> method is unique for each subclass and defines how to compute pixel values from DICOM files based on the specific modality.</p>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="okapy.dicomconverter.dicom_file.DicomFileCT">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.dicom_file.</span></span><span class="sig-name descname"><span class="pre">DicomFileCT</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/dicom_file.html#DicomFileCT"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.dicom_file.DicomFileCT" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="okapy.dicomconverter.dicom_file.DicomFileImageBase">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.dicom_file.</span></span><span class="sig-name descname"><span class="pre">DicomFileImageBase</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/dicom_file.html#DicomFileImageBase"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.dicom_file.DicomFileImageBase" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="okapy.dicomconverter.dicom_file.DicomFileMR">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.dicom_file.</span></span><span class="sig-name descname"><span class="pre">DicomFileMR</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/dicom_file.html#DicomFileMR"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.dicom_file.DicomFileMR" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="okapy.dicomconverter.dicom_file.DicomFilePT">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.dicom_file.</span></span><span class="sig-name descname"><span class="pre">DicomFilePT</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/dicom_file.html#DicomFilePT"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.dicom_file.DicomFilePT" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="okapy.dicomconverter.dicom_file.MaskFile">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.dicom_file.</span></span><span class="sig-name descname"><span class="pre">MaskFile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/dicom_file.html#MaskFile"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.dicom_file.MaskFile" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="okapy.dicomconverter.dicom_file.RtstructFile">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.dicom_file.</span></span><span class="sig-name descname"><span class="pre">RtstructFile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reference_image</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reference_frame</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/dicom_file.html#RtstructFile"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.dicom_file.RtstructFile" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="okapy.dicomconverter.dicom_file.SegFile">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">okapy.dicomconverter.dicom_file.</span></span><span class="sig-name descname"><span class="pre">SegFile</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">reference_image</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwargs</span></span></em><span class="sig-paren">)</span><a class="reference internal" href="_modules/okapy/dicomconverter/dicom_file.html#SegFile"><span class="viewcode-link"><span class="pre">[source]</span></span></a><a class="headerlink" href="#okapy.dicomconverter.dicom_file.SegFile" title="Link to this definition">#</a></dt>
+<dd></dd></dl>
+
+</section>
 </section>
 
         </article>
@@ -330,6 +376,17 @@ and are designed to store DICOM file paths, organized by modality (and optionall
 </li>
 <li><a class="reference internal" href="#module-okapy.dicomconverter.study">okapy.dicomconverter.study</a><ul>
 <li><a class="reference internal" href="#okapy.dicomconverter.study.Study"><code class="docutils literal notranslate"><span class="pre">Study</span></code></a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#module-okapy.dicomconverter.dicom_file">okapy.dicomconverter.dicom_file</a><ul>
+<li><a class="reference internal" href="#okapy.dicomconverter.dicom_file.DicomFileBase"><code class="docutils literal notranslate"><span class="pre">DicomFileBase</span></code></a></li>
+<li><a class="reference internal" href="#okapy.dicomconverter.dicom_file.DicomFileCT"><code class="docutils literal notranslate"><span class="pre">DicomFileCT</span></code></a></li>
+<li><a class="reference internal" href="#okapy.dicomconverter.dicom_file.DicomFileImageBase"><code class="docutils literal notranslate"><span class="pre">DicomFileImageBase</span></code></a></li>
+<li><a class="reference internal" href="#okapy.dicomconverter.dicom_file.DicomFileMR"><code class="docutils literal notranslate"><span class="pre">DicomFileMR</span></code></a></li>
+<li><a class="reference internal" href="#okapy.dicomconverter.dicom_file.DicomFilePT"><code class="docutils literal notranslate"><span class="pre">DicomFilePT</span></code></a></li>
+<li><a class="reference internal" href="#okapy.dicomconverter.dicom_file.MaskFile"><code class="docutils literal notranslate"><span class="pre">MaskFile</span></code></a></li>
+<li><a class="reference internal" href="#okapy.dicomconverter.dicom_file.RtstructFile"><code class="docutils literal notranslate"><span class="pre">RtstructFile</span></code></a></li>
+<li><a class="reference internal" href="#okapy.dicomconverter.dicom_file.SegFile"><code class="docutils literal notranslate"><span class="pre">SegFile</span></code></a></li>
 </ul>
 </li>
 </ul>

@@ -19,3 +19,9 @@ okapy.dicomconverter.study
 
 .. automodule:: okapy.dicomconverter.study
    :members:
+
+okapy.dicomconverter.dicom_file
+-------------------------------
+
+.. automodule:: okapy.dicomconverter.dicom_file
+   :members:
