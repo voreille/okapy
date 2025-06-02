@@ -191,7 +191,6 @@ class BSplineResampler(VolumeProcessor, name="bspline_resampler"):
                 self.resampling_spacing > 0, self.resampling_spacing,
                 volume.reference_frame.voxel_spacing)
             new_reference_frame.voxel_spacing = new_resampling_spacing
-            new_reference_frame.recompute_shape()
         matrix = np.dot(volume.reference_frame.inv_coordinate_matrix,
                         new_reference_frame.coordinate_matrix)
 

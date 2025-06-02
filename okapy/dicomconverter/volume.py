@@ -227,12 +227,6 @@ class ReferenceFrame():
         end = np.maximum(self.vx_to_mm(np.ceil(end_vx)),
                          self.vx_to_mm(np.floor(end_vx)))
         return np.concatenate([origin, end], axis=0)
-    
-    # TODO: Needs better implementation to ensure that the whol pipeline is working correctly 
-    def recompute_shape(self): 
-        self._shape = np.ceil(self.mm_to_vx( 
-            self.last_point_coordinate)).astype(int) + 1 
-        return self.shape 
 
 
 class VolumeBase():
