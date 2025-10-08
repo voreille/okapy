@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "okapy"
+version = "0.1.3"
+description = "toolbox for biomedical analysis from preprocessing to model evaluation"
+authors = [{name = "Valentin Oreiller", email = "valentin.oreiller@gmail.com"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
+keywords = ["okapy", "biomedical", "dicom", "radiomics", "medical-imaging"]
+
+# Core dependencies actually used in the code
+dependencies = [
+    "SimpleITK",
+    "click", 
+    "numpy",
+    "pandas",
+    "pydicom",
+    "pydicom-seg",
+    "pyradiomics",
+    "pyyaml",
+    "six",
+    "scipy",
+    "tqdm",
+]
+
+[project.urls]
+Homepage = "https://github.com/voreille/okapy"
+Repository = "https://github.com/voreille/okapy"
+
+[project.scripts]
+okapy = "okapy.cli:main"
+okapyconvert = "okapy.dicomconverter.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["okapy*"]
+exclude = ["tests*"]
