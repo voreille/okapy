@@ -194,8 +194,8 @@ class StudyProcessor():
                 print(e)
                 continue
 
-            # TODO - Check with Valentin if this is the correct way to do it (not ==)
-            if len(masks) != 0:
+            # Now padding should work
+            if len(masks) != 0 and self.padding != "whole_image":
                 new_reference_frame = self._get_new_reference_frame(
                     volume, masks)
             else:

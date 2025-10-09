@@ -287,7 +287,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
 
         self.n_missing_slices, self.slice_discontinuities = self._check_missing_slices()
         expected_n_slices = len(self.slices) + self.n_missing_slices
-        slice_shape = (slices[0].Rows, slices[0].Columns)  # TO CHECK
+        slice_shape = (slices[0].Columns, slices[0].Rows)
         self._reference_frame = ReferenceFrame.from_slice_info(
             origin=slices[0].ImagePositionPatient,
             origin_last_slice=slices[-1].ImagePositionPatient,
