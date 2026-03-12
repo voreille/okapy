@@ -48,7 +48,6 @@ def main(
 
     converter = NiftiConverter(
         padding=padding,
-        resampling_spacing=spacing,
         list_labels=list_labels,
         cores=cores,
         naming=naming,

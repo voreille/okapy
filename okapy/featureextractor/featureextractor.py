@@ -1,6 +1,5 @@
 import subprocess
 import json
-import six
 from pathlib import Path
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -32,7 +31,7 @@ except ImportError:
 class OkapyExtractors():
 
     def __init__(self, params_path):
-        if type(params_path) == dict:
+        if isinstance(params_path, dict):
             params = params_path
         else:
             with open(params_path, 'r') as f:
@@ -162,7 +161,7 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
     @staticmethod
     def translate_radiomics_output(results):
         results_copy = results.copy()
-        for key, item in six.iteritems(results_copy):
+        for key, item in results_copy.items():
             if key.startswith('original_firstorder'):
                 new_key = key.replace('original_firstorder', 'SUV')
                 results[new_key] = results.pop(key)
@@ -225,13 +224,13 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
         })
 
     def __call__(self, image_path, mask_path, **kwargs):
-        kwargs = {k: i for k, i in kwargs.items() if k is not "modality"}
-        if type(image_path) != sitk.SimpleITK.Image:
+        kwargs = {k: i for k, i in kwargs.items() if k != "modality"}
+        if not isinstance(image_path, sitk.SimpleITK.Image):
             image = sitk.ReadImage(str(image_path))
         else:
             image = image_path
 
-        if type(mask_path) != sitk.SimpleITK.Image:
+        if not isinstance(mask_path, sitk.SimpleITK.Image):
             mask = sitk.ReadImage(str(mask_path))
         else:
             mask = mask_path

@@ -61,7 +61,7 @@ class DicomWalker():
                          path=str(file.resolve()))
 
     def _get_files(self, input_dirpath):
-        if type(input_dirpath) == list:
+        if isinstance(input_dirpath, list):
             return [
                 f for path in input_dirpath for f in Path(path).rglob("*")
                 if f.is_file()
