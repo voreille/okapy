@@ -3,16 +3,14 @@ TODO: check NumberOfSlices as dicom tag
 """
 
 from copy import copy
-from datetime import time, datetime
+from datetime import datetime
 import logging
-from re import U
-from statistics import mode
-from tracemalloc import stop
 
 import numpy as np
 import pydicom as pdcm
 from pydicom.dataset import FileDataset
 import pydicom_seg
+from scipy.stats import mode  # requires scipy >= 1.9
 from skimage.draw import polygon
 
 from okapy.dicomconverter.volume import Volume, BinaryVolume, ReferenceFrame
@@ -23,6 +21,9 @@ from okapy.exceptions import (EmptyContourException, MissingWeightException,
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
 logger = logging.getLogger(__name__)
+
+# Sentinel to reject obviously invalid DICOM dates (e.g. epoch / uninitialised fields)
+_MIN_VALID_DATETIME = datetime(1950, 1, 1)
 
 
 def is_approx_equal(x, y, tolerance=0.05):
@@ -142,14 +143,14 @@ class DicomFileBase():
 
     @property
     def dicom_header(self):
-        if self._dicom_header is None and not type(
-                self.dicom_paths[0]) == FileDataset:
+        if self._dicom_header is None and not isinstance(
+                self.dicom_paths[0], FileDataset):
             self._dicom_header = DicomHeader.from_file(
                 self.dicom_paths[0],
                 additional_tags=self.additional_dicom_tags)
 
-        elif self._dicom_header is None and type(
-                self.dicom_paths[0]) == FileDataset:
+        elif self._dicom_header is None and isinstance(
+                self.dicom_paths[0], FileDataset):
             self._dicom_header = DicomHeader.from_pydicom(
                 self.dicom_paths[0],
                 additional_tags=self.additional_dicom_tags)
@@ -186,7 +187,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
         raise NotImplementedError('This is an abstract class')
 
     def _check_dicom_paths(self):
-        if type(self.dicom_paths[0]) == FileDataset:
+        if isinstance(self.dicom_paths[0], FileDataset):
             slices = self.dicom_paths
         else:
             slices = [
@@ -292,7 +293,7 @@ class DicomFileImageBase(DicomFileBase, name="image_base"):
             self.orthogonal_positions[ind + 1] - self.orthogonal_positions[ind]
             for ind in range(len(self.slices) - 1)
         ])
-        self.slice_spacing = mode(np.round(self.d_slices, decimals=5))
+        self.slice_spacing = mode(np.round(self.d_slices, decimals=5)).mode
 
         self.n_missing_slices, self.slice_discontinuities = self._check_missing_slices(
         )
@@ -380,7 +381,7 @@ class DicomFileCT(DicomFileImageBase, name="CT"):
     def get_physical_values(self):
         if not hasattr(self.slices[0], "pixel_array"):
             image = [
-                DicomFileCT._get_physical_per_slice(pdcm.read_file(p))
+                DicomFileCT._get_physical_per_slice(pdcm.dcmread(p))
                 for p in self.dicom_paths
             ]
         else:
@@ -394,7 +395,7 @@ class DicomFileMR(DicomFileImageBase, name="MR"):
 
     def get_physical_values(self):
         if not hasattr(self.slices[0], "pixel_array"):
-            image = [pdcm.read_file(p).pixel_array for p in self.dicom_paths]
+            image = [pdcm.dcmread(p).pixel_array for p in self.dicom_paths]
         else:
             image = [s.pixel_array for s in self.slices]
         return np.stack(image, axis=-1)
@@ -458,103 +459,142 @@ class DicomFilePT(DicomFileImageBase, name="PT"):
 
         if not hasattr(self.slices[0], "pixel_array"):
             image = [
-                phys_value_func(pdcm.read_file(p)) for p in self.dicom_paths
+                phys_value_func(pdcm.dcmread(p)) for p in self.dicom_paths
             ]
         else:
             image = [phys_value_func(s) for s in self.slices]
         return np.stack(image, axis=-1)
 
-    def _acquistion_datetime(self):
-        times = [
-            datetime.strptime(
-                s[0x00080022].value +
-                s[0x00080032].value.split('.')[0].replace(":", ""),
-                "%Y%m%d%H%M%S") for s in self.slices
-        ]
+    def _acquisition_datetime(self) -> datetime:
+        """Return the earliest acquisition datetime from all PET slices."""
+        times = []
+        for s in self.slices:
+            try:
+                acq_date = s[0x00080022].value
+                acq_time = s[0x00080032].value.split('.')[0].replace(":", "")
+                times.append(
+                    datetime.strptime(acq_date + acq_time, "%Y%m%d%H%M%S"))
+            except (KeyError, ValueError):
+                continue
+        if not times:
+            raise ValueError(
+                "No valid AcquisitionDate/Time found in PET slices")
         times.sort()
         return times[0]
 
-    def _parse_time(self, t):
+    def _parse_time(self, t: str):
+        """Parse a DICOM time string in various formats, returning a time object."""
         for fmt in ["%H:%M:%S", "%H%M%S", "%H%M%S.%f"]:
             try:
                 return datetime.strptime(t, fmt).time()
             except ValueError:
-                pass
-        raise ValueError("Could not parse time {}".format(t))
+                continue
+        raise ValueError(f"Could not parse DICOM time: {t!r}")
 
-    def _get_decay_time(self):
-        s = self.slices[0]
-        acquisition_datetime = self._acquistion_datetime()
+    def _get_scan_datetime(self, s, acquisition_datetime: datetime) -> datetime:
+        """Determine the scan start datetime from DICOM tags.
+
+        Tries SeriesDate/SeriesTime first, then a Philips private tag, and
+        falls back to AcquisitionDateTime.
+        """
+        # Try SeriesDate (0008,0021) + SeriesTime (0008,0031)
         try:
-            serie_datetime = datetime.strptime(
-                s[0x00080021].value + s[0x00080031].value.split('.')[0],
-                "%Y%m%d%H%M%S")
-        except KeyError:
-            logger.warning(
-                f"No SeriesDate found for {self.dicom_header.PatientID}, AcquisitionDate is used"
-            )
-            serie_datetime = acquisition_datetime
+            series_date = s[0x00080021].value
+            series_time = s[0x00080031].value.split('.')[0]
+            series_datetime = datetime.strptime(series_date + series_time,
+                                                "%Y%m%d%H%M%S")
+            if _MIN_VALID_DATETIME < series_datetime <= acquisition_datetime:
+                return series_datetime
+        except (KeyError, ValueError):
+            pass
 
-        try:
-            if (serie_datetime <= acquisition_datetime) and (
-                    serie_datetime > datetime(1950, 1, 1)):
-                scan_datetime = serie_datetime
-            elif 0x0009100d in s:
-                scan_datetime_value = s[0x0009100d].value
-                if isinstance(scan_datetime_value, bytes):
-                    scan_datetime_str = scan_datetime_value.decode(
-                        "utf-8").split('.')[0]
-                elif isinstance(scan_datetime_value, str):
-                    scan_datetime_str = scan_datetime_value.split('.')[0]
-                else:
-                    raise ValueError(
-                        "The value of scandatetime is not handled")
-                scan_datetime = datetime.strptime(scan_datetime_str,
-                                                  "%Y%m%d%H%M%S")
-            else:
-                scan_datetime = acquisition_datetime
-
-            start_time_str = s.RadiopharmaceuticalInformationSequence[
-                0].RadiopharmaceuticalStartTime
+        # Try Philips private scan-datetime tag (0009,100D)
+        if 0x0009100d in s:
             try:
-                start_time = self._parse_time(start_time_str)
-            except ValueError:
-                raise ValueError(
-                    "There is an issue with the data for the DICOM"
-                    " tag 'RadiopharmaceuticalStartTime'")
+                val = s[0x0009100d].value
+                if isinstance(val, bytes):
+                    val = val.decode("utf-8")
+                return datetime.strptime(val.split('.')[0], "%Y%m%d%H%M%S")
+            except (ValueError, UnicodeDecodeError):
+                pass
+
+        return acquisition_datetime
+
+    def _get_decay_time(self) -> float:
+        """Compute radiopharmaceutical decay time in seconds.
+
+        This is the elapsed time between the radiopharmaceutical injection
+        (RadiopharmaceuticalStartTime) and the scan start, used for decay
+        correction in the BQML → SUV conversion.
+
+        Falls back to 1.75 hours if timing information cannot be determined.
+        """
+        _fallback = 1.75 * 3600.0
+        s = self.slices[0]
+        try:
+            acquisition_datetime = self._acquisition_datetime()
+            scan_datetime = self._get_scan_datetime(s, acquisition_datetime)
+
+            start_time_str = str(
+                s.RadiopharmaceuticalInformationSequence[
+                    0].RadiopharmaceuticalStartTime)
+            start_time = self._parse_time(start_time_str)
             start_datetime = datetime.combine(scan_datetime.date(), start_time)
+
             decay_time = (scan_datetime - start_datetime).total_seconds()
-        except KeyError:
-            decay_time = 1.75 * 3600  # From Martin's code
+
+            if decay_time < 0:
+                logger.warning(
+                    f"Negative decay time ({decay_time:.0f}s) for patient "
+                    f"{self.dicom_header.PatientID}: scan appears to precede "
+                    f"injection. Falling back to {_fallback / 3600:.2f}h.")
+                decay_time = _fallback
+
+        except (KeyError, AttributeError, IndexError, ValueError) as exc:
+            decay_time = _fallback
             logger.warning(
-                f"Estimation of time decay for SUV"
-                f" for patient {self.dicom_header.PatientID}"
-                f" computation from average parameters, "
-                f"i.e. with an estimated decay time of {decay_time} [s]")
-        logger.debug(f"Computed decay time for patient "
-                     f"{self.dicom_header.PatientName} is {decay_time} [s]")
+                f"Could not compute decay time for patient "
+                f"{self.dicom_header.PatientID} ({exc}). "
+                f"Using fallback of {_fallback / 3600:.2f}h.")
+
+        logger.debug(
+            f"Decay time for patient {self.dicom_header.PatientID}: "
+            f"{decay_time:.1f}s")
         return decay_time
 
-    def _get_suv_philips(self, s):
-        return (float(s.RescaleSlope) * s.pixel_array +
-                float(s.RescaleIntercept)) * float(s[0x70531000].value)
+    def _get_suv_philips(self, s) -> np.ndarray:
+        """Convert CNTS pixel values to SUV using the Philips private SUV scale factor."""
+        activity_concentration = (float(s.RescaleSlope) * s.pixel_array +
+                                  float(s.RescaleIntercept))
+        suv_scale_factor = float(s[0x70531000].value)
+        return activity_concentration * suv_scale_factor
 
-    def _get_suv_from_gml(self, s):
-        return (float(s.RescaleSlope) * s.pixel_array +
-                float(s.RescaleIntercept))
+    def _get_suv_from_gml(self, s) -> np.ndarray:
+        """Return GML pixel values as-is (already in g/mL ≡ SUV units)."""
+        return float(s.RescaleSlope) * s.pixel_array + float(s.RescaleIntercept)
 
-    def _get_suv_from_bqml(self, s, decay_time):
-        # Get SUV from raw PET
-        patient_weight = self.patient_weight
-        pet = float(s.RescaleSlope) * s.pixel_array + float(s.RescaleIntercept)
-        half_life = float(
-            s.RadiopharmaceuticalInformationSequence[0].RadionuclideHalfLife)
-        total_dose = float(
-            s.RadiopharmaceuticalInformationSequence[0].RadionuclideTotalDose)
-        decay = 2**(-decay_time / half_life)
-        actual_activity = total_dose * decay
+    def _get_suv_from_bqml(self, s, decay_time: float) -> np.ndarray:
+        """Convert BQML pixel values to SUV (body-weight normalised).
 
-        return pet * patient_weight * 1000 / actual_activity
+        Formula:
+            SUV_bw = activity_concentration [Bq/mL]
+                     * patient_weight [g]
+                     / dose_at_scan_start [Bq]
+
+        where dose_at_scan_start accounts for physical decay between injection
+        and scan: dose_at_scan = injected_dose * 2^(-decay_time / half_life).
+        """
+        activity_concentration = (float(s.RescaleSlope) * s.pixel_array +
+                                  float(s.RescaleIntercept))
+
+        radiopharma = s.RadiopharmaceuticalInformationSequence[0]
+        half_life = float(radiopharma.RadionuclideHalfLife)   # seconds
+        injected_dose = float(radiopharma.RadionuclideTotalDose)  # Bq
+
+        dose_at_scan = injected_dose * (2 ** (-decay_time / half_life))
+
+        # patient_weight is in kg; multiply by 1000 to convert to grams
+        return activity_concentration * (self.patient_weight * 1000) / dose_at_scan
 
 
 class MaskFile(DicomFileBase, name="mask_base"):
@@ -613,7 +653,7 @@ class SegFile(MaskFile, name="SEG"):
         return self._reference_image
 
     def read(self):
-        if type(self.dicom_paths[0]) == FileDataset:
+        if isinstance(self.dicom_paths[0], FileDataset):
             dcm = self.dicom_paths[0]
         else:
             dcm = pdcm.dcmread(self.dicom_paths[0])
@@ -722,10 +762,10 @@ class RtstructFile(MaskFile, name="RTSTRUCT"):
         if len(self.dicom_paths) > 1:
             logger.warning(
                 "there is multiple instances of the same RTSTRUCT file")
-        if type(self.dicom_paths[0]) == FileDataset:
+        if isinstance(self.dicom_paths[0], FileDataset):
             self.slices = self.dicom_paths
         else:
-            self.slices = [pdcm.read_file(p) for p in self.dicom_paths]
+            self.slices = [pdcm.dcmread(p) for p in self.dicom_paths]
         self._reference_image_uid = RtstructFile.get_reference_image_uid(
             self.slices[0])
         self.label_number_mapping = {}

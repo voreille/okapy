@@ -1,4 +1,3 @@
-from os import stat
 from itertools import product
 from pathlib import Path
 import warnings

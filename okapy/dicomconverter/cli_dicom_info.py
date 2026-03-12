@@ -26,7 +26,7 @@ def main(input_directory, output_filepath, tags):
 
     walker = DicomWalker(additional_dicom_tags=tags)
     studies = walker(input_dirpath=input_directory)
-    df = pd.DataFrame()
+    rows = []
     for s in studies:
         for v in s.volume_files:
             d = {
@@ -35,7 +35,8 @@ def main(input_directory, output_filepath, tags):
                 if key != "additional_data"
             }
             d.update(v.dicom_header.additional_data)
-            df = df.append(d, ignore_index=True)
+            rows.append(d)
+    df = pd.DataFrame(rows)
     df.to_csv(output_filepath)
     logger.info("End")
 

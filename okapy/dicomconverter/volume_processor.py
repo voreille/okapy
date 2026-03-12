@@ -15,7 +15,7 @@ class VolumeProcessorStack():
 
     @staticmethod
     def from_params(params_path, mask_resampler=None):
-        if type(params_path) == dict:
+        if isinstance(params_path, dict):
             params = params_path
         else:
             with open(params_path, 'r') as f:
@@ -124,6 +124,12 @@ class MaskedStandardizer(VolumeProcessor, name="masked_standardizer"):
 
 
 class CombinedStandardizer(VolumeProcessor, name="combined_standardizer"):
+    """Standardizer that normalises using the union of multiple segmentation labels.
+
+    ``mask_union1`` and ``mask_union2`` are each a label name (str) or a list of
+    label names.  The normalisation region is the voxel-wise union of all volumes
+    found under those labels.
+    """
 
     def __init__(self,
                  *args,
@@ -141,25 +147,31 @@ class CombinedStandardizer(VolumeProcessor, name="combined_standardizer"):
     def _check_union_arg(self, mask_union):
         if mask_union is None:
             raise TypeError("mask_union cannot be None")
-        if type(mask_union) == str:
+        if isinstance(mask_union, str):
             mask_union = [mask_union]
         return mask_union
 
-    def _get_final_mask(self, mask_files, reference_frame=None):
-        mask = None
-        for f in mask_files:
-            if self.mask_label in f.labels:
-                mask = f.get_volume(self.mask_label)
-                break
-        if mask is None:
+    def _get_combined_mask_array(self, mask_files, reference_frame=None):
+        """Return a boolean array that is the union of all labels in both mask lists."""
+        all_labels = self.mask_union1 + self.mask_union2
+        combined = None
+        for label in all_labels:
+            for f in mask_files:
+                if label in f.labels:
+                    mask_vol = f.get_volume(label)
+                    resampled = self.mask_resampler(
+                        mask_vol,
+                        new_reference_frame=reference_frame).array != 0
+                    combined = resampled if combined is None else (combined | resampled)
+                    break
+        if combined is None:
             raise MissingSegmentationException(
-                f"The label was {self.mask_label} was not found")
-        return self.mask_resampler(
-            mask, new_reference_frame=reference_frame).array != 0
+                f"None of the labels {all_labels} were found in the mask files")
+        return combined
 
     def process(self, volume, mask_files=None, **kwargs):
         array = volume.array
-        mask_array = self._get_mask_array(
+        mask_array = self._get_combined_mask_array(
             mask_files, reference_frame=volume.reference_frame)
         mean = np.mean(array[mask_array])
         std = np.std(array[mask_array])

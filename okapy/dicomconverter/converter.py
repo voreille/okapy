@@ -1,5 +1,4 @@
 from abc import abstractmethod
-from doctest import ELLIPSIS_MARKER
 from pathlib import Path
 from functools import partial
 from tempfile import mkdtemp
@@ -175,7 +174,7 @@ class NiftiConverter(BaseConverter):
 
     @staticmethod
     def from_params(params_path):
-        if type(params_path) == dict:
+        if isinstance(params_path, dict):
             params = params_path
         else:
             with open(params_path, 'r') as f:
@@ -336,7 +335,7 @@ class ExtractorConverter(BaseConverter):
 
     @staticmethod
     def from_params(params_path):
-        if type(params_path) == dict:
+        if isinstance(params_path, dict):
             params = params_path
         else:
             with open(params_path, 'r') as f:
