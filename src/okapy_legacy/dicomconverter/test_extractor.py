@@ -1,6 +1,6 @@
 import unittest
 
-from okapy.dicomconverter.converter import ExtractorConverter
+from okapy_legacy.dicomconverter.converter import ExtractorConverter
 
 
 class TestOkapy(unittest.TestCase):

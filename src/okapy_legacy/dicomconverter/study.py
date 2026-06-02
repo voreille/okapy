@@ -7,9 +7,9 @@ import logging
 
 import numpy as np
 
-from okapy.dicomconverter.dicom_file import DicomFileBase
-from okapy.dicomconverter.volume import ReferenceFrame
-from okapy.exceptions import (EmptyContourException,
+from okapy_legacy.dicomconverter.dicom_file import DicomFileBase
+from okapy_legacy.dicomconverter.volume import ReferenceFrame
+from okapy_legacy.exceptions import (EmptyContourException,
                               MissingSegmentationException, NotHandledModality,
                               PETUnitException)
 

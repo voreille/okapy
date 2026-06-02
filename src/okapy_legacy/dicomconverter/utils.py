@@ -1,4 +1,4 @@
-from okapy.dicomconverter.dicom_file import DicomFileBase, RtstructFile
+from okapy_legacy.dicomconverter.dicom_file import DicomFileBase, RtstructFile
 
 
 def get_sitk_image(dicom_paths):

@@ -4,8 +4,8 @@ import yaml
 import click
 import logging
 
-from okapy.dicomconverter.converter import Converter
-from okapy.featureextractor.featureextractor import create_extractor
+from okapy_legacy.dicomconverter.converter import Converter
+from okapy_legacy.featureextractor.featureextractor import create_extractor
 
 input_directory = "/home/val/Documents/image_to_process/Mario_20jan2021/patient18"
 output_directory = "/home/val/Documents/image_to_process/Mario_20jan2021/processed/"

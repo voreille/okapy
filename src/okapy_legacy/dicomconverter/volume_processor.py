@@ -1,11 +1,11 @@
 from copy import copy
 
-from okapy.exceptions import MissingSegmentationException
+from okapy_legacy.exceptions import MissingSegmentationException
 import yaml
 import numpy as np
 from scipy import ndimage
 
-from okapy.dicomconverter.volume import ReferenceFrame
+from okapy_legacy.dicomconverter.volume import ReferenceFrame
 
 
 class VolumeProcessorStack():

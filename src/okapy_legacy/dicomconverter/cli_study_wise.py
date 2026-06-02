@@ -5,7 +5,7 @@ import click
 import logging
 import pandas as pd
 
-from okapy.dicomconverter.dicom_walker import DicomWalker
+from okapy_legacy.dicomconverter.dicom_walker import DicomWalker
 
 
 @click.command()

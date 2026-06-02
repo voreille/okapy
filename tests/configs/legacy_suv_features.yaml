@@ -1,0 +1,170 @@
+general:
+  padding: 10
+  submodalities: False
+  result_format: "long"
+  combine_segmentation: False
+  additional_dicom_tags:
+    - "SeriesInstanceUID"
+
+volume_preprocessing:
+  common:
+    bspline_resampler:
+      resampling_spacing: [1.0, 1.0, -1.0]
+      order: 3
+  default:
+
+mask_preprocessing:
+  default:
+    binary_bspline_resampler:
+      order: 3
+
+feature_extraction:
+  CT:
+    pyradiomics:
+      original:
+        imageType:
+          Original: {}
+        featureClass:
+          shape:
+          firstorder:
+          glcm: # Disable SumAverage by specifying all other GLCM features available
+            - "Autocorrelation"
+            - "JointAverage"
+            - "ClusterProminence"
+            - "ClusterShade"
+            - "ClusterTendency"
+            - "Contrast"
+            - "Correlation"
+            - "DifferenceAverage"
+            - "DifferenceEntropy"
+            - "DifferenceVariance"
+            - "JointEnergy"
+            - "JointEntropy"
+            - "Imc1"
+            - "Imc2"
+            - "Idm"
+            - "Idmn"
+            - "Id"
+            - "Idn"
+            - "InverseVariance"
+            - "MaximumProbability"
+            - "SumEntropy"
+            - "SumSquares"
+
+        setting:
+          binWidth: 20
+          voxelArrayShift: 1000
+          label: 1
+
+      log:
+        imageType:
+          LoG:
+            sigma: [1.0, 2.0, 3.0, 4.0, 5.0] # If you include sigma values >5, remember to also increase the padDistance.
+
+        featureClass:
+          firstorder:
+
+        setting:
+          binWidth: 20
+          voxelArrayShift: 1000
+          label: 1
+  PT:
+    pyradiomics:
+      original:
+        imageType:
+          Original: {}
+        featureClass:
+          shape:
+          firstorder:
+          glcm: # Disable SumAverage by specifying all other GLCM features available
+            - "Autocorrelation"
+            - "JointAverage"
+            - "ClusterProminence"
+            - "ClusterShade"
+            - "ClusterTendency"
+            - "Contrast"
+            - "Correlation"
+            - "DifferenceAverage"
+            - "DifferenceEntropy"
+            - "DifferenceVariance"
+            - "JointEnergy"
+            - "JointEntropy"
+            - "Imc1"
+            - "Imc2"
+            - "Idm"
+            - "Idmn"
+            - "Id"
+            - "Idn"
+            - "InverseVariance"
+            - "MaximumProbability"
+            - "SumEntropy"
+            - "SumSquares"
+
+        setting:
+          binWidth: 0.2
+          voxelArrayShift: 0
+          label: 1
+
+      log:
+        imageType:
+          LoG:
+            sigma: [1.0, 2.0, 3.0, 4.0, 5.0] # If you include sigma values >5, remember to also increase the padDistance.
+
+        featureClass:
+          firstorder:
+
+        setting:
+          binWidth: 0.2
+          voxelArrayShift: 0
+          label: 1
+  MR:
+    pyradiomics:
+      original:
+        imageType:
+          Original: {}
+        featureClass:
+          shape:
+          firstorder:
+          glcm: # Disable SumAverage by specifying all other GLCM features available
+            - "Autocorrelation"
+            - "JointAverage"
+            - "ClusterProminence"
+            - "ClusterShade"
+            - "ClusterTendency"
+            - "Contrast"
+            - "Correlation"
+            - "DifferenceAverage"
+            - "DifferenceEntropy"
+            - "DifferenceVariance"
+            - "JointEnergy"
+            - "JointEntropy"
+            - "Imc1"
+            - "Imc2"
+            - "Idm"
+            - "Idmn"
+            - "Id"
+            - "Idn"
+            - "InverseVariance"
+            - "MaximumProbability"
+            - "SumEntropy"
+            - "SumSquares"
+
+        setting:
+          normalize: true
+          normalizeScale: 100 # This allows you to use more or less the same bin width.
+          binWidth: 5
+          voxelArrayShift: 300
+          label: 1
+
+      log:
+        imageType:
+          LoG:
+            sigma: [1.0, 2.0, 3.0, 4.0, 5.0] # If you include sigma values >5, remember to also increase the padDistance.
+
+        featureClass:
+          firstorder:
+
+        setting:
+          binWidth: 20
+          voxelArrayShift: 1000
+          label: 1

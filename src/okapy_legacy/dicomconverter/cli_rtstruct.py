@@ -5,7 +5,7 @@ import click
 import logging
 import pandas as pd
 
-from okapy.dicomconverter.converter import Converter
+from okapy_legacy.dicomconverter.converter import Converter
 
 
 @click.command()

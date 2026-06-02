@@ -3,7 +3,7 @@ import os
 import click
 import logging
 
-from okapy.dicomconverter.converter import NiftiConverter
+from okapy_legacy.dicomconverter.converter import NiftiConverter
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)

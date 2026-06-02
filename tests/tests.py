@@ -8,7 +8,7 @@ TODO: EXtract image with and without mask
 from pathlib import Path
 import unittest
 
-from okapy.dicomconverter.converter import ExtractorConverter
+from okapy_legacy.dicomconverter.converter import ExtractorConverter
 
 project_dir = Path(__file__).resolve().parents[1]
 

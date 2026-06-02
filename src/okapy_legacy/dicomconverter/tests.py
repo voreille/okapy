@@ -6,11 +6,11 @@ import numpy as np
 import pydicom as pdcm
 import SimpleITK as sitk
 
-from okapy.dicomconverter.dicom_walker import DicomWalker
-from okapy.dicomconverter.volume import ReferenceFrame
-from okapy.dicomconverter.dicom_file import DicomFileMR
-from okapy.dicomconverter.converter import NiftiConverter
-from okapy.dicomconverter.utils import get_sitk_image, get_sitk_mask, get_mask_file
+from okapy_legacy.dicomconverter.dicom_walker import DicomWalker
+from okapy_legacy.dicomconverter.volume import ReferenceFrame
+from okapy_legacy.dicomconverter.dicom_file import DicomFileMR
+from okapy_legacy.dicomconverter.converter import NiftiConverter
+from okapy_legacy.dicomconverter.utils import get_sitk_image, get_sitk_mask, get_mask_file
 
 
 class TestOkapy(unittest.TestCase):

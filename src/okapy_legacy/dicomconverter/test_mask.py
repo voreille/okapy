@@ -4,7 +4,7 @@ from pathlib import Path
 import pydicom as pdcm
 import SimpleITK as sitk
 
-from okapy.dicomconverter.utils import get_sitk_image, get_mask_file
+from okapy_legacy.dicomconverter.utils import get_sitk_image, get_mask_file
 
 
 class TestOkapy(unittest.TestCase):

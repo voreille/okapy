@@ -10,8 +10,8 @@ from tqdm import tqdm
 import pydicom as pdcm
 from pydicom.errors import InvalidDicomError
 
-from okapy.dicomconverter.study import Study
-from okapy.dicomconverter.dicom_header import DicomHeader
+from okapy_legacy.dicomconverter.study import Study
+from okapy_legacy.dicomconverter.dicom_header import DicomHeader
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)

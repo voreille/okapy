@@ -24,19 +24,24 @@ classifiers = [
 ]
 keywords = ["okapy", "biomedical", "dicom", "radiomics", "medical-imaging"]
 
-# Core dependencies actually used in the code
 dependencies = [
+    "pytest",
     "SimpleITK",
-    "click", 
+    "click",
     "numpy",
     "pandas",
     "pydicom",
-    "pydicom-seg",
-    "pyradiomics",
+    "highdicom",
     "pyyaml",
     "six",
     "scipy",
+    "scikit-image",
     "tqdm",
+]
+
+[project.optional-dependencies]
+radiomics = [
+    "pyradiomics==3.0.1",
 ]
 
 [project.urls]
@@ -48,6 +53,6 @@ okapy = "okapy.cli:main"
 okapyconvert = "okapy.dicomconverter.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
+where = ["src"]
 include = ["okapy*"]
 exclude = ["tests*"]

@@ -113,4 +113,5 @@ ENV/
 
 # temporary files
 /tmp/
-dump/
+/dump/
+/output/

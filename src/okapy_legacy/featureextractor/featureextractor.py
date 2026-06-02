@@ -15,7 +15,7 @@ import numpy as np
 import SimpleITK as sitk
 import pandas as pd
 
-from okapy.utils import make_temp_directory
+from okapy_legacy.utils import make_temp_directory
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)

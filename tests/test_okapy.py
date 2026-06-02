@@ -7,8 +7,8 @@
 import unittest
 from click.testing import CliRunner
 
-from okapy import okapy
-from okapy import cli
+from okapy_legacy import okapy
+from okapy_legacy import cli
 
 
 class TestOkapy(unittest.TestCase):

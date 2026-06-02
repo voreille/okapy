@@ -11,11 +11,11 @@ import pandas as pd
 import SimpleITK as sitk
 from tqdm import tqdm
 
-from okapy.dicomconverter.dicom_walker import DicomWalker
-from okapy.dicomconverter.volume_processor import VolumeProcessorStack
-from okapy.dicomconverter.study import StudyProcessor, StudyProcessorDeep
-from okapy.featureextractor.featureextractor import OkapyExtractors
-import okapy.yaml.yaml as yaml
+from okapy_legacy.dicomconverter.dicom_walker import DicomWalker
+from okapy_legacy.dicomconverter.volume_processor import VolumeProcessorStack
+from okapy_legacy.dicomconverter.study import StudyProcessor, StudyProcessorDeep
+from okapy_legacy.featureextractor.featureextractor import OkapyExtractors
+import okapy_legacy.yaml.yaml as yaml
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
@@ -287,7 +287,9 @@ class ExtractorConverter(BaseConverter):
 
     def __call__(self, input_folder, labels=None, output_folder=None):
         try:
-            self.output_folder = mkdtemp() if output_folder is None else output_folder
+            self.output_folder = Path(mkdtemp()) if output_folder is None else Path(output_folder)
+            if not self.output_folder.exists():
+                self.output_folder.mkdir(parents=True, exist_ok=True)
             studies_list = self.dicom_walker(input_folder, cores=self.cores)
             if self.cores is None:
                 result_dfs = list()
