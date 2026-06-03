@@ -125,6 +125,15 @@ class DicomSeries:
     def is_mask(self) -> bool:
         return self.is_rtstruct or self.is_seg
 
+    @property
+    def referenced_series_uids(self) -> tuple[str, ...]:
+        uids: list[str] = []
+
+        for record in self.records:
+            uids.extend(record.referenced_series_uids)
+
+        return tuple(dict.fromkeys(uids))
+
 
 @dataclass(frozen=True)
 class DicomStudy:

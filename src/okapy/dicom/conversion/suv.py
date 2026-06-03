@@ -12,7 +12,7 @@ import numpy as np
 
 from okapy.dicom.models import DicomSeries
 from okapy.dicom.conversion.image import SimpleITKImageSeriesConverter
-from okapy.dicom.conversion.models import ConvertedImage
+from okapy.core.models import ImageVolume
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
       - dose correction ADMIN/START/NONE
     """
 
-    def convert(self, series: DicomSeries, output_dir: Path) -> ConvertedImage:
+    def convert(self, series: DicomSeries, output_dir: Path) -> ImageVolume:
         if series.modality != "PT":
             raise ValueError(f"Expected PT series, got {series.modality}.")
 

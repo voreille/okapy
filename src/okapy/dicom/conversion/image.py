@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from pathlib import Path
 import logging
+from pathlib import Path
 from statistics import mode
 
 import numpy as np
 import pydicom
 
-from okapy.dicom.models import DicomSeries
-from okapy.dicom.conversion.models import ConvertedImage
+from okapy.core.models import ImageVolume, VolumeStage
 from okapy.dicom.conversion.utils import (
-    image_metadata,
     safe_name,
     short_uid,
     sitk_image_from_array_xyz,
     write_image_unique,
 )
+from okapy.dicom.identity import SeriesIdentityConfig, build_series_identity
+from okapy.dicom.models import DicomSeries
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +36,13 @@ class SimpleITKImageSeriesConverter:
         *,
         extension: str = "nii.gz",
         dtype: np.dtype = np.float32,
+        identity_config: SeriesIdentityConfig | None = None,
     ) -> None:
         self.extension = extension
         self.dtype = dtype
+        self.identity_config = identity_config
 
-    def convert(self, series: DicomSeries, output_dir: Path) -> ConvertedImage:
+    def convert(self, series: DicomSeries, output_dir: Path) -> ImageVolume:
         if not series.is_image:
             raise ValueError(f"Expected image series, got {series.modality}.")
 
@@ -103,16 +105,20 @@ class SimpleITKImageSeriesConverter:
         filename = self._make_filename(series)
         path = write_image_unique(image, output_dir / filename)
 
-        return ConvertedImage(
+        identity = build_series_identity(
+            series,
+            config=self.identity_config,
+        )
+
+        return ImageVolume.from_sitk(
             path=path,
             image=image,
-            modality=series.modality,
-            patient_id=series.patient_id,
-            study_instance_uid=series.study_instance_uid,
-            series_instance_uid=series.series_instance_uid,
-            series_description=series.series_description,
-            extra_dicom_tags=series.extra_dicom_tags,
-            metadata=image_metadata(image),
+            identity=identity,
+            stage=VolumeStage.CONVERTED,
+            metadata={
+                "source": "dicom",
+                "converter": self.__class__.__name__,
+            },
         )
 
     def _read_and_sort_slices(self, series: DicomSeries):

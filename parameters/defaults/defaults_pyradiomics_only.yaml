@@ -1,5 +1,5 @@
 general:
-  padding: 10
+  padding: 100
   submodalities: False
   result_format: "long"
   combine_segmentation: False
@@ -9,7 +9,7 @@ general:
 volume_preprocessing:
   common:
     bspline_resampler:
-      resampling_spacing: [1.0, 1.0, -1.0]
+      resampling_spacing: [1.0, 1.0, 1.0]
       order: 3
   default:
 

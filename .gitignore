@@ -115,3 +115,5 @@ ENV/
 /tmp/
 /dump/
 /output/
+/outputs/
+/scripts/

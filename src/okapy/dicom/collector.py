@@ -38,10 +38,14 @@ class DicomStudyCollector:
         *,
         drop_duplicate_sop_instances: bool = True,
         require_image_series: bool = True,
+        additional_dicom_tags: Iterable[str] | None = None,
     ) -> None:
-        self.walker = walker or DicomWalker()
+        self.walker = walker or DicomWalker(additional_dicom_tags=additional_dicom_tags)
         self.drop_duplicate_sop_instances = drop_duplicate_sop_instances
         self.require_image_series = require_image_series
+        self.additional_dicom_tags = (
+            tuple(additional_dicom_tags) if additional_dicom_tags else ()
+        )
 
     def collect(
         self,

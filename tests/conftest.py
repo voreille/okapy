@@ -48,8 +48,3 @@ def suv_computation_test_data() -> Path:
         pytest.skip(f"SUV_COMPUTATION_TEST_DATA does not exist: {path}")
 
     return path
-
-
-@pytest.fixture(scope="session")
-def update_golden() -> bool:
-    return os.getenv("UPDATE_GOLDEN") == "1"

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import SimpleITK as sitk
 
-from okapy.dicom.conversion.models import ConvertedImage
+from okapy.core.models import ImageVolume
 
 
 def sitk_image_summary(image: sitk.Image) -> dict:
@@ -27,7 +27,7 @@ def sitk_image_summary(image: sitk.Image) -> dict:
     }
 
 
-def converted_images_summary(images: list[ConvertedImage]) -> dict:
+def converted_images_summary(images: list[ImageVolume]) -> dict:
     summaries = []
 
     for image in sorted(
