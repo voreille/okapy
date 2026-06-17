@@ -33,7 +33,11 @@ class ProcessorPipeline:
         return cls(common=common, selectors=selectors, default=default)
 
     def apply(self, item, *, key: str | None = None, **kwargs):
-        key = key or getattr(item, "modality_key", None) or getattr(item, "modality", None)
+        key = (
+            key
+            or getattr(item, "modality_key", None)
+            or getattr(item, "modality", None)
+        )
         result = item
 
         for processor in self.common:
@@ -57,12 +61,17 @@ class ProcessorPipeline:
 
         return self.default
 
+    @classmethod
+    def empty(cls) -> "ProcessorPipeline":
+        return cls(
+            common=[],
+            selectors={},
+            default=[],
+        )
+
 
 def _build_processor_list(config: dict[str, Any] | None) -> list[Processor]:
     if not config:
         return []
 
-    return [
-        build_processor(name, params)
-        for name, params in config.items()
-    ]
+    return [build_processor(name, params) for name, params in config.items()]

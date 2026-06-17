@@ -1,143 +1,152 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
-import numpy as np
 import highdicom as hd
+import numpy as np
+import SimpleITK as sitk
 from pydicom.dataset import Dataset
 
 
-@dataclass
+@dataclass(frozen=True)
 class HighdicomSegmentReadResult:
-    """Small compatibility wrapper replacing the pydicom_seg read result.
+    """Decoded DICOM SEG volume and segment metadata.
 
-    It only implements what SegFile currently uses:
-      - direction
-      - spacing
-      - origin
-      - available_segments
-      - segment_infos
-      - segment_data(segment_number)
+    The highdicom volume contains spatial dimensions ordered as:
+
+        slice, row, column
+
+    and one final channel dimension containing the requested segments.
     """
 
     seg: hd.seg.Segmentation
-    segments: dict[int, np.ndarray]
-    segment_infos: dict[int, dict]
-    direction: np.ndarray
-    spacing: np.ndarray
-    origin: np.ndarray
+    volume: hd.Volume
+    segment_numbers: tuple[int, ...]
+    segment_infos: dict[int, dict[str, Any]]
 
     @property
     def available_segments(self) -> list[int]:
-        return list(self.segments.keys())
+        return list(self.segment_numbers)
 
     def segment_data(self, segment_number: int) -> np.ndarray:
-        return self.segments[segment_number]
+        """Return one segment in z, y, x array order."""
 
+        try:
+            channel_index = self.segment_numbers.index(segment_number)
+        except ValueError as exc:
+            raise KeyError(
+                f"Segment {segment_number} is not available. "
+                f"Available segments: {self.segment_numbers}."
+            ) from exc
 
-def read_seg_with_highdicom(dcm: Dataset) -> HighdicomSegmentReadResult:
-    """Read a DICOM SEG object using highdicom.
+        array = np.asarray(self.volume.array)
 
-    Returns segment arrays in z, y, x order, matching pydicom_seg's convention
-    expected by the old SegFile code.
-    """
+        if array.ndim == 3:
+            # Defensive handling for a possible singleton-channel representation.
+            if len(self.segment_numbers) != 1:
+                raise RuntimeError(
+                    "SEG volume has no segment channel dimension, but contains "
+                    f"{len(self.segment_numbers)} segments."
+                )
+            return array
 
-    # highdicom can wrap an already-read pydicom Dataset
-    seg = hd.seg.Segmentation.from_dataset(dcm)
-
-    segment_numbers = [int(n) for n in seg.get_segment_numbers()]
-
-    segment_infos = {}
-    for segment_number in segment_numbers:
-        desc = seg.get_segment_description(segment_number)
-        label = getattr(desc, "SegmentLabel", str(segment_number))
-        segment_infos[segment_number] = {
-            "label": str(label),
-            "dataset": desc,
-        }
-
-    # Try to get a full volume per segment.
-    # highdicom returns a highdicom.Volume-like object for volumetric SEG.
-    segments = {}
-    volume_geometry = None
-
-    for segment_number in segment_numbers:
-        volume = seg.get_volume(segment_number=segment_number)
-        volume_geometry = volume
-
-        # highdicom Volume array is generally spatial, but we normalize to z, y, x
-        # for compatibility with old pydicom_seg SegmentReadResult.
-        arr = np.asarray(volume.array)
-
-        # Common case should already be 3D. If a singleton channel dimension appears,
-        # squeeze it.
-        arr = np.squeeze(arr)
-
-        if arr.ndim != 3:
-            raise ValueError(
-                f"Expected 3D array for SEG segment {segment_number}, "
-                f"got shape {arr.shape}."
+        if array.ndim != 4:
+            raise RuntimeError(
+                "Expected highdicom SEG volume with shape (z, y, x, segments), "
+                f"got {array.shape}."
             )
 
-        segments[segment_number] = arr.astype(np.uint8)
+        if array.shape[-1] != len(self.segment_numbers):
+            raise RuntimeError(
+                "SEG channel count does not match segment count: "
+                f"array channels={array.shape[-1]}, "
+                f"segments={len(self.segment_numbers)}."
+            )
 
-    if volume_geometry is None:
-        raise ValueError("SEG contains no readable segments.")
+        return array[..., channel_index]
 
-    # highdicom Volume exposes geometry. These attributes may differ slightly
-    # across versions, so keep this isolated here.
-    spacing = np.asarray(
-        volume_geometry.get_pixel_measures().SpacingBetweenSlices, dtype=float
+
+def read_seg_with_highdicom(
+    dcm: Dataset,
+) -> HighdicomSegmentReadResult:
+    """Read a regularly spaced patient-coordinate DICOM SEG."""
+
+    seg = hd.seg.Segmentation.from_dataset(dcm)
+
+    segment_numbers = tuple(int(n) for n in seg.get_segment_numbers())
+
+    if not segment_numbers:
+        raise ValueError("SEG contains no segments.")
+
+    segment_infos: dict[int, dict[str, Any]] = {}
+
+    for segment_number in segment_numbers:
+        description = seg.get_segment_description(segment_number)
+
+        segment_infos[segment_number] = {
+            "label": str(
+                getattr(
+                    description,
+                    "SegmentLabel",
+                    f"segment_{segment_number}",
+                )
+            ),
+            "dataset": description,
+        }
+
+    volume = seg.get_volume(
+        segment_numbers=segment_numbers,
+        combine_segments=False,
+        allow_missing_positions=True,
+        rescale_fractional=True,
     )
 
-    # Fallback geometry extraction from DICOM tags is more robust for legacy use.
-    direction, voxel_spacing, origin = _geometry_from_dicom_seg(dcm)
+    array = np.asarray(volume.array)
+
+    if array.ndim not in {3, 4}:
+        raise RuntimeError(
+            "Expected a 3D SEG volume with an optional segment channel, "
+            f"got shape {array.shape}."
+        )
 
     return HighdicomSegmentReadResult(
         seg=seg,
-        segments=segments,
+        volume=volume,
+        segment_numbers=segment_numbers,
         segment_infos=segment_infos,
-        direction=direction,
-        spacing=voxel_spacing,
-        origin=origin,
     )
 
 
-def _geometry_from_dicom_seg(dcm: Dataset) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Extract direction, spacing, origin from a common patient-coordinate SEG.
+def segment_to_sitk(
+    result: HighdicomSegmentReadResult,
+    segment_number: int,
+    *,
+    fractional_threshold: float = 0.5,
+) -> sitk.Image:
+    """Convert one highdicom SEG segment into a binary SimpleITK image."""
 
-    Returns:
-      direction: 3x3 matrix with columns [row_cosines, column_cosines, normal]
-      spacing: x, y, z spacing
-      origin: x, y, z origin
-    """
+    array = np.asarray(result.segment_data(segment_number))
 
-    shared = dcm.SharedFunctionalGroupsSequence[0]
+    if array.ndim != 3:
+        raise RuntimeError(f"Expected a 3D segment array, got shape {array.shape}.")
 
-    orientation = shared.PlaneOrientationSequence[0].ImageOrientationPatient
-    row = np.asarray(orientation[:3], dtype=float)
-    col = np.asarray(orientation[3:], dtype=float)
-    normal = np.cross(row, col)
-    direction = np.stack([row, col, normal], axis=1)
+    segmentation_type = str(getattr(result.seg, "SegmentationType", "BINARY")).upper()
 
-    measures = shared.PixelMeasuresSequence[0]
-
-    # DICOM stores PixelSpacing as [row_spacing, column_spacing].
-    row_spacing, col_spacing = [float(x) for x in measures.PixelSpacing]
-
-    if hasattr(measures, "SpacingBetweenSlices"):
-        z_spacing = float(measures.SpacingBetweenSlices)
-    elif hasattr(measures, "SliceThickness"):
-        z_spacing = float(measures.SliceThickness)
+    if segmentation_type == "FRACTIONAL":
+        binary_array = array >= fractional_threshold
     else:
-        z_spacing = 1.0
+        binary_array = array != 0
 
-    spacing = np.asarray([col_spacing, row_spacing, z_spacing], dtype=float)
+    # highdicom spatial order -> SimpleITK NumPy order
+    array_for_sitk = binary_array.transpose(2, 1, 0).astype(np.uint8)
 
-    first_frame = dcm.PerFrameFunctionalGroupsSequence[0]
-    origin = np.asarray(
-        first_frame.PlanePositionSequence[0].ImagePositionPatient,
-        dtype=float,
+    image = sitk.GetImageFromArray(array_for_sitk)
+
+    image.SetOrigin(tuple(float(x) for x in result.volume.position))
+    image.SetSpacing(tuple(float(x) for x in result.volume.spacing))
+    image.SetDirection(
+        tuple(float(x) for x in np.asarray(result.volume.direction).ravel())
     )
 
-    return direction, spacing, origin
+    return image

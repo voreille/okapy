@@ -4,7 +4,7 @@ from okapy.preprocessing.models import (
     PreprocessingPlan,
     StudyPreprocessingConfig,
 )
-from okapy.preprocessing.pipeline import StudyPreprocessingPipeline
+from okapy.preprocessing.step import StudyPreprocessingStep
 from okapy.preprocessing.registry import build_processor, register_processor
 
 __all__ = [
@@ -12,7 +12,7 @@ __all__ = [
     "PreprocessingDiagnostics",
     "PreprocessingPlan",
     "StudyPreprocessingConfig",
-    "StudyPreprocessingPipeline",
+    "StudyPreprocessingStep",
     "build_processor",
     "register_processor",
 ]

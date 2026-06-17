@@ -18,6 +18,7 @@ class GeometryConfig:
     spacing: tuple[float, float, float]
     image_interpolator: str = "linear"
     mask_interpolator: str = "nearest"
+    mask_threshold: float = 0.5
     crop_to_masks: bool = True
     crop_to_common_fov: bool = False
     padding_mm: float = 0.0
@@ -45,6 +46,7 @@ class GeometryConfig:
             spacing=spacing,
             image_interpolator=str(config.get("image_interpolator", "linear")),
             mask_interpolator=str(config.get("mask_interpolator", "nearest")),
+            mask_threshold=float(config.get("mask_threshold", 0.5)),
             crop_to_masks=bool(config.get("crop_to_masks", True)),
             crop_to_common_fov=bool(config.get("crop_to_common_fov", False)),
             padding_mm=float(config.get("padding_mm", 0.0)),

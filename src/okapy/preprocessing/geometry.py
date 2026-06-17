@@ -74,6 +74,27 @@ def compute_processing_roi(
     return intersect_boxes(boxes)
 
 
+def _resolve_target_spacing(
+    configured_spacing: tuple[float, float, float] | None,
+    native_spacing: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    if configured_spacing is None:
+        return native_spacing
+
+    if len(configured_spacing) != 3:
+        raise ValueError(f"Expected 3 spacing values, got {configured_spacing}.")
+
+    resolved = tuple(
+        native_spacing[axis] if value == -1 else float(value)
+        for axis, value in enumerate(configured_spacing)
+    )
+
+    if any(value <= 0 for value in resolved):
+        raise ValueError(f"Resolved spacing must be positive, got {resolved}.")
+
+    return resolved
+
+
 def make_reference_grid(
     *,
     image: ImageVolume,
@@ -81,7 +102,11 @@ def make_reference_grid(
     geometry_config: GeometryConfig,
     pixel_id: int = sitk.sitkFloat32,
 ) -> sitk.Image:
-    spacing = geometry_config.spacing or image.geometry.spacing
+    spacing = _resolve_target_spacing(
+        geometry_config.spacing,
+        image.geometry.spacing,
+    )
+
     return make_reference_image_from_physical_box(
         box=roi,
         spacing=spacing,
@@ -128,26 +153,45 @@ def resample_mask_volume_to_reference(
     geometry_config: GeometryConfig,
     output_path: Path,
 ) -> MaskVolume:
-    resampled = resample_to_reference(
+    interpolator = interpolator_from_name(geometry_config.mask_interpolator)
+
+    # Preserve interpolated probabilities/values until thresholding.
+    resampled_float = resample_to_reference(
         mask.image,
         reference,
-        interpolator=interpolator_from_name(geometry_config.mask_interpolator),
+        interpolator=interpolator,
         default_value=float(geometry_config.default_mask_value),
-        output_pixel_type=sitk.sitkUInt8,
+        output_pixel_type=sitk.sitkFloat32,
+    )
+
+    threshold = geometry_config.mask_threshold
+
+    resampled_binary = sitk.BinaryThreshold(
+        resampled_float,
+        lowerThreshold=float(threshold),
+        upperThreshold=float("inf"),
+        insideValue=1,
+        outsideValue=0,
+    )
+
+    resampled_binary = sitk.Cast(
+        resampled_binary,
+        sitk.sitkUInt8,
     )
 
     return mask.with_image(
-        resampled,
+        resampled_binary,
         path=output_path,
         stage=VolumeStage.PREPROCESSED,
         target_identity=target_image.identity,
         source_path=mask.path,
         metadata={
             "geometry_preprocessing": {
-                "target_series_instance_uid": target_image.series_instance_uid,
+                "target_series_instance_uid": (target_image.series_instance_uid),
                 "target_modality_key": target_image.modality_key,
-                "mask_interpolator": geometry_config.mask_interpolator,
-                "default_mask_value": geometry_config.default_mask_value,
+                "mask_interpolator": (geometry_config.mask_interpolator),
+                "mask_threshold": threshold,
+                "default_mask_value": (geometry_config.default_mask_value),
             }
         },
     )

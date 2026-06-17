@@ -76,63 +76,116 @@ class DicomFileRecord:
 
 @dataclass(frozen=True)
 class DicomSeries:
-    """A DICOM series grouped from file records."""
+    """A DICOM series grouped from one or more file records."""
 
     series_instance_uid: str
     modality: str
     records: tuple[DicomFileRecord, ...]
 
-    @property
-    def extra_dicom_tags(self) -> dict[str, object]:
+    def __post_init__(self) -> None:
+        if not self.series_instance_uid:
+            raise ValueError("series_instance_uid cannot be empty.")
+
+        if not self.modality:
+            raise ValueError(
+                f"DicomSeries {self.series_instance_uid!r} has no modality."
+            )
+
         if not self.records:
-            return {}
+            raise ValueError(
+                f"DicomSeries {self.series_instance_uid!r} contains no records."
+            )
 
-        # Use first record because series-level tags should be identical.
-        return dict(self.records[0].extra_dicom_tags)
-
-    @property
-    def series_description(self) -> str | None:
         for record in self.records:
-            if record.series_description is not None:
-                return record.series_description
-        return None
+            if record.series_instance_uid != self.series_instance_uid:
+                raise ValueError(
+                    "DicomFileRecord series UID does not match its containing "
+                    "DicomSeries: "
+                    f"series={self.series_instance_uid!r}, "
+                    f"record={record.series_instance_uid!r}, "
+                    f"path={record.path}."
+                )
+
+            if record.modality != self.modality:
+                raise ValueError(
+                    "DicomFileRecord modality does not match its containing "
+                    "DicomSeries: "
+                    f"series={self.modality!r}, "
+                    f"record={record.modality!r}, "
+                    f"path={record.path}."
+                )
 
     @property
     def paths(self) -> tuple[Path, ...]:
+        """Paths of all DICOM files belonging to the series."""
+
         return tuple(record.path for record in self.records)
 
     @property
     def patient_id(self) -> str | None:
-        return self.records[0].patient_id if self.records else None
+        """Patient ID taken from the first series record."""
+
+        return self.records[0].patient_id
 
     @property
     def study_instance_uid(self) -> str | None:
-        return self.records[0].study_instance_uid if self.records else None
+        """Study Instance UID taken from the first series record."""
+
+        return self.records[0].study_instance_uid
+
+    @property
+    def series_description(self) -> str | None:
+        """First available Series Description in the series."""
+
+        for record in self.records:
+            if record.series_description is not None:
+                return record.series_description
+
+        return None
+
+    @property
+    def extra_dicom_tags(self) -> dict[str, object]:
+        """Additional configured DICOM tags for downstream reporting.
+
+        These are assumed to be series-level values and are therefore read from
+        the first record.
+        """
+
+        return dict(self.records[0].extra_dicom_tags)
+
+    @property
+    def referenced_series_uids(self) -> tuple[str, ...]:
+        """Unique referenced Series Instance UIDs, preserving their order."""
+
+        return tuple(
+            dict.fromkeys(
+                uid for record in self.records for uid in record.referenced_series_uids
+            )
+        )
 
     @property
     def is_image(self) -> bool:
+        """Whether this series represents an image volume."""
+
         return self.modality in IMAGE_MODALITIES
 
     @property
     def is_rtstruct(self) -> bool:
+        """Whether this series is an RT Structure Set."""
+
         return self.modality == "RTSTRUCT"
 
     @property
     def is_seg(self) -> bool:
+        """Whether this series is a DICOM Segmentation object."""
+
         return self.modality == "SEG"
 
     @property
     def is_mask(self) -> bool:
+        """Whether this series represents a supported segmentation object."""
+
         return self.is_rtstruct or self.is_seg
-
-    @property
-    def referenced_series_uids(self) -> tuple[str, ...]:
-        uids: list[str] = []
-
-        for record in self.records:
-            uids.extend(record.referenced_series_uids)
-
-        return tuple(dict.fromkeys(uids))
 
 
 @dataclass(frozen=True)

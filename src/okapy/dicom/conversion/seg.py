@@ -4,8 +4,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pydicom
+import SimpleITK as sitk
 
 from okapy.core.models import (
     ImageVolume,
@@ -16,12 +16,11 @@ from okapy.core.models import (
 from okapy.dicom.conversion.utils import (
     image_metadata,
     safe_name,
-    sitk_mask_like_reference,
     write_image_unique,
 )
 from okapy.dicom.models import DicomSeries
 
-from .seg_highdicom_adapter import read_seg_with_highdicom
+from .seg_highdicom_adapter import read_seg_with_highdicom, segment_to_sitk
 
 logger = logging.getLogger(__name__)
 
@@ -78,13 +77,15 @@ class SegMaskConverter:
             if requested_labels is not None and label not in requested_labels:
                 continue
 
-            mask_xyz = _segment_data_to_xyz(
-                raw_volume.segment_data(segment_number),
-                reference_image=reference_image,
-                label=label,
+            native_mask_image = segment_to_sitk(raw_volume, segment_number)
+            mask_image = sitk.Resample(
+                native_mask_image,
+                reference_image.image,
+                sitk.Transform(),
+                sitk.sitkNearestNeighbor,
+                0,
+                sitk.sitkUInt8,
             )
-
-            mask_image = sitk_mask_like_reference(mask_xyz, reference_image.image)
 
             filename = self._make_filename(
                 reference_image=reference_image,
@@ -145,32 +146,6 @@ class SegMaskConverter:
             f"{patient}__{label}__seg{int(segment_number)}__SEG__"
             f"{reference_modality}__{reference_uid}.{self.extension}"
         )
-
-
-def _segment_data_to_xyz(
-    segment_data: np.ndarray,
-    *,
-    reference_image: ImageVolume,
-    label: str,
-) -> np.ndarray:
-    """Convert SEG segment data to x, y, z array convention.
-
-    The highdicom adapter currently returns z, y, x, matching the old
-    pydicom_seg-based code. The previous implementation converted it to x, y, z
-    with transpose (2, 1, 0), so we keep the same convention here.
-    """
-
-    mask_xyz = np.transpose(segment_data, (2, 1, 0)).astype(np.uint8)
-
-    expected_size = tuple(int(x) for x in reference_image.image.GetSize())
-
-    if mask_xyz.shape != expected_size:
-        raise RuntimeError(
-            f"SEG mask for label {label!r} does not match reference image size. "
-            f"mask_xyz.shape={mask_xyz.shape}, reference size={expected_size}."
-        )
-
-    return mask_xyz
 
 
 def _check_reference_uid(
