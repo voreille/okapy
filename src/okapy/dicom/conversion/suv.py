@@ -400,6 +400,27 @@ def _dose_at_image_reference_time(s, meta: PETMetadata) -> float:
         reference_dt = _voxel_measurement_datetime_for_none(s, meta)
 
     delta_s = (reference_dt - administration_dt).total_seconds()
+
+    # The reference and administration datetimes can come from different tag
+    # families (e.g. GE/Siemens private tags vs. the public AcquisitionDate).
+    # Anonymizers often rewrite one but not the other, producing a nonsensical
+    # multi-year gap. A legitimate injection -> scan offset is always a small
+    # positive value (minutes to a couple of hours), so any absolute gap above a
+    # day means the dates are inconsistent and their day part cannot be trusted.
+    # Fall back to the time-of-day difference, which recovers the true offset and
+    # still handles a genuine midnight crossing via the +86400 correction.
+    if abs(delta_s) > 86400:
+        logger.warning(
+            "Reference/administration datetimes differ by %.0f s (%.1f days); "
+            "dates are inconsistent (likely anonymization). Falling back to the "
+            "time-of-day difference for decay correction.",
+            delta_s,
+            delta_s / 86400,
+        )
+        delta_s = _seconds_of_day(reference_dt) - _seconds_of_day(administration_dt)
+        if delta_s < 0:  # injection and scan straddle midnight
+            delta_s += 86400
+
     corrected_dose = dose_bq * 2 ** (-delta_s / half_life_s)
 
     if corrected_dose <= 0 or not math.isfinite(corrected_dose):
