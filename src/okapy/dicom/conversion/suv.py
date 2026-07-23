@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import logging
@@ -30,6 +30,9 @@ class PETMetadata:
     patient_weight_kg: float | None
     patient_size_m: float | None
     patient_sex: str | None
+    # Warnings already emitted for this image; lets slice-level code warn once
+    # per image instead of once per slice.
+    emitted_warnings: set[str] = field(default_factory=set, compare=False)
 
 
 class PETSUVConverter(SimpleITKImageSeriesConverter):
@@ -410,13 +413,15 @@ def _dose_at_image_reference_time(s, meta: PETMetadata) -> float:
     # Fall back to the time-of-day difference, which recovers the true offset and
     # still handles a genuine midnight crossing via the +86400 correction.
     if abs(delta_s) > 86400:
-        logger.warning(
-            "Reference/administration datetimes differ by %.0f s (%.1f days); "
-            "dates are inconsistent (likely anonymization). Falling back to the "
-            "time-of-day difference for decay correction.",
-            delta_s,
-            delta_s / 86400,
-        )
+        if "datetime_mismatch" not in meta.emitted_warnings:
+            meta.emitted_warnings.add("datetime_mismatch")
+            logger.warning(
+                "Reference/administration datetimes differ by %.0f s (%.1f days); "
+                "dates are inconsistent (likely anonymization). Falling back to "
+                "the time-of-day difference for decay correction.",
+                delta_s,
+                delta_s / 86400,
+            )
         delta_s = _seconds_of_day(reference_dt) - _seconds_of_day(administration_dt)
         if delta_s < 0:  # injection and scan straddle midnight
             delta_s += 86400
