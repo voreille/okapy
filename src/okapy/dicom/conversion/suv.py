@@ -3,22 +3,64 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 import logging
-import math
 
 import numpy as np
 
-from okapy.dicom.models import DicomSeries
-from okapy.dicom.conversion.image import SimpleITKImageSeriesConverter
 from okapy.core.models import ImageVolume
+from okapy.dicom.conversion.enhanced_pet import (
+    ENHANCED_PET_SOP_CLASS_UIDS,
+    EnhancedPETSUVConverter,
+)
+from okapy.dicom.conversion.image import SimpleITKImageSeriesConverter
+from okapy.dicom.conversion.suv_common import (
+    SUVComputationError,
+    administration_datetime,
+    apply_rescale,
+    average_count_rate_time_s,
+    body_surface_area_m2,
+    decay_corrected_dose_bq,
+    get_optional_float,
+    get_optional_str,
+    get_required_float,
+    normalization_factor_kg,
+    normalize_manufacturer,
+    normalize_suv_type,
+    parse_dicom_date,
+    parse_dicom_datetime,
+    parse_dicom_time,
+    patient_sex,
+    patient_size_m,
+    patient_weight_g,
+    patient_weight_kg,
+    positive_float_tag,
+    radionuclide_half_life_s,
+    radionuclide_total_dose_bq,
+    radiopharmaceutical_item,
+    warn_unrecognized_manufacturer,
+)
+from okapy.dicom.models import DicomSeries
 
 logger = logging.getLogger(__name__)
 
+__all__ = [
+    "PETMetadata",
+    "PETSUVConverter",
+    "SUVComputationError",
+]
 
-class SUVComputationError(RuntimeError):
-    """Raised when SUVbw cannot be computed reliably."""
+# Private scan start datetime attributes (manual, "Determining the scan start
+# datetime"): the most reliable source, but vendor-specific.
+SIEMENS_SCAN_START_TAG = (0x0071, 0x1022)
+GE_SCAN_START_TAG = (0x0009, 0x100D)
+
+# Philips private scale factors for Units=CNTS.
+PHILIPS_SUV_SCALE_FACTOR_TAG = (0x7053, 0x1000)
+PHILIPS_ACTIVITY_SCALE_FACTOR_TAG = (0x7053, 0x1009)
+
+SUPPORTED_UNITS = ("BQML", "GML", "CM2ML", "CNTS")
 
 
 @dataclass(frozen=True)
@@ -38,21 +80,34 @@ class PETMetadata:
 class PETSUVConverter(SimpleITKImageSeriesConverter):
     """Convert PET DICOM series to SUVbw.
 
-    Implemented according to the SUV computation manual:
-      - slice-wise rescale slope
+    Implemented according to the SUV computation manual (v3.0.0):
+      - slice-wise rescale slope and intercept
       - BQML -> SUVbw
-      - GML SUVbw/LBM/IBW/LBMJANMA -> SUVbw
+      - GML SUVbw/LBM/LBMJAMES128/LBMJANMA/IBW -> SUVbw
       - CM2ML BSA -> SUVbw
-      - CNTS Philips factors or DCAL fallback
-      - CPS DCAL fallback
-      - dose correction ADMIN/START/NONE
+      - CNTS via the Philips activity concentration / SUV scale factors
+      - dose correction for DecayCorrection ADMIN/START/NONE
+
+    Series of the Enhanced PET SOP class are delegated to
+    :class:`~okapy.dicom.conversion.enhanced_pet.EnhancedPETSUVConverter`,
+    which stores the same information in functional groups instead.
     """
 
     def convert(self, series: DicomSeries, output_dir: Path) -> ImageVolume:
         if series.modality != "PT":
             raise ValueError(f"Expected PT series, got {series.modality}.")
 
+        if _is_enhanced_pet(series):
+            return self._enhanced_converter().convert(series, output_dir)
+
         return super().convert(series, output_dir)
+
+    def _enhanced_converter(self) -> EnhancedPETSUVConverter:
+        return EnhancedPETSUVConverter(
+            extension=self.extension,
+            dtype=self.dtype,
+            identity_config=self.identity_config,
+        )
 
     def _get_physical_values(self, slices, paths, modality: str) -> np.ndarray:
         meta = _extract_pet_metadata(slices[0])
@@ -60,7 +115,7 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
         return np.stack(arrays, axis=-1)
 
     def _slice_to_suvbw(self, s, all_slices, meta: PETMetadata) -> np.ndarray:
-        scaled = _scaled_pixel_array(s)
+        scaled = _scaled_pixel_array(s, meta)
 
         units = meta.units.upper()
 
@@ -76,33 +131,30 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
         if units == "CNTS":
             return self._cnts_to_suvbw(scaled, s, meta)
 
-        if units == "CPS":
-            return self._cps_to_suvbw(scaled, s, meta)
-
         raise SUVComputationError(
             f"Unsupported PET Units={meta.units!r}. "
-            "Supported units are BQML, GML, CM2ML, CNTS, CPS."
+            f"Supported units are {', '.join(SUPPORTED_UNITS)}."
         )
 
     def _bqml_to_suvbw(
         self, activity_bqml: np.ndarray, s, meta: PETMetadata
     ) -> np.ndarray:
-        weight_g = _patient_weight_g(meta)
+        weight_g = patient_weight_g(meta.patient_weight_kg)
         dose_bq = _dose_at_image_reference_time(s, meta)
         return activity_bqml * weight_g / dose_bq
 
     def _gml_to_suvbw(self, scaled: np.ndarray, meta: PETMetadata) -> np.ndarray:
-        suv_type = _normalize_suv_type(meta.suv_type)
+        suv_type = normalize_suv_type(meta.suv_type)
 
         if suv_type in {None, "", "BW"}:
             return scaled
 
-        weight_kg = _patient_weight_kg(meta)
-        factor_kg = _normalization_factor_kg(
+        weight_kg = patient_weight_kg(meta.patient_weight_kg)
+        factor_kg = normalization_factor_kg(
             suv_type=suv_type,
             weight_kg=weight_kg,
-            height_m=_patient_size_m(meta),
-            sex=_patient_sex(meta),
+            height_m=patient_size_m(meta.patient_size_m),
+            sex=patient_sex(meta.patient_sex),
         )
 
         # scaled is SUVx = activity * factor_g / dose.
@@ -110,18 +162,18 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
         return scaled * weight_kg / factor_kg
 
     def _cm2ml_to_suvbw(self, scaled: np.ndarray, meta: PETMetadata) -> np.ndarray:
-        suv_type = _normalize_suv_type(meta.suv_type)
+        suv_type = normalize_suv_type(meta.suv_type)
 
         if suv_type not in {"BSA"}:
             raise SUVComputationError(
                 f"Units=CM2ML requires SUVType=BSA, got {meta.suv_type!r}."
             )
 
-        weight_g = _patient_weight_g(meta)
+        weight_g = patient_weight_g(meta.patient_weight_kg)
 
-        bsa_m2 = _body_surface_area_m2(
-            weight_kg=_patient_weight_kg(meta),
-            height_m=_patient_size_m(meta),
+        bsa_m2 = body_surface_area_m2(
+            weight_kg=patient_weight_kg(meta.patient_weight_kg),
+            height_m=patient_size_m(meta.patient_size_m),
         )
         bsa_cm2 = bsa_m2 * 10_000.0
 
@@ -130,45 +182,39 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
     def _cnts_to_suvbw(
         self, scaled_counts: np.ndarray, s, meta: PETMetadata
     ) -> np.ndarray:
-        manufacturer = _normalize_manufacturer(meta.manufacturer)
+        manufacturer = normalize_manufacturer(meta.manufacturer)
 
-        # Prefer Philips activity concentration factor when present.
-        # It converts counts to Bq/ml, then normal SUVbw logic applies.
-        activity_factor = _positive_float_tag(s, (0x7053, 0x1009))
-        if manufacturer == "PHILIPS" and activity_factor is not None:
-            activity_bqml = scaled_counts * activity_factor
-            return self._bqml_to_suvbw(activity_bqml, s, meta)
+        if manufacturer == "PHILIPS":
+            # Prefer the activity concentration factor: it converts counts to
+            # Bq/ml, after which the normal SUVbw logic applies.
+            activity_factor = positive_float_tag(s, PHILIPS_ACTIVITY_SCALE_FACTOR_TAG)
+            if activity_factor is not None:
+                activity_bqml = scaled_counts * activity_factor
+                return self._bqml_to_suvbw(activity_bqml, s, meta)
 
-        # Then Philips SUV factor: direct SUVbw if SUVType is BW/empty.
-        suv_factor = _positive_float_tag(s, (0x7053, 0x1000))
-        if manufacturer == "PHILIPS" and suv_factor is not None:
-            suv_type = _normalize_suv_type(meta.suv_type)
-            if suv_type not in {None, "", "BW"}:
-                raise SUVComputationError(
-                    f"Philips SUV scale factor only supported for SUVType=BW/empty, "
-                    f"got {meta.suv_type!r}."
-                )
-            return scaled_counts * suv_factor
+            # Then the SUV factor: a direct SUVbw if SUVType is BW/empty.
+            suv_factor = positive_float_tag(s, PHILIPS_SUV_SCALE_FACTOR_TAG)
+            if suv_factor is not None:
+                suv_type = normalize_suv_type(meta.suv_type)
+                if suv_type not in {None, "", "BW"}:
+                    raise SUVComputationError(
+                        "Philips SUV scale factor only supported for "
+                        f"SUVType=BW/empty, got {meta.suv_type!r}."
+                    )
+                return scaled_counts * suv_factor
 
-        # Fallback: CNTS -> CPS -> Bq/ml if DCAL.
-        if not _has_correction(s, "DCAL"):
-            raise SUVComputationError(
-                "Units=CNTS without Philips scale factors requires DCAL correction."
-            )
+        raise SUVComputationError(
+            "Units=CNTS requires the Philips Activity Concentration Scale Factor "
+            "(7053,1009) or SUV Scale Factor (7053,1000) on a PHILIPS image; "
+            f"Manufacturer is {meta.manufacturer!r} and neither factor is usable."
+        )
 
-        frame_duration_s = _actual_frame_duration_s(s)
-        voxel_volume_ml = _voxel_volume_ml(s)
 
-        activity_bqml = scaled_counts / frame_duration_s / voxel_volume_ml
-        return self._bqml_to_suvbw(activity_bqml, s, meta)
-
-    def _cps_to_suvbw(self, scaled_cps: np.ndarray, s, meta: PETMetadata) -> np.ndarray:
-        if not _has_correction(s, "DCAL"):
-            raise SUVComputationError("Units=CPS requires DCAL correction.")
-
-        voxel_volume_ml = _voxel_volume_ml(s)
-        activity_bqml = scaled_cps / voxel_volume_ml
-        return self._bqml_to_suvbw(activity_bqml, s, meta)
+def _is_enhanced_pet(series: DicomSeries) -> bool:
+    return any(
+        record.sop_class_uid in ENHANCED_PET_SOP_CLASS_UIDS
+        for record in series.records
+    )
 
 
 def _extract_pet_metadata(s) -> PETMetadata:
@@ -178,211 +224,27 @@ def _extract_pet_metadata(s) -> PETMetadata:
 
     return PETMetadata(
         units=str(units).strip().upper(),
-        suv_type=_get_optional_str(s, "SUVType"),
-        manufacturer=_get_optional_str(s, "Manufacturer") or "",
-        decay_correction=_get_optional_str(s, "DecayCorrection"),
-        patient_weight_kg=_get_optional_float(s, "PatientWeight"),
-        patient_size_m=_get_optional_float(s, "PatientSize"),
-        patient_sex=_get_optional_str(s, "PatientSex"),
+        suv_type=get_optional_str(s, "SUVType"),
+        manufacturer=get_optional_str(s, "Manufacturer") or "",
+        decay_correction=get_optional_str(s, "DecayCorrection"),
+        patient_weight_kg=get_optional_float(s, "PatientWeight"),
+        patient_size_m=get_optional_float(s, "PatientSize"),
+        patient_sex=get_optional_str(s, "PatientSex"),
     )
 
 
-def _scaled_pixel_array(s) -> np.ndarray:
-    slope = _get_required_positive_float(s, "RescaleSlope")
-    intercept = _get_required_float(s, "RescaleIntercept")
-
-    if intercept != 0:
-        raise SUVComputationError(
-            f"PET RescaleIntercept must be 0 for SUV computation, got {intercept}."
-        )
-
-    return slope * s.pixel_array.astype(np.float64)
-
-
-def _get_required_float(s, name: str) -> float:
-    value = getattr(s, name, None)
-    if value is None or str(value).strip() == "":
-        raise SUVComputationError(f"Missing required DICOM attribute: {name}.")
-    return float(value)
-
-
-def _get_required_positive_float(s, name: str) -> float:
-    value = _get_required_float(s, name)
-    if value <= 0:
-        raise SUVComputationError(f"{name} must be positive, got {value}.")
-    return value
-
-
-def _get_optional_float(s, name: str) -> float | None:
-    value = getattr(s, name, None)
-    if value is None or str(value).strip() == "":
-        return None
-    return float(value)
-
-
-def _get_optional_str(s, name: str) -> str | None:
-    value = getattr(s, name, None)
-    if value is None:
-        return None
-    value = str(value).strip()
-    return value or None
-
-
-def _positive_float_tag(s, tag: tuple[int, int]) -> float | None:
-    if tag not in s:
-        return None
-
-    value = s[tag].value
-    if value is None or str(value).strip() == "":
-        return None
-
-    value = float(value)
-    if value <= 0:
-        return None
-
-    return value
-
-
-def _normalize_suv_type(suv_type: str | None) -> str | None:
-    if suv_type is None:
-        return None
-    return suv_type.strip().upper()
-
-
-def _normalize_manufacturer(manufacturer: str) -> str:
-    m = manufacturer.upper()
-
-    if "SIEMENS" in m:
-        return "SIEMENS"
-
-    if "PHILIPS" in m:
-        return "PHILIPS"
-
-    if "GE" in m or "GEMS" in m or "GENERAL ELECTRIC" in m:
-        return "GE"
-
-    return "UNKNOWN"
-
-
-def _patient_weight_kg(meta: PETMetadata) -> float:
-    weight = meta.patient_weight_kg
-
-    if weight is None or weight <= 0:
-        raise SUVComputationError("PatientWeight is required and must be positive.")
-
-    # Manual recommendation: values >= 1000 should be interpreted as grams.
-    if weight >= 1000:
-        return weight / 1000.0
-
-    return weight
-
-
-def _patient_weight_g(meta: PETMetadata) -> float:
-    return _patient_weight_kg(meta) * 1000.0
-
-
-def _patient_size_m(meta: PETMetadata) -> float:
-    size = meta.patient_size_m
-
-    if size is None or size <= 0:
-        raise SUVComputationError("PatientSize is required and must be positive.")
-
-    return size
-
-
-def _patient_sex(meta: PETMetadata) -> str:
-    sex = (meta.patient_sex or "").upper()
-
-    if sex not in {"M", "F", "O"}:
-        raise SUVComputationError(
-            f"PatientSex must be M, F, or O for this SUV conversion, got {sex!r}."
-        )
-
-    return sex
-
-
-def _normalization_factor_kg(
-    *,
-    suv_type: str,
-    weight_kg: float,
-    height_m: float,
-    sex: str,
-) -> float:
-    if suv_type in {"LBM", "LBMJAMES128"}:
-        return _sex_specific_or_average(
-            sex=sex,
-            male=lambda: _lbm_james_male_kg(weight_kg, height_m),
-            female=lambda: _lbm_james_female_kg(weight_kg, height_m),
-        )
-
-    if suv_type == "LBMJANMA":
-        return _sex_specific_or_average(
-            sex=sex,
-            male=lambda: _lbm_janma_male_kg(weight_kg, height_m),
-            female=lambda: _lbm_janma_female_kg(weight_kg, height_m),
-        )
-
-    if suv_type == "IBW":
-        return _sex_specific_or_average(
-            sex=sex,
-            male=lambda: _ibw_male_kg(height_m),
-            female=lambda: _ibw_female_kg(height_m),
-        )
-
-    raise SUVComputationError(f"Unsupported SUVType={suv_type!r} for Units=GML.")
-
-
-def _sex_specific_or_average(sex: str, male, female) -> float:
-    if sex == "M":
-        return male()
-
-    if sex == "F":
-        return female()
-
-    # Manual recommendation for PatientSex=O: use the mean of sex-specific factors.
-    if sex == "O":
-        return 0.5 * (male() + female())
-
-    raise SUVComputationError(f"Unsupported PatientSex={sex!r}.")
-
-
-def _lbm_james_male_kg(weight_kg: float, height_m: float) -> float:
-    height_cm = height_m * 100.0
-    return 1.10 * weight_kg - 128.0 * (weight_kg / height_cm) ** 2
-
-
-def _lbm_james_female_kg(weight_kg: float, height_m: float) -> float:
-    height_cm = height_m * 100.0
-    return 1.07 * weight_kg - 148.0 * (weight_kg / height_cm) ** 2
-
-
-def _lbm_janma_male_kg(weight_kg: float, height_m: float) -> float:
-    bmi = weight_kg / (height_m**2)
-    return 9270.0 * weight_kg / (6680.0 + 216.0 * bmi)
-
-
-def _lbm_janma_female_kg(weight_kg: float, height_m: float) -> float:
-    bmi = weight_kg / (height_m**2)
-    return 9270.0 * weight_kg / (8780.0 + 244.0 * bmi)
-
-
-def _ibw_male_kg(height_m: float) -> float:
-    height_cm = height_m * 100.0
-    return 48.0 + 1.06 * (height_cm - 152.0)
-
-
-def _ibw_female_kg(height_m: float) -> float:
-    height_cm = height_m * 100.0
-    return 45.5 + 0.91 * (height_cm - 152.0)
-
-
-def _body_surface_area_m2(weight_kg: float, height_m: float) -> float:
-    height_cm = height_m * 100.0
-    return 0.007184 * (weight_kg**0.425) * (height_cm**0.725)
+def _scaled_pixel_array(s, meta: PETMetadata) -> np.ndarray:
+    return apply_rescale(
+        s.pixel_array,
+        slope=get_required_float(s, "RescaleSlope"),
+        intercept=get_required_float(s, "RescaleIntercept"),
+        emitted_warnings=meta.emitted_warnings,
+    )
 
 
 def _dose_at_image_reference_time(s, meta: PETMetadata) -> float:
-    dose_bq = _radionuclide_total_dose_bq(s)
+    rph = radiopharmaceutical_item(s)
+    dose_bq = radionuclide_total_dose_bq(rph)
 
     decay_correction = (meta.decay_correction or "").upper()
 
@@ -392,138 +254,89 @@ def _dose_at_image_reference_time(s, meta: PETMetadata) -> float:
         )
 
     if decay_correction == "ADMIN":
+        # Voxel values are already corrected to the administration time, so the
+        # stored dose needs no correction at all.
         return dose_bq
 
-    half_life_s = _radionuclide_half_life_s(s)
-    administration_dt = _radiopharmaceutical_start_datetime(s)
+    half_life_s = radionuclide_half_life_s(rph)
 
     if decay_correction == "START":
-        reference_dt = _image_reference_datetime_for_start(s, meta)
+        reference_dt = _image_reference_datetime_for_start(s, meta, half_life_s)
     else:
-        reference_dt = _voxel_measurement_datetime_for_none(s, meta)
+        reference_dt = _voxel_measurement_datetime_for_none(s, meta, half_life_s)
 
-    delta_s = (reference_dt - administration_dt).total_seconds()
-
-    # The reference and administration datetimes can come from different tag
-    # families (e.g. GE/Siemens private tags vs. the public AcquisitionDate).
-    # Anonymizers often rewrite one but not the other, producing a nonsensical
-    # multi-year gap. A legitimate injection -> scan offset is always a small
-    # positive value (minutes to a couple of hours), so any absolute gap above a
-    # day means the dates are inconsistent and their day part cannot be trusted.
-    # Fall back to the time-of-day difference, which recovers the true offset and
-    # still handles a genuine midnight crossing via the +86400 correction.
-    if abs(delta_s) > 86400:
-        if "datetime_mismatch" not in meta.emitted_warnings:
-            meta.emitted_warnings.add("datetime_mismatch")
-            logger.warning(
-                "Reference/administration datetimes differ by %.0f s (%.1f days); "
-                "dates are inconsistent (likely anonymization). Falling back to "
-                "the time-of-day difference for decay correction.",
-                delta_s,
-                delta_s / 86400,
-            )
-        delta_s = _seconds_of_day(reference_dt) - _seconds_of_day(administration_dt)
-        if delta_s < 0:  # injection and scan straddle midnight
-            delta_s += 86400
-
-    corrected_dose = dose_bq * 2 ** (-delta_s / half_life_s)
-
-    if corrected_dose <= 0 or not math.isfinite(corrected_dose):
-        raise SUVComputationError(f"Invalid decay-corrected dose: {corrected_dose}.")
-
-    return corrected_dose
+    return decay_corrected_dose_bq(
+        dose_bq=dose_bq,
+        half_life_s=half_life_s,
+        reference_dt=reference_dt,
+        administration_dt=administration_datetime(
+            rph,
+            reference_dt=reference_dt,
+            half_life_s=half_life_s,
+            emitted_warnings=meta.emitted_warnings,
+        ),
+    )
 
 
-def _radionuclide_total_dose_bq(s) -> float:
-    try:
-        dose = float(s.RadiopharmaceuticalInformationSequence[0].RadionuclideTotalDose)
-    except Exception as exc:
-        raise SUVComputationError("Missing RadionuclideTotalDose.") from exc
+def _image_reference_datetime_for_start(
+    s, meta: PETMetadata, half_life_s: float
+) -> datetime:
+    """Scan start datetime, i.e. the time the voxel values were corrected to.
 
-    if dose <= 0:
-        raise SUVComputationError(
-            f"RadionuclideTotalDose must be positive, got {dose}."
-        )
+    Manual, "Determining the scan start datetime", in order of preference:
+      1. the vendor private scan start datetime (Siemens / GE only);
+      2. the Acquisition Date/Time when it equals the Series Date/Time;
+      3. one frame reference time before the Acquisition Date/Time (GE);
+      4. one frame reference time before the measurement time (any vendor).
+    """
 
-    # Manual recommendation: dose > 0 and < 1e4 indicates MBq.
-    if dose < 1e4:
-        return dose * 1e6
-
-    return dose
-
-
-def _radionuclide_half_life_s(s) -> float:
-    try:
-        half_life = float(
-            s.RadiopharmaceuticalInformationSequence[0].RadionuclideHalfLife
-        )
-    except Exception as exc:
-        raise SUVComputationError("Missing RadionuclideHalfLife.") from exc
-
-    if half_life <= 0:
-        raise SUVComputationError(
-            f"RadionuclideHalfLife must be positive, got {half_life}."
-        )
-
-    return half_life
-
-
-def _image_reference_datetime_for_start(s, meta: PETMetadata) -> datetime:
-    manufacturer = _normalize_manufacturer(meta.manufacturer)
+    manufacturer = normalize_manufacturer(meta.manufacturer)
+    warn_unrecognized_manufacturer(
+        meta.manufacturer,
+        emitted_warnings=meta.emitted_warnings,
+    )
 
     if manufacturer == "SIEMENS":
-        private_dt = _private_datetime(s, (0x0071, 0x1022))
+        private_dt = _private_datetime(s, SIEMENS_SCAN_START_TAG)
         if private_dt is not None:
             return private_dt
 
     if manufacturer == "GE":
-        private_dt = _private_datetime(s, (0x0009, 0x100D))
+        private_dt = _private_datetime(s, GE_SCAN_START_TAG)
         if private_dt is not None:
             return private_dt
 
     acquisition_dt = _acquisition_datetime(s)
     series_dt = _series_datetime(s)
 
-    if (
-        manufacturer in {"SIEMENS", "GE", "PHILIPS"}
-        and series_dt is not None
-        and _seconds_of_day(acquisition_dt) == _seconds_of_day(series_dt)
-    ):
+    if series_dt is not None and acquisition_dt == series_dt:
         return acquisition_dt
 
     frame_reference_s = _frame_reference_time_s(s)
 
-    if manufacturer in {"SIEMENS", "PHILIPS"}:
-        tave_s = _average_count_rate_time_s(s)
-        return acquisition_dt + timedelta(seconds=tave_s - frame_reference_s)
-
     if manufacturer == "GE":
         return acquisition_dt - timedelta(seconds=frame_reference_s)
 
-    raise SUVComputationError(
-        f"Cannot determine START reference time for manufacturer={meta.manufacturer!r}."
+    tave_s = average_count_rate_time_s(_actual_frame_duration_s(s), half_life_s)
+    return acquisition_dt + timedelta(seconds=tave_s - frame_reference_s)
+
+
+def _voxel_measurement_datetime_for_none(
+    s, meta: PETMetadata, half_life_s: float
+) -> datetime:
+    """Measurement time, i.e. the time the uncorrected voxel values occurred."""
+
+    warn_unrecognized_manufacturer(
+        meta.manufacturer,
+        emitted_warnings=meta.emitted_warnings,
     )
 
-
-def _voxel_measurement_datetime_for_none(s, meta: PETMetadata) -> datetime:
-    manufacturer = _normalize_manufacturer(meta.manufacturer)
-
-    if manufacturer not in {"SIEMENS", "GE", "PHILIPS"}:
-        raise SUVComputationError(
-            f"DecayCorrection=NONE not supported for manufacturer={meta.manufacturer!r}."
-        )
-
-    return _acquisition_datetime(s) + timedelta(seconds=_average_count_rate_time_s(s))
-
-
-def _average_count_rate_time_s(s) -> float:
-    # The manual discusses Tave; for standard static frames this is commonly half
-    # of ActualFrameDuration. Keep this isolated for future refinement.
-    return _actual_frame_duration_s(s) / 2.0
+    tave_s = average_count_rate_time_s(_actual_frame_duration_s(s), half_life_s)
+    return _acquisition_datetime(s) + timedelta(seconds=tave_s)
 
 
 def _actual_frame_duration_s(s) -> float:
-    value = _get_optional_float(s, "ActualFrameDuration")
+    value = get_optional_float(s, "ActualFrameDuration")
     if value is None or value <= 0:
         raise SUVComputationError("ActualFrameDuration must be present and positive.")
 
@@ -532,7 +345,7 @@ def _actual_frame_duration_s(s) -> float:
 
 
 def _frame_reference_time_s(s) -> float:
-    value = _get_optional_float(s, "FrameReferenceTime")
+    value = get_optional_float(s, "FrameReferenceTime")
     if value is None or value < 0:
         raise SUVComputationError(
             "FrameReferenceTime must be present and non-negative."
@@ -542,37 +355,10 @@ def _frame_reference_time_s(s) -> float:
     return value / 1000.0
 
 
-def _radiopharmaceutical_start_datetime(s) -> datetime:
-    rph = s.RadiopharmaceuticalInformationSequence[0]
-
-    start_datetime = getattr(rph, "RadiopharmaceuticalStartDateTime", None)
-    if start_datetime is not None and str(start_datetime).strip() != "":
-        return _parse_dicom_datetime(str(start_datetime))
-
-    start_time = getattr(rph, "RadiopharmaceuticalStartTime", None)
-    if start_time is None or str(start_time).strip() == "":
-        raise SUVComputationError(
-            "Missing RadiopharmaceuticalStartDateTime and RadiopharmaceuticalStartTime."
-        )
-
-    acquisition_dt = _acquisition_datetime(s)
-    injection_t = _parse_dicom_time(str(start_time))
-
-    injection_dt = datetime.combine(acquisition_dt.date(), injection_t)
-
-    # Manual recommendation: if injection time appears >1h after acquisition time,
-    # assume administration was on the preceding day.
-    if (injection_dt - acquisition_dt).total_seconds() > 3600:
-        injection_dt -= timedelta(days=1)
-
-    return injection_dt
-
-
 def _acquisition_datetime(s) -> datetime:
-    if hasattr(s, "AcquisitionDateTime"):
-        value = str(s.AcquisitionDateTime).strip()
-        if value:
-            return _parse_dicom_datetime(value)
+    value = get_optional_str(s, "AcquisitionDateTime")
+    if value is not None:
+        return parse_dicom_datetime(value)
 
     date_value = getattr(s, "AcquisitionDate", None)
     time_value = getattr(s, "AcquisitionTime", None)
@@ -581,8 +367,8 @@ def _acquisition_datetime(s) -> datetime:
         raise SUVComputationError("Missing AcquisitionDate/AcquisitionTime.")
 
     return datetime.combine(
-        _parse_dicom_date(str(date_value)),
-        _parse_dicom_time(str(time_value)),
+        parse_dicom_date(str(date_value)),
+        parse_dicom_time(str(time_value)),
     )
 
 
@@ -595,8 +381,8 @@ def _series_datetime(s) -> datetime | None:
 
     try:
         return datetime.combine(
-            _parse_dicom_date(str(date_value)),
-            _parse_dicom_time(str(time_value)),
+            parse_dicom_date(str(date_value)),
+            parse_dicom_time(str(time_value)),
         )
     except ValueError:
         return None
@@ -620,71 +406,7 @@ def _private_datetime(s, tag: tuple[int, int]) -> datetime | None:
         return None
 
     try:
-        return _parse_dicom_datetime(value)
+        return parse_dicom_datetime(value)
     except ValueError:
         logger.warning("Could not parse private datetime tag %s: %r", tag, value)
         return None
-
-
-def _parse_dicom_datetime(value: str) -> datetime:
-    value = value.strip()
-
-    # Remove fractional part and timezone for first implementation.
-    value = value.split(".")[0]
-    value = value.split("+")[0]
-    value = value.split("-")[0] if len(value) > 8 else value
-
-    return datetime.strptime(value, "%Y%m%d%H%M%S")
-
-
-def _parse_dicom_date(value: str) -> date:
-    return datetime.strptime(value.strip(), "%Y%m%d").date()
-
-
-def _parse_dicom_time(value: str):
-    value = value.strip()
-
-    if "." in value:
-        value = value.split(".")[0]
-
-    value = value.replace(":", "")
-
-    return datetime.strptime(value, "%H%M%S").time()
-
-
-def _seconds_of_day(dt: datetime) -> int:
-    return dt.hour * 3600 + dt.minute * 60 + dt.second
-
-
-def _has_correction(s, correction: str) -> bool:
-    corrected_image = getattr(s, "CorrectedImage", None)
-
-    if corrected_image is None:
-        return False
-
-    if isinstance(corrected_image, str):
-        values = [corrected_image]
-    else:
-        values = list(corrected_image)
-
-    return correction.upper() in {str(v).upper() for v in values}
-
-
-def _voxel_volume_ml(s) -> float:
-    try:
-        row_spacing, col_spacing = [float(x) for x in s.PixelSpacing]
-    except Exception as exc:
-        raise SUVComputationError("Missing PixelSpacing.") from exc
-
-    slice_thickness = _get_optional_float(s, "SliceThickness")
-
-    if slice_thickness is None or slice_thickness <= 0:
-        raise SUVComputationError("SliceThickness is required and must be positive.")
-
-    # mm^3 to ml: 1000 mm^3 = 1 ml.
-    volume_ml = row_spacing * col_spacing * slice_thickness / 1000.0
-
-    if volume_ml <= 0:
-        raise SUVComputationError(f"Invalid voxel volume: {volume_ml} ml.")
-
-    return volume_ml

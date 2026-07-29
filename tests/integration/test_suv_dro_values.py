@@ -5,11 +5,12 @@ from pathlib import Path
 import pytest
 
 from okapy.dicom.collector import DicomStudyCollector
-from okapy.dicom.conversion.suv import PETSUVConverter
+from okapy.dicom.conversion.suv import PETSUVConverter, SUVComputationError
 
 from tests.helpers.suv_assertions import (
     assert_dro_suv_stats,
     compute_roi_suv_stats,
+    dro_expects_error,
     find_roi_mask,
 )
 
@@ -38,26 +39,12 @@ def test_new_suv_conversion_matches_dro_values(
     dro_case_dir: Path,
     tmp_path: Path,
 ):
-    output_dir = tmp_path / "nifti"
+    if dro_expects_error(dro_case_dir):
+        with pytest.raises(SUVComputationError):
+            _convert_pet_images(dro_case_dir, tmp_path / "nifti")
+        return
 
-    collector = DicomStudyCollector()
-    collection = collector.collect(dro_case_dir)
-
-    converter = PETSUVConverter()
-
-    converted_pet_images = []
-
-    for study in collection.studies:
-        for series in study.image_series:
-            if series.modality != "PT":
-                continue
-
-            converted_pet_images.append(
-                converter.convert(
-                    series=series,
-                    output_dir=output_dir,
-                )
-            )
+    converted_pet_images = _convert_pet_images(dro_case_dir, tmp_path / "nifti")
 
     assert len(converted_pet_images) == 1, (
         f"Expected exactly one PET image in {dro_case_dir}, "
@@ -77,6 +64,20 @@ def test_new_suv_conversion_matches_dro_values(
     print(f"Stats: {stats}")
 
     assert_dro_suv_stats(stats)
+
+
+def _convert_pet_images(case_dir: Path, output_dir: Path):
+    collector = DicomStudyCollector()
+    collection = collector.collect(case_dir)
+
+    converter = PETSUVConverter()
+
+    return [
+        converter.convert(series=series, output_dir=output_dir)
+        for study in collection.studies
+        for series in study.image_series
+        if series.modality == "PT"
+    ]
 
 
 def _iter_dro_case_dirs(root: Path) -> list[Path]:

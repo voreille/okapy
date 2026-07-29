@@ -1,9 +1,46 @@
 from __future__ import annotations
 
+import csv
+import functools
 from pathlib import Path
 
 import numpy as np
 import SimpleITK as sitk
+
+
+@functools.lru_cache(maxsize=None)
+def _expected_outcomes(dro_root: Path) -> dict[str, str]:
+    """Expected SUVbw outcome per DRO, from ``docs/DRO_list.csv``.
+
+    The DRO directory lives next to the ``docs`` folder in the
+    ``oncoray/suv_computation`` checkout. Returns an empty mapping when that
+    file is not reachable, in which case callers fall back to the naming
+    convention.
+    """
+
+    csv_path = dro_root.parent / "docs" / "DRO_list.csv"
+
+    if not csv_path.is_file():
+        return {}
+
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        return {row["ID"]: row["SUVmax_expected"] for row in csv.DictReader(fh)}
+
+
+def dro_expects_error(case_dir: Path) -> bool:
+    """Whether a DRO must fail to convert rather than produce SUVbw values.
+
+    The manual marks these as "should yield an error in SUVbw computation":
+    required attributes are missing, or the metadata is inconsistent in a way
+    that makes any computed value untrustworthy.
+    """
+
+    expected = _expected_outcomes(case_dir.parent).get(case_dir.name)
+
+    if expected is not None:
+        return expected.strip().upper() == "ERROR"
+
+    return case_dir.name.startswith("DRO_error")
 
 
 def find_roi_mask(case_dir: Path) -> Path:
