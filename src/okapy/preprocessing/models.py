@@ -6,7 +6,7 @@ from typing import Any
 
 import SimpleITK as sitk
 
-from okapy.core.geometry import PhysicalBox
+from okapy.core.geometry import PhysicalBox, mask_interpolator_from_name
 from okapy.core.models import ImageVolume, MaskVolume
 
 
@@ -24,6 +24,10 @@ class GeometryConfig:
     padding_mm: float = 0.0
     default_image_value: float = 0.0
     default_mask_value: int = 0
+
+    def __post_init__(self) -> None:
+        # Fail at config load rather than deep inside preprocessing.
+        mask_interpolator_from_name(self.mask_interpolator)
 
     @classmethod
     def from_dict(cls, config: dict[str, Any]) -> GeometryConfig:

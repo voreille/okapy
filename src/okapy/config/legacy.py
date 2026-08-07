@@ -132,7 +132,7 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
                     geometry_cfg["spacing"] = params["resampling_spacing"]
 
                 if "order" in params:
-                    geometry_cfg["mask_interpolator"] = _order_to_interpolator(
+                    geometry_cfg["mask_interpolator"] = _mask_order_to_interpolator(
                         params["order"]
                     )
 
@@ -234,6 +234,25 @@ def _order_to_interpolator(order: int) -> str:
         return "bspline"
 
     raise ValueError(f"Cannot migrate unsupported interpolation order={order}.")
+
+
+def _mask_order_to_interpolator(order: int) -> str:
+    """Same as :func:`_order_to_interpolator`, but for masks.
+
+    Order 3 is refused rather than migrated: B-spline rings on a binary
+    boundary. Failing loudly is deliberate, because silently switching a legacy
+    config to another interpolator would change feature values without notice.
+    """
+
+    if int(order) == 3:
+        raise ValueError(
+            "Cannot migrate 'binary_bspline_resampler' with order=3: B-spline "
+            "interpolation of a binary mask rings on the 0/1 boundary and is no "
+            "longer supported. Set 'mask_interpolator' explicitly to 'nearest' "
+            "or 'linear' under geometry_preprocessing."
+        )
+
+    return _order_to_interpolator(order)
 
 
 def _merge_dicts(base: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:

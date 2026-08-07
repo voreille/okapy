@@ -11,6 +11,7 @@ from okapy.core.geometry import (
     intersect_boxes,
     interpolator_from_name,
     make_reference_image_from_physical_box,
+    mask_interpolator_from_name,
     resample_to_reference,
     union_boxes,
 )
@@ -153,7 +154,7 @@ def resample_mask_volume_to_reference(
     geometry_config: GeometryConfig,
     output_path: Path,
 ) -> MaskVolume:
-    interpolator = interpolator_from_name(geometry_config.mask_interpolator)
+    interpolator = mask_interpolator_from_name(geometry_config.mask_interpolator)
 
     # Preserve interpolated probabilities/values until thresholding.
     resampled_float = resample_to_reference(
