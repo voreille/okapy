@@ -13,10 +13,8 @@ volume_preprocessing:
       order: 3
   default:
 
-mask_preprocessing:
-  default:
-    binary_bspline_resampler:
-      order: 1
+# Masks are not configurable: they are always resampled onto the image grid with
+# linear interpolation and thresholded at 0.5.
 
 feature_extraction:
   CT:

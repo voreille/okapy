@@ -5,13 +5,15 @@ from pathlib import Path
 import SimpleITK as sitk
 
 from okapy.core.geometry import (
+    MASK_INTERPOLATOR,
+    MASK_INTERPOLATOR_NAME,
+    MASK_THRESHOLD,
     PhysicalBox,
     image_physical_box,
     mask_physical_bounding_box,
     intersect_boxes,
     interpolator_from_name,
     make_reference_image_from_physical_box,
-    mask_interpolator_from_name,
     resample_to_reference,
     union_boxes,
 )
@@ -154,22 +156,25 @@ def resample_mask_volume_to_reference(
     geometry_config: GeometryConfig,
     output_path: Path,
 ) -> MaskVolume:
-    interpolator = mask_interpolator_from_name(geometry_config.mask_interpolator)
+    """Resample a binary mask onto ``reference``.
 
-    # Preserve interpolated probabilities/values until thresholding.
+    Masks are always resampled with linear interpolation and thresholded at
+    0.5 (see ``okapy.core.geometry.MASK_INTERPOLATOR``). This is not
+    configurable.
+    """
+
+    # Preserve the interpolated fractions until thresholding.
     resampled_float = resample_to_reference(
         mask.image,
         reference,
-        interpolator=interpolator,
+        interpolator=MASK_INTERPOLATOR,
         default_value=float(geometry_config.default_mask_value),
         output_pixel_type=sitk.sitkFloat32,
     )
 
-    threshold = geometry_config.mask_threshold
-
     resampled_binary = sitk.BinaryThreshold(
         resampled_float,
-        lowerThreshold=float(threshold),
+        lowerThreshold=MASK_THRESHOLD,
         upperThreshold=float("inf"),
         insideValue=1,
         outsideValue=0,
@@ -190,8 +195,8 @@ def resample_mask_volume_to_reference(
             "geometry_preprocessing": {
                 "target_series_instance_uid": (target_image.series_instance_uid),
                 "target_modality_key": target_image.modality_key,
-                "mask_interpolator": (geometry_config.mask_interpolator),
-                "mask_threshold": threshold,
+                "mask_interpolator": MASK_INTERPOLATOR_NAME,
+                "mask_threshold": MASK_THRESHOLD,
                 "default_mask_value": (geometry_config.default_mask_value),
             }
         },

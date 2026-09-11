@@ -21,6 +21,17 @@ log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
 logger = logging.getLogger(__name__)
 
+# Used when a params file has no "mask_preprocessing" section. Masks are always
+# resampled with linear interpolation (order 1) and thresholded at 0.5.
+DEFAULT_MASK_PREPROCESSING = {
+    "default": {
+        "binary_bspline_resampler": {
+            "order": 1,
+            "threshold": 0.5,
+        },
+    },
+}
+
 
 class BaseConverter():
 
@@ -214,7 +225,7 @@ class ExtractorConverter(BaseConverter):
         )
 
         mask_processor = VolumeProcessorStack.from_params(
-            params["mask_preprocessing"])
+            params.get("mask_preprocessing") or DEFAULT_MASK_PREPROCESSING)
 
         volume_processor = VolumeProcessorStack.from_params(
             params["volume_preprocessing"], mask_resampler=mask_processor)

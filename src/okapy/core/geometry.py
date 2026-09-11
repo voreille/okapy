@@ -273,33 +273,17 @@ def _interpolator_from_order(order: int) -> int:
     raise ValueError("Unsupported interpolation order. Use 0, 1, or 3.")
 
 
-#: Interpolators that may be applied to a binary mask.
-MASK_INTERPOLATORS = (sitk.sitkNearestNeighbor, sitk.sitkLinear)
-
-
-def mask_interpolator_from_name(name: str | int) -> int:
-    """Resolve an interpolator for binary masks.
-
-    B-spline is rejected here even though it stays valid for images. Its kernel
-    has negative lobes, so interpolating a 0/1 step over- and undershoots, and
-    thresholding the result leaves detached speckle outside the boundary and
-    pinholes inside thin structures. Clamping to [0, 1] does not help: the
-    ringing values that cross the threshold already lie inside that range.
-    """
-
-    if str(name).lower() in {"bspline", "spline", "b_spline", "3"}:
-        raise ValueError(
-            "B-spline interpolation is not supported for masks because it rings "
-            "on the 0/1 boundary and produces speckle and pinholes after "
-            "thresholding. Use 'nearest' or 'linear' instead. B-spline remains "
-            "available for 'image_interpolator'."
-        )
-
-    interpolator = interpolator_from_name(name)
-
-    if interpolator not in MASK_INTERPOLATORS:
-        raise ValueError(
-            f"Unsupported mask interpolator {name!r}. Use nearest or linear."
-        )
-
-    return interpolator
+# Binary masks are always resampled the same way: linear (trilinear in 3D)
+# interpolation of the 0/1 volume, then a threshold at MASK_THRESHOLD. This is
+# the IBSI fractional route and is deliberately not configurable.
+#
+# Linear interpolation places the boundary with sub-voxel precision, which
+# nearest neighbour cannot do. B-spline is not an option because its kernel has
+# negative lobes: interpolating a 0/1 step over- and undershoots, and
+# thresholding the result leaves detached speckle outside the boundary and
+# pinholes inside thin structures. Clamping to [0, 1] does not help, since the
+# ringing values that cross the threshold already lie inside that range.
+# B-spline remains available for images through ``image_interpolator``.
+MASK_INTERPOLATOR = sitk.sitkLinear
+MASK_INTERPOLATOR_NAME = "linear"
+MASK_THRESHOLD = 0.5

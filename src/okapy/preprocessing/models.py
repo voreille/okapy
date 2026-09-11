@@ -6,31 +6,38 @@ from typing import Any
 
 import SimpleITK as sitk
 
-from okapy.core.geometry import PhysicalBox, mask_interpolator_from_name
+from okapy.core.geometry import PhysicalBox
 from okapy.core.models import ImageVolume, MaskVolume
 
 
 Metadata = dict[str, Any]
+
+#: Keys that used to select the mask interpolator and threshold. Masks are now
+#: always resampled with linear interpolation and thresholded at 0.5 (see
+#: ``okapy.core.geometry.MASK_INTERPOLATOR``), so these keys are rejected.
+_REMOVED_MASK_KEYS = ("mask_interpolator", "mask_threshold")
 
 
 @dataclass(frozen=True)
 class GeometryConfig:
     spacing: tuple[float, float, float]
     image_interpolator: str = "linear"
-    mask_interpolator: str = "nearest"
-    mask_threshold: float = 0.5
     crop_to_masks: bool = True
     crop_to_common_fov: bool = False
     padding_mm: float = 0.0
     default_image_value: float = 0.0
     default_mask_value: int = 0
 
-    def __post_init__(self) -> None:
-        # Fail at config load rather than deep inside preprocessing.
-        mask_interpolator_from_name(self.mask_interpolator)
-
     @classmethod
     def from_dict(cls, config: dict[str, Any]) -> GeometryConfig:
+        removed = [key for key in _REMOVED_MASK_KEYS if key in config]
+        if removed:
+            raise ValueError(
+                f"{removed} are no longer configurable: masks are always "
+                "resampled with linear interpolation and thresholded at 0.5. "
+                "Remove them from 'geometry_preprocessing'."
+            )
+
         if "spacing" not in config:
             raise ValueError("Geometry preprocessing config requires 'spacing'.")
 
@@ -49,8 +56,6 @@ class GeometryConfig:
         return cls(
             spacing=spacing,
             image_interpolator=str(config.get("image_interpolator", "linear")),
-            mask_interpolator=str(config.get("mask_interpolator", "nearest")),
-            mask_threshold=float(config.get("mask_threshold", 0.5)),
             crop_to_masks=bool(config.get("crop_to_masks", True)),
             crop_to_common_fov=bool(config.get("crop_to_common_fov", False)),
             padding_mm=float(config.get("padding_mm", 0.0)),

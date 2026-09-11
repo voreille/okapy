@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from okapy.core.geometry import MASK_THRESHOLD
+
 
 def migrate_legacy_config(
     config: dict[str, Any],
@@ -50,6 +52,11 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
 
     becomes:
         geometry_preprocessing.common.padding_mm
+
+    A legacy ``mask_preprocessing.<selector>.binary_bspline_resampler`` only
+    migrates ``resampling_spacing`` and ``cval``. The interpolation order and
+    threshold are fixed to linear + 0.5 in the new pipeline; any other value
+    is rejected rather than silently changed.
     """
 
     new_config = deepcopy(config)
@@ -115,8 +122,10 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
             local_preprocessing[selector] = local_stack
 
     # ---------------------------------------------------------------------
-    # Mask preprocessing: geometry info goes to geometry_preprocessing,
-    # thresholding/casting stays in mask_preprocessing.
+    # Mask preprocessing: spacing/cval go to geometry_preprocessing. The
+    # interpolation order and threshold are not configurable any more (masks
+    # are always linear + 0.5), so they are validated and dropped. Any other
+    # mask processor passes through to the new mask_preprocessing stack.
     # ---------------------------------------------------------------------
     for selector, stack in mask_preprocessing.items():
         stack = stack or {}
@@ -128,23 +137,13 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
             params = params or {}
 
             if name == "binary_bspline_resampler":
+                _check_legacy_mask_resampler(params)
+
                 if "resampling_spacing" in params:
                     geometry_cfg["spacing"] = params["resampling_spacing"]
 
-                if "order" in params:
-                    geometry_cfg["mask_interpolator"] = _mask_order_to_interpolator(
-                        params["order"]
-                    )
-
                 if "cval" in params:
                     geometry_cfg["default_mask_value"] = params["cval"]
-
-                threshold = params.get("threshold")
-                if threshold is not None:
-                    mask_stack["binarize_mask"] = {"threshold": threshold}
-
-                # In the new pipeline, masks should almost always be uint8.
-                mask_stack.setdefault("cast_mask", {"pixel_type": "uint8"})
 
             else:
                 mask_stack[name] = params
@@ -236,23 +235,34 @@ def _order_to_interpolator(order: int) -> str:
     raise ValueError(f"Cannot migrate unsupported interpolation order={order}.")
 
 
-def _mask_order_to_interpolator(order: int) -> str:
-    """Same as :func:`_order_to_interpolator`, but for masks.
+#: Legacy scipy order that matches the new pipeline's linear interpolation.
+_LEGACY_MASK_ORDER = 1
 
-    Order 3 is refused rather than migrated: B-spline rings on a binary
-    boundary. Failing loudly is deliberate, because silently switching a legacy
-    config to another interpolator would change feature values without notice.
+
+def _check_legacy_mask_resampler(params: dict[str, Any]) -> None:
+    """Refuse legacy mask resampler settings the new pipeline cannot honour.
+
+    Masks are always resampled with linear interpolation (order 1) and
+    thresholded at 0.5. A legacy config asking for anything else is rejected
+    rather than migrated, because silently switching would change feature
+    values without notice.
     """
 
-    if int(order) == 3:
+    order = params.get("order")
+    if order is not None and int(order) != _LEGACY_MASK_ORDER:
         raise ValueError(
-            "Cannot migrate 'binary_bspline_resampler' with order=3: B-spline "
-            "interpolation of a binary mask rings on the 0/1 boundary and is no "
-            "longer supported. Set 'mask_interpolator' explicitly to 'nearest' "
-            "or 'linear' under geometry_preprocessing."
+            f"Cannot migrate 'binary_bspline_resampler' with order={order}: "
+            "masks are always resampled with linear interpolation (order 1) "
+            "and thresholded at 0.5. Remove 'order' from the legacy config."
         )
 
-    return _order_to_interpolator(order)
+    threshold = params.get("threshold")
+    if threshold is not None and float(threshold) != MASK_THRESHOLD:
+        raise ValueError(
+            f"Cannot migrate 'binary_bspline_resampler' with threshold={threshold}: "
+            f"masks are always thresholded at {MASK_THRESHOLD} after linear "
+            "interpolation. Remove 'threshold' from the legacy config."
+        )
 
 
 def _merge_dicts(base: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:

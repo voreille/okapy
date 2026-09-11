@@ -14,14 +14,8 @@ volume_preprocessing:
       order: 3
   default:
 
-mask_preprocessing:
-  default:
-    binary_bspline_resampler:
-      # Masks are binary: B-spline rings on the 0/1 boundary and leaves speckle
-      # and pinholes after thresholding. Order 1 (linear + 0.5 threshold) is the
-      # IBSI-sanctioned fractional route. The image resampler above keeps
-      # order 3, which is correct for continuous data.
-      order: 1
+# Masks are not configurable: they are always resampled onto the image grid with
+# linear interpolation and thresholded at 0.5.
 
 feature_extraction:
   common:
