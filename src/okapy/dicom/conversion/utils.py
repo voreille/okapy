@@ -6,6 +6,10 @@ import numpy as np
 import pydicom
 import SimpleITK as sitk
 
+#: Maximum distance, in voxels, between a SEG frame or RTSTRUCT contour and the
+#: reference slice it is assigned to.
+SLICE_MATCH_TOLERANCE = 0.25
+
 
 def safe_name(value: str | None) -> str:
     if value is None:

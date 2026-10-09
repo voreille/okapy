@@ -16,6 +16,7 @@ from okapy.core.models import (
     VolumeStage,
 )
 from okapy.dicom.conversion.utils import (
+    SLICE_MATCH_TOLERANCE,
     image_metadata,
     safe_name,
     sitk_mask_like_reference,
@@ -196,6 +197,16 @@ class RTStructMaskConverter:
 
             z_values = voxel_indices[:, 2]
             z_index = int(round(float(np.mean(z_values))))
+
+            # Every point must lie on the reference slice the contour is drawn on.
+            offset = float(np.max(np.abs(z_values - z_index)))
+            if offset > SLICE_MATCH_TOLERANCE:
+                raise RuntimeError(
+                    f"RTSTRUCT contour for label {label!r} lies {offset:.2f} slices "
+                    f"from reference slice {z_index} (tolerance "
+                    f"{SLICE_MATCH_TOLERANCE}): it is not on a slice of the "
+                    "reference image."
+                )
 
             if z_index < 0 or z_index >= mask_xyz.shape[2]:
                 raise RuntimeError(

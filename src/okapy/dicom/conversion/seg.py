@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pydicom
 import SimpleITK as sitk
 
@@ -16,11 +17,17 @@ from okapy.core.models import (
 from okapy.dicom.conversion.utils import (
     image_metadata,
     safe_name,
+    sitk_mask_like_reference,
     write_image_unique,
 )
 from okapy.dicom.models import DicomSeries
 
-from .seg_highdicom_adapter import read_seg_with_highdicom, segment_to_sitk
+from .seg_highdicom_adapter import (
+    read_seg_segment_infos,
+    read_seg_with_highdicom,
+    segment_to_sitk,
+    segments_on_reference_grid,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,27 +72,40 @@ class SegMaskConverter:
                 series=series,
             )
 
-        raw_volume = read_seg_with_highdicom(dcm)
+        segment_numbers, segment_infos = read_seg_segment_infos(dcm)
+
+        # Frames on the reference grid are placed slice by slice; only SEGs on
+        # another in-plane grid are rebuilt as a volume and resampled.
+        masks_xyz = segments_on_reference_grid(dcm, reference_image.image)
+        raw_volume = read_seg_with_highdicom(dcm) if masks_xyz is None else None
+
         requested_labels = set(labels) if labels is not None else None
 
         masks: list[MaskVolume] = []
 
-        for segment_number in raw_volume.available_segments:
-            segment_info = dict(raw_volume.segment_infos[segment_number])
+        for segment_number in segment_numbers:
+            segment_info = dict(segment_infos[segment_number])
             label = str(segment_info.get("label", f"segment_{segment_number}"))
 
             if requested_labels is not None and label not in requested_labels:
                 continue
 
-            native_mask_image = segment_to_sitk(raw_volume, segment_number)
-            mask_image = sitk.Resample(
-                native_mask_image,
-                reference_image.image,
-                sitk.Transform(),
-                sitk.sitkNearestNeighbor,
-                0,
-                sitk.sitkUInt8,
-            )
+            if masks_xyz is not None:
+                mask_xyz = masks_xyz.get(
+                    segment_number,
+                    np.zeros(reference_image.image.GetSize(), dtype=np.uint8),
+                )
+                mask_image = sitk_mask_like_reference(mask_xyz, reference_image.image)
+            else:
+                native_mask_image = segment_to_sitk(raw_volume, segment_number)
+                mask_image = sitk.Resample(
+                    native_mask_image,
+                    reference_image.image,
+                    sitk.Transform(),
+                    sitk.sitkNearestNeighbor,
+                    0,
+                    sitk.sitkUInt8,
+                )
 
             filename = self._make_filename(
                 reference_image=reference_image,
