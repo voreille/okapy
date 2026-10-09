@@ -24,7 +24,8 @@ class GeometryConfig:
     image_interpolator: str = "linear"
     crop_to_masks: bool = True
     crop_to_common_fov: bool = False
-    padding_mm: float = 0.0
+    #: Voxels of the target grid added around the masks on each side.
+    padding_voxels: int = 0
     default_image_value: float = 0.0
     default_mask_value: int = 0
 
@@ -36,6 +37,22 @@ class GeometryConfig:
                 f"{removed} are no longer configurable: masks are always "
                 "resampled with linear interpolation and thresholded at 0.5. "
                 "Remove them from 'geometry_preprocessing'."
+            )
+
+        if "padding_mm" in config:
+            raise ValueError(
+                "'padding_mm' was replaced by 'padding_voxels': the padding is "
+                "now a number of voxels of the target grid."
+            )
+
+        padding_voxels = config.get("padding_voxels", 0)
+        if (
+            isinstance(padding_voxels, bool)
+            or float(padding_voxels) != int(padding_voxels)
+            or int(padding_voxels) < 0
+        ):
+            raise ValueError(
+                f"'padding_voxels' must be a non-negative integer, got {padding_voxels!r}."
             )
 
         if "spacing" not in config:
@@ -58,7 +75,7 @@ class GeometryConfig:
             image_interpolator=str(config.get("image_interpolator", "linear")),
             crop_to_masks=bool(config.get("crop_to_masks", True)),
             crop_to_common_fov=bool(config.get("crop_to_common_fov", False)),
-            padding_mm=float(config.get("padding_mm", 0.0)),
+            padding_voxels=int(padding_voxels),
             default_image_value=float(config.get("default_image_value", 0.0)),
             default_mask_value=int(config.get("default_mask_value", 0)),
         )

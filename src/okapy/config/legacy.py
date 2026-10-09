@@ -51,7 +51,9 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
         general.padding
 
     becomes:
-        geometry_preprocessing.common.padding_mm
+        geometry_preprocessing.common.padding_voxels
+
+    The padding is a number of voxels of the target grid, not millimetres.
 
     A legacy ``mask_preprocessing.<selector>.binary_bspline_resampler`` only
     migrates ``resampling_spacing`` and ``cval``. The interpolation order and
@@ -75,7 +77,7 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
     common_geometry: dict[str, Any] = {}
 
     if "padding" in general:
-        common_geometry["padding_mm"] = general["padding"]
+        common_geometry["padding_voxels"] = general["padding"]
 
     # Reasonable default matching the old behavior:
     # crop around masks if padding was provided.

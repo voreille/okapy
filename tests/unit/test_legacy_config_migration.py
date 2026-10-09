@@ -42,6 +42,10 @@ def test_linear_mask_resampler_migrates_spacing_and_cval_only():
     common = migrated["geometry_preprocessing"]["common"]
     assert common["image_interpolator"] == "bspline"
 
+    # Legacy general.padding is a number of voxels of the target grid.
+    assert common["padding_voxels"] == 10
+    assert "padding_mm" not in common
+
 
 def test_order_one_without_threshold_is_accepted_and_dropped():
     migrated = migrate_legacy_preprocessing_config(_legacy_config({"order": 1}))

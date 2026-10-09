@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import SimpleITK as sitk
 
 from okapy.core.geometry import (
@@ -9,13 +10,13 @@ from okapy.core.geometry import (
     MASK_INTERPOLATOR_NAME,
     MASK_THRESHOLD,
     PhysicalBox,
+    box_index_extent,
     image_physical_box,
-    mask_physical_bounding_box,
     intersect_boxes,
     interpolator_from_name,
-    make_reference_image_from_physical_box,
+    make_reference_image_on_aligned_grid,
+    mask_index_extent,
     resample_to_reference,
-    union_boxes,
 )
 from okapy.core.models import ImageVolume, MaskVolume, VolumeStage
 from okapy.preprocessing.models import GeometryConfig
@@ -50,33 +51,6 @@ def compute_common_fov(images: list[ImageVolume]) -> PhysicalBox | None:
     return intersect_boxes([image_physical_box(image.image) for image in images])
 
 
-def compute_processing_roi(
-    *,
-    image: ImageVolume,
-    masks: list[MaskVolume],
-    geometry_config: GeometryConfig,
-    common_fov: PhysicalBox | None = None,
-) -> PhysicalBox:
-    image_fov = image_physical_box(image.image)
-
-    if geometry_config.crop_to_masks:
-        if not masks:
-            raise ValueError(
-                f"Cannot crop image {image.path} to masks because no masks were provided."
-            )
-
-        mask_boxes = [mask_physical_bounding_box(mask.image) for mask in masks]
-        roi = union_boxes(mask_boxes).pad(geometry_config.padding_mm)
-    else:
-        roi = image_fov
-
-    boxes = [roi, image_fov]
-    if geometry_config.crop_to_common_fov and common_fov is not None:
-        boxes.append(common_fov)
-
-    return intersect_boxes(boxes)
-
-
 def _resolve_target_spacing(
     configured_spacing: tuple[float, float, float] | None,
     native_spacing: tuple[float, float, float],
@@ -101,19 +75,49 @@ def _resolve_target_spacing(
 def make_reference_grid(
     *,
     image: ImageVolume,
-    roi: PhysicalBox,
+    masks: list[MaskVolume],
     geometry_config: GeometryConfig,
+    common_fov: PhysicalBox | None = None,
     pixel_id: int = sitk.sitkFloat32,
 ) -> sitk.Image:
+    """Return the target grid for ``image``.
+
+    The grid is aligned with the image grid (see
+    :func:`okapy.core.geometry.make_reference_image_on_aligned_grid`), so with
+    native spacing the image and masks are cropped without interpolation. With
+    ``crop_to_masks`` it covers the union of the masks plus ``padding_voxels``
+    voxels of the target grid on each side.
+    """
+
     spacing = _resolve_target_spacing(
         geometry_config.spacing,
         image.geometry.spacing,
     )
 
-    return make_reference_image_from_physical_box(
-        box=roi,
+    extents = []
+
+    if geometry_config.crop_to_masks:
+        if not masks:
+            raise ValueError(
+                f"Cannot crop image {image.path} to masks because no masks were provided."
+            )
+
+        mask_extents = [mask_index_extent(mask.image, image.image) for mask in masks]
+        extents.append(
+            (
+                np.min([extent[0] for extent in mask_extents], axis=0),
+                np.max([extent[1] for extent in mask_extents], axis=0),
+            )
+        )
+
+    if geometry_config.crop_to_common_fov and common_fov is not None:
+        extents.append(box_index_extent(common_fov, image.image))
+
+    return make_reference_image_on_aligned_grid(
+        image=image.image,
         spacing=spacing,
-        direction_source=image.image,
+        extents=extents,
+        padding_voxels=geometry_config.padding_voxels if geometry_config.crop_to_masks else 0,
         pixel_id=pixel_id,
     )
 

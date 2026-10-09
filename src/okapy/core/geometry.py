@@ -36,17 +36,6 @@ class PhysicalBox:
             for min_value, max_value in zip(self.min_xyz, self.max_xyz)
         )
 
-    def pad(self, padding_mm: float) -> PhysicalBox:
-        padding_mm = float(padding_mm)
-
-        if padding_mm < 0:
-            raise ValueError(f"padding_mm must be >= 0, got {padding_mm}.")
-
-        return PhysicalBox(
-            min_xyz=tuple(x - padding_mm for x in self.min_xyz),
-            max_xyz=tuple(x + padding_mm for x in self.max_xyz),
-        )
-
     def as_dict(self) -> dict[str, object]:
         return {
             "min_xyz": self.min_xyz,
@@ -88,58 +77,6 @@ def image_physical_box(image: sitk.Image) -> PhysicalBox:
     )
 
 
-def mask_physical_bounding_box(mask: sitk.Image) -> PhysicalBox:
-    """Return the physical bounding box of non-zero mask voxels."""
-
-    if mask.GetDimension() != 3:
-        raise ValueError(
-            f"Only 3D masks are supported, got dimension={mask.GetDimension()}."
-        )
-
-    array = sitk.GetArrayFromImage(mask)
-    nonzero_zyx = np.argwhere(array != 0)
-
-    if nonzero_zyx.size == 0:
-        raise ValueError("Cannot compute bounding box of an empty mask.")
-
-    min_zyx = nonzero_zyx.min(axis=0)
-    max_zyx = nonzero_zyx.max(axis=0)
-
-    # Convert z,y,x array indices to x,y,z image indices.
-    min_xyz_index = (int(min_zyx[2]), int(min_zyx[1]), int(min_zyx[0]))
-    max_xyz_index = (int(max_zyx[2]), int(max_zyx[1]), int(max_zyx[0]))
-
-    # Use continuous half-voxel bounds around the non-zero voxel centers.
-    corners = [
-        mask.TransformContinuousIndexToPhysicalPoint(index)
-        for index in product(
-            (min_xyz_index[0] - 0.5, max_xyz_index[0] + 0.5),
-            (min_xyz_index[1] - 0.5, max_xyz_index[1] + 0.5),
-            (min_xyz_index[2] - 0.5, max_xyz_index[2] + 0.5),
-        )
-    ]
-
-    corners_array = np.asarray(corners, dtype=float)
-
-    return PhysicalBox(
-        min_xyz=tuple(float(x) for x in np.min(corners_array, axis=0)),
-        max_xyz=tuple(float(x) for x in np.max(corners_array, axis=0)),
-    )
-
-
-def union_boxes(boxes: list[PhysicalBox]) -> PhysicalBox:
-    if not boxes:
-        raise ValueError("Cannot compute union of an empty list of boxes.")
-
-    mins = np.asarray([box.min_xyz for box in boxes], dtype=float)
-    maxs = np.asarray([box.max_xyz for box in boxes], dtype=float)
-
-    return PhysicalBox(
-        min_xyz=tuple(float(x) for x in np.min(mins, axis=0)),
-        max_xyz=tuple(float(x) for x in np.max(maxs, axis=0)),
-    )
-
-
 def intersect_boxes(boxes: list[PhysicalBox]) -> PhysicalBox:
     if not boxes:
         raise ValueError("Cannot compute intersection of an empty list of boxes.")
@@ -162,33 +99,134 @@ def intersect_boxes(boxes: list[PhysicalBox]) -> PhysicalBox:
     )
 
 
-def make_reference_image_from_physical_box(
+IndexExtent = tuple[np.ndarray, np.ndarray]
+"""Continuous (x, y, z) index range ``(lo, hi)`` in the voxel space of an image."""
+
+
+def mask_index_extent(mask: sitk.Image, image: sitk.Image) -> IndexExtent:
+    """Return the extent of the non-zero mask voxels in the index space of ``image``.
+
+    The extent covers whole mask voxels (centres +/- half a voxel), so when the
+    mask is on the image grid it is ``(first - 0.5, last + 0.5)``. Working in
+    index space rather than physical space keeps the result correct for any
+    image orientation, including flipped axes.
+    """
+
+    if mask.GetDimension() != 3:
+        raise ValueError(
+            f"Only 3D masks are supported, got dimension={mask.GetDimension()}."
+        )
+
+    nonzero_zyx = np.argwhere(sitk.GetArrayFromImage(mask) != 0)
+
+    if nonzero_zyx.size == 0:
+        raise ValueError("Cannot compute the extent of an empty mask.")
+
+    min_xyz = nonzero_zyx.min(axis=0)[::-1]
+    max_xyz = nonzero_zyx.max(axis=0)[::-1]
+
+    corners = [
+        image.TransformPhysicalPointToContinuousIndex(
+            mask.TransformContinuousIndexToPhysicalPoint(tuple(float(x) for x in index))
+        )
+        for index in product(*zip(min_xyz - 0.5, max_xyz + 0.5))
+    ]
+
+    corners_array = np.asarray(corners, dtype=float)
+    return corners_array.min(axis=0), corners_array.max(axis=0)
+
+
+def box_index_extent(box: PhysicalBox, image: sitk.Image) -> IndexExtent:
+    """Return the extent of a physical box in the index space of ``image``."""
+
+    corners = [
+        image.TransformPhysicalPointToContinuousIndex(point)
+        for point in product(*zip(box.min_xyz, box.max_xyz))
+    ]
+
+    corners_array = np.asarray(corners, dtype=float)
+    return corners_array.min(axis=0), corners_array.max(axis=0)
+
+
+def make_reference_image_on_aligned_grid(
     *,
-    box: PhysicalBox,
+    image: sitk.Image,
     spacing: tuple[float, float, float],
-    direction_source: sitk.Image,
+    extents: list[IndexExtent] | None = None,
+    padding_voxels: int = 0,
     pixel_id: int = sitk.sitkFloat32,
 ) -> sitk.Image:
-    """Create an empty SimpleITK image defining a target grid.
+    """Create an empty SimpleITK image defining the target grid for ``image``.
 
-    The grid is axis-aligned in physical coordinates through its origin/spacing,
-    and uses the direction of direction_source.
+    The target grid has the orientation of ``image`` and the requested spacing.
+    Along each axis it is aligned with the image grid by centring (IBSI grid
+    centre alignment): the centres of the full target grid and of the image
+    grid coincide. When the spacing equals the native spacing this is the
+    image grid itself, so cropping never shifts or interpolates voxels.
+
+    The grid is then cropped to the target voxels whose centres fall inside
+    the intersection of ``extents`` (in the index space of ``image``, see
+    :func:`mask_index_extent`), padded by ``padding_voxels`` target voxels on
+    each side and clipped to the image. Without extents the full grid is used.
     """
 
     if len(spacing) != 3:
         raise ValueError(f"spacing must have length 3, got {spacing}.")
     if any(s <= 0 for s in spacing):
         raise ValueError(f"spacing values must be > 0, got {spacing}.")
+    if padding_voxels < 0:
+        raise ValueError(f"padding_voxels must be >= 0, got {padding_voxels}.")
 
-    size = tuple(
-        max(1, int(np.ceil((box.max_xyz[i] - box.min_xyz[i]) / spacing[i])))
-        for i in range(3)
+    native_spacing = np.asarray(image.GetSpacing(), dtype=float)
+    native_size = np.asarray(image.GetSize(), dtype=float)
+    target_spacing = np.asarray(spacing, dtype=float)
+
+    # Target spacing in units of image voxels; exactly 1 on native axes.
+    step = target_spacing / native_spacing
+    step[np.isclose(step, 1.0)] = 1.0
+
+    full_size = np.ceil(native_size / step - 1e-9).astype(int)
+
+    # Continuous image index of the first target voxel (grid centres coincide).
+    start = (native_size - 1) / 2 - (full_size - 1) / 2 * step
+
+    lo = np.zeros(3, dtype=int)
+    hi = full_size - 1
+
+    if extents:
+        extent_lo = np.max([extent[0] for extent in extents], axis=0)
+        extent_hi = np.min([extent[1] for extent in extents], axis=0)
+
+        # Target voxels whose centres lie inside the extent.
+        lo = np.ceil((extent_lo - start) / step).astype(int)
+        hi = np.floor((extent_hi - start) / step).astype(int)
+
+        # An extent narrower than one target voxel keeps the nearest voxel.
+        narrow = lo > hi
+        centre = np.round(((extent_lo + extent_hi) / 2 - start) / step).astype(int)
+        lo[narrow] = centre[narrow]
+        hi[narrow] = centre[narrow]
+
+        lo = np.maximum(lo - padding_voxels, 0)
+        hi = np.minimum(hi + padding_voxels, full_size - 1)
+
+        if np.any(lo > hi):
+            raise ValueError(
+                "The region to crop does not overlap the image: "
+                f"index extent lo={tuple(extent_lo)}, hi={tuple(extent_hi)}, "
+                f"image size={image.GetSize()}."
+            )
+
+    origin_index = start + lo * step
+
+    reference = sitk.Image(tuple(int(x) for x in hi - lo + 1), pixel_id)
+    reference.SetOrigin(
+        image.TransformContinuousIndexToPhysicalPoint(
+            tuple(float(x) for x in origin_index)
+        )
     )
-
-    reference = sitk.Image(size, pixel_id)
-    reference.SetOrigin(tuple(float(x) for x in box.min_xyz))
-    reference.SetSpacing(tuple(float(x) for x in spacing))
-    reference.SetDirection(direction_source.GetDirection())
+    reference.SetSpacing(tuple(float(x) for x in native_spacing * step))
+    reference.SetDirection(image.GetDirection())
 
     return reference
 

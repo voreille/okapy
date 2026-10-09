@@ -3,11 +3,7 @@ from pathlib import Path
 import numpy as np
 import SimpleITK as sitk
 
-from okapy.core.geometry import (
-    MASK_THRESHOLD,
-    PhysicalBox,
-    make_reference_image_from_physical_box,
-)
+from okapy.core.geometry import MASK_THRESHOLD
 from okapy.core.models import ImageVolume, MaskIdentity, MaskVolume, SeriesIdentity
 from okapy.preprocessing.geometry import resample_mask_volume_to_reference
 from okapy.preprocessing.models import GeometryConfig
@@ -63,12 +59,8 @@ def test_mask_is_resampled_linear_and_thresholded_at_half():
 
     # Same 1 mm grid shifted by 0.4 mm on every axis: near the cube corner,
     # nearest neighbour rounds inside while trilinear averaging (0.6**3) does not.
-    box = PhysicalBox(min_xyz=(0.4, 0.4, 0.4), max_xyz=(16.4, 16.4, 16.4))
-    reference = make_reference_image_from_physical_box(
-        box=box,
-        spacing=(1.0, 1.0, 1.0),
-        direction_source=source,
-    )
+    reference = sitk.Image((16, 16, 16), sitk.sitkFloat32)
+    reference.SetOrigin((0.4, 0.4, 0.4))
     target = _image_volume(reference)
     geometry_config = GeometryConfig.from_dict({"spacing": [1.0, 1.0, 1.0]})
 

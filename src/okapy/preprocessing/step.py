@@ -7,6 +7,7 @@ import SimpleITK as sitk
 
 # Import processors for side-effect registration of built-ins.
 import okapy.preprocessing.processors  # noqa: F401
+from okapy.core.geometry import image_physical_box
 from okapy.core.models import (
     ImageMaskSet,
     ImageVolume,
@@ -16,7 +17,6 @@ from okapy.core.models import (
 )
 from okapy.preprocessing.geometry import (
     compute_common_fov,
-    compute_processing_roi,
     make_reference_grid,
     masks_for_image,
     resample_image_volume_to_reference,
@@ -140,19 +140,14 @@ class StudyPreprocessingStep:
                     "crop_to_common_fov=True, but the image FOVs do not overlap."
                 )
 
-            physical_roi = compute_processing_roi(
+            reference_grid = make_reference_grid(
                 image=image,
                 masks=image_masks,
                 geometry_config=geometry_config,
                 common_fov=common_fov,
-            )
-
-            reference_grid = make_reference_grid(
-                image=image,
-                roi=physical_roi,
-                geometry_config=geometry_config,
                 pixel_id=sitk.sitkFloat32,
             )
+            physical_roi = image_physical_box(reference_grid)
 
             output_image_path = image_output_dir / image_output_name(
                 patient_id=image.patient_id,
