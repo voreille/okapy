@@ -64,7 +64,7 @@ instance/
 .scrapy
 
 # Sphinx documentation
-# docs/_build/
+docs/_build/
 
 # PyBuilder
 target/
@@ -113,7 +113,7 @@ ENV/
 
 # temporary files
 /tmp/
-dump/
-
-# output files
-data/output/
+/dump/
+/output/
+/outputs/
+/scripts/

@@ -1,22 +1,20 @@
 general:
-  padding: 10
+  padding: 100
   submodalities: False
   result_format: "long"
-  combine_segmentation: False
+  combine_segmentation: True
   additional_dicom_tags:
     - "SeriesInstanceUID"
 
 volume_preprocessing:
   common:
     bspline_resampler:
-      resampling_spacing: [1.0, 1.0, -1.0]
+      resampling_spacing: [1.0, 1.0, 1.0]
       order: 3
   default:
 
-mask_preprocessing:
-  default:
-    binary_bspline_resampler:
-      order: 3
+# Masks are not configurable: they are always resampled onto the image grid with
+# linear interpolation and thresholded at 0.5.
 
 feature_extraction:
   CT:
