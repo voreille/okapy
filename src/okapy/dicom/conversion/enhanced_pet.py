@@ -23,8 +23,8 @@ import pydicom
 
 from okapy.core.models import ImageVolume, VolumeStage
 from okapy.dicom.conversion.suv_common import (
+    ReferenceDatetime,
     SUVComputationError,
-    _ReferenceDatetime,
     administration_datetime,
     apply_rescale,
     average_count_rate_time_s,
@@ -560,7 +560,7 @@ def _dose_at_reference_time(frame: _Frame) -> float:
 
 def _decay_correction_reference_datetime(
     frame: _Frame, half_life_s: float
-) -> _ReferenceDatetime:
+) -> ReferenceDatetime:
     """Decay reference datetime, the UTC offset of its DT value and its source."""
 
     meta = frame.meta

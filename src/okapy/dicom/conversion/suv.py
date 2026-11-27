@@ -16,8 +16,8 @@ from okapy.dicom.conversion.enhanced_pet import (
 )
 from okapy.dicom.conversion.image import SimpleITKImageSeriesConverter
 from okapy.dicom.conversion.suv_common import (
+    ReferenceDatetime,
     SUVComputationError,
-    _ReferenceDatetime,
     administration_datetime,
     apply_rescale,
     average_count_rate_time_s,
@@ -287,7 +287,7 @@ def _dose_at_image_reference_time(s, meta: PETMetadata) -> float:
 
 def _image_reference_datetime_for_start(
     s, meta: PETMetadata, half_life_s: float
-) -> _ReferenceDatetime:
+) -> ReferenceDatetime:
     """Scan start datetime, i.e. the time the voxel values were corrected to.
 
     Manual, "Determining the scan start datetime", in order of preference:
@@ -343,7 +343,7 @@ def _image_reference_datetime_for_start(
 
 def _voxel_measurement_datetime_for_none(
     s, meta: PETMetadata, half_life_s: float
-) -> _ReferenceDatetime:
+) -> ReferenceDatetime:
     """Measurement time, i.e. the time the uncorrected voxel values occurred."""
 
     warn_unrecognized_manufacturer(

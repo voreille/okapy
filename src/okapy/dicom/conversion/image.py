@@ -267,6 +267,9 @@ def _handle_slice_gaps(
     d_slices = np.round(
         np.diff(np.asarray(orthogonal_positions, dtype=float)), decimals=5
     )
+    if len(d_slices) == 0:
+        return image_xyz
+
     median_spacing = float(np.median(d_slices))
 
     # Gaps that round to zero median spacings are not slice steps at all.

@@ -676,7 +676,7 @@ _MAX_UTC_OFFSET_MIN = 14 * 60
 
 #: A decay reference datetime, the UTC offset of the DT value it was read from
 #: (``None`` when it has none) and the name of that source.
-_ReferenceDatetime = tuple[datetime, timedelta | None, str]
+ReferenceDatetime = tuple[datetime, timedelta | None, str]
 
 
 def _parse_dt(value: str) -> tuple[datetime, timedelta | None]:
