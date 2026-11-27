@@ -1,9 +1,9 @@
 import pytest
 
-from okapy_legacy.dicomconverter.converter import ExtractorConverter
+pytest.importorskip("radiomics.featureextractor", exc_type=ImportError)
 
+from okapy_legacy.dicomconverter.converter import ExtractorConverter
 from tests.helpers.assertions import assert_or_update_features
-from tests.helpers.external_data import iter_collections
 
 
 def test_legacy_feature_snapshot(collection, tmp_path, update_golden):

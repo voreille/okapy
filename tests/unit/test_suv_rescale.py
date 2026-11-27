@@ -82,7 +82,7 @@ def test_warnings_are_emitted_once_per_image(caplog):
 
 
 def test_absent_rescale_attribute_is_an_error():
-    """"Must be present and not empty" is still a hard requirement."""
+    """ "Must be present and not empty" is still a hard requirement."""
 
     class _Slice:
         pass

@@ -14,9 +14,7 @@ def _legacy_config(mask_resampler):
                 }
             }
         },
-        "mask_preprocessing": {
-            "default": {"binary_bspline_resampler": mask_resampler}
-        },
+        "mask_preprocessing": {"default": {"binary_bspline_resampler": mask_resampler}},
     }
 
 

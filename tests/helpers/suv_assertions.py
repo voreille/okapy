@@ -8,7 +8,7 @@ import numpy as np
 import SimpleITK as sitk
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _expected_outcomes(dro_root: Path) -> dict[str, str]:
     """Expected SUVbw outcome per DRO, from ``docs/DRO_list.csv``.
 

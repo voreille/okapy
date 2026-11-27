@@ -5,13 +5,13 @@ import pytest
 import SimpleITK as sitk
 
 from okapy.core.geometry import make_reference_image_on_aligned_grid, mask_index_extent
-from okapy.core.models import ImageVolume, MaskIdentity, MaskVolume, SeriesIdentity
 from okapy.preprocessing.geometry import (
     make_reference_grid,
     resample_image_volume_to_reference,
     resample_mask_volume_to_reference,
 )
 from okapy.preprocessing.models import GeometryConfig
+from tests.helpers import factories
 
 FLIPPED_XY = (-1.0, 0.0, 0.0, 0.0, -1.0, 0.0, 0.0, 0.0, 1.0)
 
@@ -41,40 +41,12 @@ def _mask_like(image: sitk.Image, lo=(10, 12, 8), hi=(15, 16, 13)) -> sitk.Image
     return mask
 
 
-def _image_volume(image: sitk.Image) -> ImageVolume:
-    return ImageVolume.from_sitk(
-        path=Path("image.nii.gz"),
-        image=image,
-        identity=SeriesIdentity(
-            modality="PT",
-            patient_id="P1",
-            study_instance_uid="1.2.3",
-            series_instance_uid="1.2.3.4",
-        ),
-    )
-
-
-def _mask_volume(mask: sitk.Image) -> MaskVolume:
-    return MaskVolume.from_sitk(
-        path=Path("mask.nii.gz"),
-        image=mask,
-        identity=MaskIdentity(
-            label="ROI",
-            modality="SEG",
-            reference_modality="PT",
-            patient_id="P1",
-            study_instance_uid="1.2.3",
-            reference_series_instance_uid="1.2.3.4",
-        ),
-    )
-
-
 def _crop(image: sitk.Image, mask: sitk.Image, config: dict):
     geometry_config = GeometryConfig.from_dict(config)
-    image_volume = _image_volume(image)
+    image_volume = factories.image_volume(image, modality="PT")
     reference = make_reference_grid(
         image=image_volume,
-        masks=[_mask_volume(mask)],
+        masks=[factories.mask_volume(mask, reference_modality="PT")],
         geometry_config=geometry_config,
     )
     cropped_image = resample_image_volume_to_reference(
@@ -84,7 +56,7 @@ def _crop(image: sitk.Image, mask: sitk.Image, config: dict):
         output_path=Path("image_out.nii.gz"),
     )
     cropped_mask = resample_mask_volume_to_reference(
-        _mask_volume(mask),
+        factories.mask_volume(mask, reference_modality="PT"),
         reference,
         target_image=cropped_image,
         geometry_config=geometry_config,
@@ -118,7 +90,9 @@ def test_native_spacing_crop_keeps_voxels_unchanged(direction, padding_voxels):
     expected = sitk.GetArrayFromImage(image)[
         lo[2] : hi[2] + 1, lo[1] : hi[1] + 1, lo[0] : hi[0] + 1
     ]
-    np.testing.assert_allclose(sitk.GetArrayFromImage(cropped_image), expected, rtol=1e-6)
+    np.testing.assert_allclose(
+        sitk.GetArrayFromImage(cropped_image), expected, rtol=1e-6
+    )
 
     mask_array = sitk.GetArrayFromImage(cropped_mask)
     assert mask_array.sum() == sitk.GetArrayFromImage(mask).sum()
@@ -134,13 +108,17 @@ def test_padding_is_clipped_to_the_image():
 
     assert reference.GetSize() == (9, 10, 8)
     np.testing.assert_allclose(reference.GetOrigin(), image.GetOrigin())
-    assert sitk.GetArrayFromImage(cropped_mask).sum() == sitk.GetArrayFromImage(mask).sum()
+    assert (
+        sitk.GetArrayFromImage(cropped_mask).sum() == sitk.GetArrayFromImage(mask).sum()
+    )
 
 
 def test_resampled_grid_is_centred_on_the_image_grid():
     image = _image(size=(40, 36, 30), spacing=(3.0, 3.0, 4.0))
 
-    reference = make_reference_image_on_aligned_grid(image=image, spacing=(2.0, 2.0, 2.0))
+    reference = make_reference_image_on_aligned_grid(
+        image=image, spacing=(2.0, 2.0, 2.0)
+    )
 
     assert reference.GetSize() == (60, 54, 60)
     image_centre = image.TransformContinuousIndexToPhysicalPoint(
@@ -162,7 +140,9 @@ def test_resampled_crop_lies_on_the_full_aligned_grid():
     )
 
     # The crop origin is a voxel centre of the full aligned grid.
-    index = np.asarray(full.TransformPhysicalPointToContinuousIndex(reference.GetOrigin()))
+    index = np.asarray(
+        full.TransformPhysicalPointToContinuousIndex(reference.GetOrigin())
+    )
     np.testing.assert_allclose(index, np.round(index), atol=1e-6)
     assert reference.GetSpacing() == (2.0, 2.0, 2.0)
     assert sitk.GetArrayFromImage(cropped_mask).sum() > 0

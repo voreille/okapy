@@ -98,9 +98,7 @@ def _make_ge_slice(
     return ds
 
 
-def _expected_corrected_dose(
-    delta_s: float, half_life_s: float = HALF_LIFE_S
-) -> float:
+def _expected_corrected_dose(delta_s: float, half_life_s: float = HALF_LIFE_S) -> float:
     return TOTAL_DOSE_BQ * 2 ** (-delta_s / half_life_s)
 
 
