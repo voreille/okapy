@@ -7,11 +7,13 @@ from okapy.core.models import ImageVolume, MaskVolume
 
 FeatureValue = int | float | str | bool | None
 
+
 @dataclass(frozen=True)
 class FeatureSet:
     backend_name: str
     features: dict[str, FeatureValue]
     metadata: dict[str, Any] = field(default_factory=dict)
+
 
 @dataclass(frozen=True)
 class FeatureRecord:

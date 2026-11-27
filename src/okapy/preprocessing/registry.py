@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, Callable
-
+from collections.abc import Callable
+from typing import Any
 
 ProcessorFactory = Callable[..., object]
 
 PROCESSOR_REGISTRY: dict[str, ProcessorFactory] = {}
 
 
-def register_processor(name: str, factory: ProcessorFactory, *, overwrite: bool = False) -> None:
+def register_processor(
+    name: str, factory: ProcessorFactory, *, overwrite: bool = False
+) -> None:
     if not overwrite and name in PROCESSOR_REGISTRY:
         raise ValueError(f"Processor {name!r} is already registered.")
     PROCESSOR_REGISTRY[name] = factory

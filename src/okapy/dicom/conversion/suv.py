@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-import logging
 
 import numpy as np
 
@@ -212,8 +212,7 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
 
 def _is_enhanced_pet(series: DicomSeries) -> bool:
     return any(
-        record.sop_class_uid in ENHANCED_PET_SOP_CLASS_UIDS
-        for record in series.records
+        record.sop_class_uid in ENHANCED_PET_SOP_CLASS_UIDS for record in series.records
     )
 
 

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from pathlib import Path
 import logging
-from typing import Iterable
+from collections.abc import Iterable
+from pathlib import Path
 
 import numpy as np
 import pydicom

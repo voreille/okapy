@@ -22,7 +22,7 @@ class PhysicalBox:
         if len(self.max_xyz) != 3:
             raise ValueError(f"max_xyz must have length 3, got {self.max_xyz}.")
 
-        for min_value, max_value in zip(self.min_xyz, self.max_xyz):
+        for min_value, max_value in zip(self.min_xyz, self.max_xyz, strict=True):
             if min_value >= max_value:
                 raise ValueError(
                     "PhysicalBox min values must be strictly smaller than max "
@@ -33,7 +33,7 @@ class PhysicalBox:
     def size_xyz(self) -> tuple[float, float, float]:
         return tuple(
             max_value - min_value
-            for min_value, max_value in zip(self.min_xyz, self.max_xyz)
+            for min_value, max_value in zip(self.min_xyz, self.max_xyz, strict=True)
         )
 
     def as_dict(self) -> dict[str, object]:
@@ -129,7 +129,7 @@ def mask_index_extent(mask: sitk.Image, image: sitk.Image) -> IndexExtent:
         image.TransformPhysicalPointToContinuousIndex(
             mask.TransformContinuousIndexToPhysicalPoint(tuple(float(x) for x in index))
         )
-        for index in product(*zip(min_xyz - 0.5, max_xyz + 0.5))
+        for index in product(*zip(min_xyz - 0.5, max_xyz + 0.5, strict=True))
     ]
 
     corners_array = np.asarray(corners, dtype=float)
@@ -141,7 +141,7 @@ def box_index_extent(box: PhysicalBox, image: sitk.Image) -> IndexExtent:
 
     corners = [
         image.TransformPhysicalPointToContinuousIndex(point)
-        for point in product(*zip(box.min_xyz, box.max_xyz))
+        for point in product(*zip(box.min_xyz, box.max_xyz, strict=True))
     ]
 
     corners_array = np.asarray(corners, dtype=float)
@@ -283,6 +283,7 @@ def assert_same_geometry(a: sitk.Image, b: sitk.Image, *, context: str = "") -> 
         f"B size={b.GetSize()}, spacing={b.GetSpacing()}, "
         f"origin={b.GetOrigin()}, direction={b.GetDirection()}"
     )
+
 
 def interpolator_from_name(name: str | int) -> int:
     if isinstance(name, int):

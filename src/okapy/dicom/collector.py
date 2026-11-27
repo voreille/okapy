@@ -2,20 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
-import logging
-
-from okapy.dicom.walker import DicomWalker
 
 from okapy.dicom.models import (
+    IMAGE_MODALITIES,
     DicomCollection,
     DicomFileRecord,
     DicomSeries,
     DicomStudy,
-    IMAGE_MODALITIES,
 )
+from okapy.dicom.walker import DicomWalker
 
 logger = logging.getLogger(__name__)
 

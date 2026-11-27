@@ -13,10 +13,10 @@ the SUV computation manual (v3.0.0).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-import logging
 
 import numpy as np
 import pydicom
@@ -369,9 +369,7 @@ def _geometry(*, frames, orientation, pixel_spacing):
     col = orientation[3:]
     normal = np.cross(row, col)
 
-    direction = tuple(
-        float(x) for x in np.stack([row, col, normal], axis=1).ravel()
-    )
+    direction = tuple(float(x) for x in np.stack([row, col, normal], axis=1).ravel())
 
     origin = frames[0].position
     row_spacing, col_spacing = pixel_spacing
@@ -568,9 +566,7 @@ def _dose_at_reference_time(frame: _Frame) -> float:
     )
 
 
-def _decay_correction_reference_datetime(
-    frame: _Frame, half_life_s: float
-) -> datetime:
+def _decay_correction_reference_datetime(frame: _Frame, half_life_s: float) -> datetime:
     meta = frame.meta
     decay_corrected = (meta.decay_corrected or "").upper()
 

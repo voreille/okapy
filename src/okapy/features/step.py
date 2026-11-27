@@ -9,6 +9,7 @@ from okapy.features.selector import select_backends
 
 logger = logging.getLogger(__name__)
 
+
 class FeatureExtractionStep:
     def __init__(
         self,
@@ -30,7 +31,9 @@ class FeatureExtractionStep:
             for record in self._extract_image_mask_set(item, work_dir=work_dir)
         ]
 
-    def _extract_image_mask_set(self, item: ImageMaskSet, *, work_dir: Path) -> list[FeatureRecord]:
+    def _extract_image_mask_set(
+        self, item: ImageMaskSet, *, work_dir: Path
+    ) -> list[FeatureRecord]:
         backends = [
             *select_backends(self.backends_by_selector, item.image.modality_key),
             *self.common_backends,
@@ -40,7 +43,9 @@ class FeatureExtractionStep:
             feature_sets = []
             for backend in backends:
                 try:
-                    feature_sets.append(backend.extract(item.image, mask, work_dir=work_dir))
+                    feature_sets.append(
+                        backend.extract(item.image, mask, work_dir=work_dir)
+                    )
                 except Exception:
                     if not self.continue_on_error:
                         raise
@@ -50,5 +55,9 @@ class FeatureExtractionStep:
                         item.image.path,
                         mask.path,
                     )
-            records.append(FeatureRecord(image=item.image, mask=mask, feature_sets=tuple(feature_sets)))
+            records.append(
+                FeatureRecord(
+                    image=item.image, mask=mask, feature_sets=tuple(feature_sets)
+                )
+            )
         return records

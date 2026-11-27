@@ -4,8 +4,8 @@ from okapy.preprocessing.models import (
     PreprocessingPlan,
     StudyPreprocessingConfig,
 )
-from okapy.preprocessing.step import StudyPreprocessingStep
 from okapy.preprocessing.registry import build_processor, register_processor
+from okapy.preprocessing.step import StudyPreprocessingStep
 
 __all__ = [
     "GeometryConfig",

@@ -84,7 +84,9 @@ class MaskedStandardizer:
         **kwargs,
     ) -> ImageVolume:
         if not masks:
-            raise ValueError(f"MaskedStandardizer requires masks for image {image.path}.")
+            raise ValueError(
+                f"MaskedStandardizer requires masks for image {image.path}."
+            )
 
         selected_masks = masks
         if self.labels is not None:
@@ -103,7 +105,8 @@ class MaskedStandardizer:
             if mask_array.shape != image_array.shape:
                 raise ValueError(
                     f"Mask/image shape mismatch for image {image.path}: "
-                    f"image={image_array.shape}, mask={mask_array.shape}, label={mask.label!r}."
+                    f"image={image_array.shape}, mask={mask_array.shape}, "
+                    f"label={mask.label!r}."
                 )
             combined_mask |= mask_array
 

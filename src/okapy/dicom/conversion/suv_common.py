@@ -12,9 +12,9 @@ Computation": https://oncoray.github.io/suv_computation/suv.html
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
 import logging
 import math
+from datetime import date, datetime, time, timedelta
 
 import numpy as np
 

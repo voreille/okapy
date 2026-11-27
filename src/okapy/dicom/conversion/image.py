@@ -133,10 +133,10 @@ class SimpleITKImageSeriesConverter:
             for s in slices
         ]
 
-        zipped = list(zip(slices, paths, orthogonal_positions))
+        zipped = list(zip(slices, paths, orthogonal_positions, strict=True))
         zipped.sort(key=lambda x: x[2])
 
-        slices, paths, orthogonal_positions = zip(*zipped)
+        slices, paths, orthogonal_positions = zip(*zipped, strict=True)
         return list(slices), list(paths), list(orthogonal_positions)
 
     def _clean_slices(self, slices, paths, orthogonal_positions):

@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
+from okapy.core.models import VolumeCollection
 from okapy.dicom.conversion.step import DicomConversionStep
 from okapy.preprocessing.step import StudyPreprocessingStep
-from okapy.core.models import VolumeCollection
 
 
 class PreprocessingPipeline:

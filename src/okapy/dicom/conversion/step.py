@@ -17,7 +17,6 @@ from okapy.dicom.conversion.seg import SegMaskConverter
 from okapy.dicom.conversion.suv import PETSUVConverter
 from okapy.dicom.models import DicomSeries, DicomStudy
 
-
 logger = logging.getLogger(__name__)
 
 

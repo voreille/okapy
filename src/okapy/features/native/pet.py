@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+
 import numpy as np
 import SimpleITK as sitk
 
@@ -9,6 +10,7 @@ from okapy.core.geometry import assert_same_geometry
 from okapy.core.models import ImageVolume, MaskVolume
 from okapy.features.backends.base import FeatureBackend
 from okapy.features.models import FeatureSet
+
 
 @dataclass(frozen=True)
 class PETFeatureConfig:
@@ -24,22 +26,33 @@ class PETFeatureConfig:
         if self.suvpeak_diameter_mm <= 0:
             raise ValueError("suvpeak_diameter_mm must be positive.")
 
+
 class PETFeatureBackend(FeatureBackend):
-    def __init__(self, *, config: PETFeatureConfig | None = None, name: str = "pet") -> None:
+    def __init__(
+        self, *, config: PETFeatureConfig | None = None, name: str = "pet"
+    ) -> None:
         self.name = name
         self.config = config or PETFeatureConfig()
 
-    def extract(self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path) -> FeatureSet:
+    def extract(
+        self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path
+    ) -> FeatureSet:
         del work_dir
         if image.modality != "PT":
             raise ValueError(f"PETFeatureBackend requires PT, got {image.modality!r}.")
-        assert_same_geometry(image.image, mask.image, context=f"PET features for {mask.label!r}")
+        assert_same_geometry(
+            image.image, mask.image, context=f"PET features for {mask.label!r}"
+        )
         image_array = sitk.GetArrayFromImage(image.image).astype(np.float64)
         mask_array = sitk.GetArrayFromImage(mask.image) != 0
         roi_values = image_array[mask_array]
         if roi_values.size == 0:
             raise ValueError(f"Mask {mask.label!r} is empty.")
-        threshold = float(self.config.threshold if self.config.threshold_type == "absolute" else self.config.threshold * np.max(roi_values))
+        threshold = float(
+            self.config.threshold
+            if self.config.threshold_type == "absolute"
+            else self.config.threshold * np.max(roi_values)
+        )
         metabolic_mask = mask_array & (image_array > threshold)
         metabolic_values = image_array[metabolic_mask]
         voxel_volume_ml = float(np.prod(image.image.GetSpacing())) / 1000.0
@@ -88,7 +101,14 @@ class PETFeatureBackend(FeatureBackend):
             return f"_T_{self.config.threshold * 100:g}rel"
         return f"_T_{self.config.threshold:g}abs"
 
-def compute_suvpeak(*, image: sitk.Image, candidate_mask: np.ndarray, diameter_mm: float, restrict_to_mask: bool) -> float:
+
+def compute_suvpeak(
+    *,
+    image: sitk.Image,
+    candidate_mask: np.ndarray,
+    diameter_mm: float,
+    restrict_to_mask: bool,
+) -> float:
     image_array = sitk.GetArrayFromImage(image).astype(np.float64)
     candidate_indices = np.argwhere(candidate_mask)
     if candidate_indices.size == 0:
@@ -99,14 +119,16 @@ def compute_suvpeak(*, image: sitk.Image, candidate_mask: np.ndarray, diameter_m
     radius_zyx = np.ceil(radius_mm / spacing_zyx).astype(int)
     lower = np.maximum(hottest_zyx - radius_zyx, 0)
     upper = np.minimum(hottest_zyx + radius_zyx + 1, np.asarray(image_array.shape))
-    slices = tuple(slice(int(lo), int(hi)) for lo, hi in zip(lower, upper))
+    slices = tuple(slice(int(lo), int(hi)) for lo, hi in zip(lower, upper, strict=True))
     neighbourhood = image_array[slices]
     coordinates = np.indices(neighbourhood.shape, dtype=float)
     center = hottest_zyx - lower
     distance_squared_mm = np.zeros(neighbourhood.shape, dtype=float)
     for axis in range(3):
-        distance_squared_mm += ((coordinates[axis] - center[axis]) * spacing_zyx[axis]) ** 2
-    sphere = distance_squared_mm <= radius_mm ** 2
+        distance_squared_mm += (
+            (coordinates[axis] - center[axis]) * spacing_zyx[axis]
+        ) ** 2
+    sphere = distance_squared_mm <= radius_mm**2
     if restrict_to_mask:
         sphere &= candidate_mask[slices]
     values = neighbourhood[sphere]

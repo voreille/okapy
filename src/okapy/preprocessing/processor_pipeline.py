@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from okapy.preprocessing.registry import build_processor
 from okapy.preprocessing.selector import modality_from_key
-
 
 Processor = Callable[..., Any]
 
@@ -62,7 +62,7 @@ class ProcessorPipeline:
         return self.default
 
     @classmethod
-    def empty(cls) -> "ProcessorPipeline":
+    def empty(cls) -> ProcessorPipeline:
         return cls(
             common=[],
             selectors={},

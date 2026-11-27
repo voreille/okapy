@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 from pathlib import Path
 from typing import Any
 
@@ -7,9 +8,12 @@ from okapy.features.backends.pyradiomics_local import LocalPyradiomicsBackend
 from okapy.features.native.pet import PETFeatureBackend, PETFeatureConfig
 from okapy.features.step import FeatureExtractionStep
 
+
 def build_feature_extraction_step(config: dict[str, Any]) -> FeatureExtractionStep:
     feature_config = config.get("feature_extraction") or {}
-    common_backends = [_build_backend(item) for item in feature_config.get("common", [])]
+    common_backends = [
+        _build_backend(item) for item in feature_config.get("common", [])
+    ]
     reserved = {"common", "continue_on_error", "result_format", "include_backend"}
     backends_by_selector = {
         selector: [_build_backend(item) for item in backend_configs]
@@ -21,6 +25,7 @@ def build_feature_extraction_step(config: dict[str, Any]) -> FeatureExtractionSt
         common_backends=common_backends,
         continue_on_error=bool(feature_config.get("continue_on_error", False)),
     )
+
 
 def _build_backend(config: dict[str, Any]):
     backend_type = str(config["type"])
@@ -47,7 +52,9 @@ def _build_backend(config: dict[str, Any]):
                 threshold=float(config.get("threshold", 0.0)),
                 threshold_type=str(config.get("threshold_type", "absolute")),
                 suvpeak_diameter_mm=float(config.get("suvpeak_diameter_mm", 12.0)),
-                restrict_suvpeak_to_mask=bool(config.get("restrict_suvpeak_to_mask", False)),
+                restrict_suvpeak_to_mask=bool(
+                    config.get("restrict_suvpeak_to_mask", False)
+                ),
                 preserve_legacy_names=bool(config.get("preserve_legacy_names", True)),
             ),
         )

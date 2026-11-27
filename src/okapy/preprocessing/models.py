@@ -9,7 +9,6 @@ import SimpleITK as sitk
 from okapy.core.geometry import PhysicalBox
 from okapy.core.models import ImageVolume, MaskVolume
 
-
 Metadata = dict[str, Any]
 
 #: Keys that used to select the mask interpolator and threshold. Masks are now
@@ -52,7 +51,8 @@ class GeometryConfig:
             or int(padding_voxels) < 0
         ):
             raise ValueError(
-                f"'padding_voxels' must be a non-negative integer, got {padding_voxels!r}."
+                "'padding_voxels' must be a non-negative integer, got "
+                f"{padding_voxels!r}."
             )
 
         if "spacing" not in config:
@@ -80,6 +80,7 @@ class GeometryConfig:
             default_mask_value=int(config.get("default_mask_value", 0)),
         )
 
+
 @dataclass(frozen=True)
 class StudyPreprocessingConfig:
     """Study-level preprocessing options."""
@@ -96,7 +97,9 @@ class StudyPreprocessingConfig:
         general = config.get("general", config)
         return cls(
             combine_segmentation=bool(general.get("combine_segmentation", False)),
-            skip_images_without_masks=bool(general.get("skip_images_without_masks", False)),
+            skip_images_without_masks=bool(
+                general.get("skip_images_without_masks", False)
+            ),
             write_outputs=bool(general.get("write_outputs", True)),
             image_output_subdir=str(general.get("image_output_subdir", "images")),
             mask_output_subdir=str(general.get("mask_output_subdir", "masks")),

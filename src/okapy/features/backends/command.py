@@ -63,7 +63,8 @@ class CommandFeatureBackend(FeatureBackend):
         )
         if completed.returncode != 0:
             raise RuntimeError(
-                f"Feature backend {self.name!r} failed with exit code {completed.returncode}.\n"
+                f"Feature backend {self.name!r} failed with exit code "
+                f"{completed.returncode}.\n"
                 f"Command: {command}\n"
                 f"stdout:\n{completed.stdout}\n"
                 f"stderr:\n{completed.stderr}"

@@ -47,7 +47,9 @@ def write_image_unique(image: sitk.Image, path: Path) -> Path:
         counter += 1
 
 
-def image_output_name(*, patient_id: str | None, modality_key: str, series_instance_uid: str) -> str:
+def image_output_name(
+    *, patient_id: str | None, modality_key: str, series_instance_uid: str
+) -> str:
     return (
         f"{safe_name(patient_id)}__"
         f"{safe_name(modality_key)}__"

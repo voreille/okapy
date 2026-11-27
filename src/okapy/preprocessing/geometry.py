@@ -12,8 +12,8 @@ from okapy.core.geometry import (
     PhysicalBox,
     box_index_extent,
     image_physical_box,
-    intersect_boxes,
     interpolator_from_name,
+    intersect_boxes,
     make_reference_image_on_aligned_grid,
     mask_index_extent,
     resample_to_reference,
@@ -99,7 +99,8 @@ def make_reference_grid(
     if geometry_config.crop_to_masks:
         if not masks:
             raise ValueError(
-                f"Cannot crop image {image.path} to masks because no masks were provided."
+                f"Cannot crop image {image.path} to masks because no masks were "
+                "provided."
             )
 
         mask_extents = [mask_index_extent(mask.image, image.image) for mask in masks]
@@ -117,7 +118,9 @@ def make_reference_grid(
         image=image.image,
         spacing=spacing,
         extents=extents,
-        padding_voxels=geometry_config.padding_voxels if geometry_config.crop_to_masks else 0,
+        padding_voxels=geometry_config.padding_voxels
+        if geometry_config.crop_to_masks
+        else 0,
         pixel_id=pixel_id,
     )
 
