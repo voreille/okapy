@@ -16,6 +16,7 @@ from okapy_legacy.dicomconverter.volume_processor import VolumeProcessorStack
 from okapy_legacy.dicomconverter.study import StudyProcessor, StudyProcessorDeep
 from okapy_legacy.featureextractor.featureextractor import OkapyExtractors
 import okapy_legacy.yaml.yaml as yaml
+from okapy.dicom.conversion.utils import ensure_inside, safe_name
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
@@ -78,46 +79,48 @@ class BaseConverter():
             name = self._get_name_mask(volume)
         else:
             name = self._get_name_volume(volume, include_roi)
-        if ouput_folder is None:
-            return Path(self.output_folder) / name
-        else:
-            return Path(ouput_folder) / name
+        root = Path(self.output_folder if ouput_folder is None else ouput_folder)
+        return ensure_inside(root / name, root)
+
+    @staticmethod
+    def _datetime_name(volume):
+        return str(volume.series_datetime).replace(' ', '_').replace(':', '-')
+
+    def _join_name(self, *parts):
+        # Every part comes from DICOM headers or labels: sanitize each one so
+        # the joined name is a single file name inside the output folder.
+        return "__".join(safe_name(p) for p in parts) + f".{self.extension}"
 
     def _get_name_mask(self, volume):
+        label = volume.label.replace(' ', '_')
         if self.naming == 0:
-            return (f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
-                    f"{volume.modality}__{volume.reference_modality}"
-                    f".{self.extension}")
+            return self._join_name(volume.PatientID, label, volume.modality,
+                                   volume.reference_modality)
 
         elif self.naming == 1:
-            return (f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
-                    f"{volume.modality}__{volume.SeriesNumber}__"
-                    f"{volume.reference_modality}"
-                    f"__{volume.reference_SeriesNumber}"
-                    f".{self.extension}")
+            return self._join_name(volume.PatientID, label, volume.modality,
+                                   volume.SeriesNumber,
+                                   volume.reference_modality,
+                                   volume.reference_SeriesNumber)
 
         elif self.naming == 2:
-            return (
-                f"{volume.PatientID}__{volume.label.replace(' ', '_')}__"
-                f"{volume.modality}__{volume.SeriesNumber}__"
-                f"{volume.reference_modality}"
-                f"__{volume.reference_SeriesNumber}__"
-                f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}"
-                f".{self.extension}")
+            return self._join_name(volume.PatientID, label, volume.modality,
+                                   volume.SeriesNumber,
+                                   volume.reference_modality,
+                                   volume.reference_SeriesNumber,
+                                   self._datetime_name(volume))
 
     def _get_name_volume(self, volume, include_roi=False):
+        roi = [include_roi] if include_roi else []
         if self.naming == 0:
-            return (f"{volume.PatientID}__{volume.modality}{'__' if include_roi else ''}{include_roi if include_roi else ''}"
-                    f".{self.extension}")
+            return self._join_name(volume.PatientID, volume.modality, *roi)
         elif self.naming == 1:
-            return (f"{volume.PatientID}__{volume.modality}{'__' if include_roi else ''}{include_roi if include_roi else ''}__"
-                    f"{volume.SeriesNumber}.{self.extension}")
+            return self._join_name(volume.PatientID, volume.modality, *roi,
+                                   volume.SeriesNumber)
         elif self.naming == 2:
-            return (
-                f"{volume.PatientID}__{volume.modality}{'__' if include_roi else ''}{include_roi if include_roi else ''}__"
-                f"{volume.SeriesNumber}__"
-                f"{str(volume.series_datetime).replace(' ', '_').replace(':', '-')}"
-                f".{self.extension}")
+            return self._join_name(volume.PatientID, volume.modality, *roi,
+                                   volume.SeriesNumber,
+                                   self._datetime_name(volume))
 
     def write(self, volume, include_roi=False, is_mask=False, dtype=None, output_folder=None):
         if dtype:
@@ -297,9 +300,15 @@ class ExtractorConverter(BaseConverter):
         return results_df
 
     def __call__(self, input_folder, labels=None, output_folder=None):
+        # Only a temporary directory created here may be removed: a
+        # user-provided output folder and its contents are never deleted.
+        temporary_folder = None
         try:
-            self.output_folder = Path(mkdtemp()) if output_folder is None else Path(output_folder)
-            if not self.output_folder.exists():
+            if output_folder is None:
+                temporary_folder = Path(mkdtemp())
+                self.output_folder = temporary_folder
+            else:
+                self.output_folder = Path(output_folder)
                 self.output_folder.mkdir(parents=True, exist_ok=True)
             studies_list = self.dicom_walker(input_folder, cores=self.cores)
             if self.cores is None:
@@ -313,16 +322,10 @@ class ExtractorConverter(BaseConverter):
                         tqdm(p.imap(partial(self.process_study, labels=labels),
                                     studies_list),
                              total=len(studies_list)))
-
-            # If a temporary directory was used, clean up at the end
-            if output_folder is None:
-                rmtree(self.output_folder, True)
+        finally:
+            if temporary_folder is not None:
+                rmtree(temporary_folder, True)
             self.output_folder = None
-        except Exception as e:
-            # In case of an exception, always clean up at the end
-            rmtree(self.output_folder, True)
-            self.output_folder = None
-            raise e
 
         # If no results were computed, return None
         if None in [x.to_string() if isinstance(x, pd.DataFrame) else x for x in result_dfs]:

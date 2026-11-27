@@ -1,7 +1,7 @@
 from copy import copy
 
 from okapy_legacy.exceptions import MissingSegmentationException
-import yaml
+import okapy_legacy.yaml.yaml as legacy_yaml
 import numpy as np
 from scipy import ndimage
 
@@ -19,7 +19,7 @@ class VolumeProcessorStack():
             params = params_path
         else:
             with open(params_path, 'r') as f:
-                params = yaml.safe_load(f)
+                params = legacy_yaml.load(f)
 
         stacks = {}
         for key, params_stack in params.items():

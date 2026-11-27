@@ -1,14 +1,8 @@
-import os
-from calendar import month_abbr
-from re import M
-import subprocess
-import json
 import six
 from pathlib import Path
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 import warnings
-import yaml
 import logging
 
 import numpy as np
@@ -16,6 +10,7 @@ import SimpleITK as sitk
 import pandas as pd
 
 from okapy_legacy.utils import make_temp_directory
+import okapy_legacy.yaml.yaml as legacy_yaml
 
 log_fmt = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_fmt)
@@ -39,7 +34,7 @@ class OkapyExtractors():
             params = params_path
         else:
             with open(params_path, 'r') as f:
-                params = yaml.safe_load(f)
+                params = legacy_yaml.load(f)
         self.feature_extractors = dict()
         self.default_extractor = FeatureExtractorPyradiomics(name="DEFAULT")
         for modality, sub_dict in params.items():
@@ -135,7 +130,7 @@ class FeatureExtractorPyradiomics(FeatureExtractor):
             kwargs.get("params"))
 
     def __call__(self, image_path, mask_path, **kwargs):
-        kwargs = {k: i for k, i in kwargs.items() if k is not "modality"}
+        kwargs = {k: i for k, i in kwargs.items() if k != "modality"}
         image = check_image(image_path)
         mask = check_image(mask_path)
         results = self.radiomics_extractor.execute(image, mask, **kwargs)
@@ -228,7 +223,7 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
         })
 
     def __call__(self, image_path, mask_path, **kwargs):
-        kwargs = {k: i for k, i in kwargs.items() if k is not "modality"}
+        kwargs = {k: i for k, i in kwargs.items() if k != "modality"}
         if type(image_path) != sitk.SimpleITK.Image:
             image = sitk.ReadImage(str(image_path))
         else:
@@ -254,35 +249,16 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
 
 
 class RieszFeatureExtractor(FeatureExtractor):
+    """Removed: the MATLAB Riesz binary is no longer shipped."""
 
     def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+        raise ValueError(
+            f"Riesz features are no longer supported (extractor "
+            f"{kwargs.get('name', '')!r}); remove the 'riesz' block from the "
+            f"feature_extraction parameters.")
 
     def __call__(self, image_path, mask_path, **kwargs):
-
-        path_of_this_file = os.path.dirname(os.path.abspath(__file__))
-        path_of_executable = os.path.join(path_of_this_file, 'matlab_bin/RieszExtractor')
-
-        completed_matlab_process = subprocess.run(
-            [
-                path_of_executable,
-                image_path, mask_path,
-                json.dumps(self.params)
-            ],
-            stdout=subprocess.PIPE,
-            encoding="utf-8",
-        )
-        print("MATLAB STDOUT!!!!!!!!!!!!!!")
-        output = completed_matlab_process.stdout
-        output_lines = output.splitlines()
-        try:
-            results = json.loads(output_lines[-1])
-        except IndexError:
-            raise Exception(
-                "MATLAB process failed, probably due to a missing MATLAB image"
-            )
-
-        return results
+        raise ValueError("Riesz features are no longer supported.")
 
 
 class ZradFeatureExtractor(FeatureExtractor):

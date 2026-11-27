@@ -19,8 +19,13 @@ class ExtLoaderMeta(type):
         return cls
 
 
-class ExtLoader(yaml.Loader, metaclass=ExtLoaderMeta):
-    """YAML Loader with `!include` constructor."""
+class ExtLoader(yaml.SafeLoader, metaclass=ExtLoaderMeta):
+    """Safe YAML Loader with an `!include` constructor.
+
+    Built on ``yaml.SafeLoader``, so ``!!python/...`` tags are rejected.
+    ``!include`` paths are resolved relative to the including file's
+    directory and must stay inside it.
+    """
 
     def __init__(self, stream):
         """Initialise Loader."""
@@ -35,8 +40,15 @@ class ExtLoader(yaml.Loader, metaclass=ExtLoaderMeta):
     def construct_include(self, node):
         """Include file referenced at node."""
 
-        filename = os.path.abspath(
-            os.path.join(self._root, self.construct_scalar(node)))
+        include = self.construct_scalar(node)
+        root = os.path.realpath(self._root)
+        filename = os.path.realpath(os.path.join(root, include))
+        if os.path.commonpath([root, filename]) != root:
+            raise yaml.constructor.ConstructorError(
+                None, None,
+                f"!include path {include!r} resolves outside the directory "
+                f"of the including file ({root})",
+                node.start_mark)
         extension = os.path.splitext(filename)[1].lstrip('.')
 
         with open(filename, 'r') as f:
