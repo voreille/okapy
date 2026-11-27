@@ -294,6 +294,9 @@ def _padding_to_voxels(padding: Any, spacing: Any, *, selector: str) -> int | li
         raise ValueError(
             f"Cannot migrate legacy general.padding={padding!r}: it must be >= 0."
         )
+    if padding == 0:
+        # 0 mm is 0 voxels on any grid, native spacing included.
+        return 0
 
     axes = [float(value) for value in spacing] if spacing is not None else []
     if len(axes) != 3 or any(value <= 0 for value in axes):

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import SimpleITK as sitk
 
+# ``parse_bool`` is re-exported here: it used to live in this module.
+from okapy.core.config_values import parse_bool
 from okapy.core.geometry import PhysicalBox
 from okapy.core.models import ImageVolume, MaskVolume
 
@@ -51,30 +54,6 @@ _OTHER_GENERAL_KEYS = frozenset(
     }
 )
 
-_TRUE_STRINGS = frozenset({"true", "yes", "1", "on"})
-_FALSE_STRINGS = frozenset({"false", "no", "0", "off"})
-
-
-def parse_bool(value: Any, *, key: str) -> bool:
-    """Parse a boolean config value strictly.
-
-    Real booleans pass through; the strings ``true/yes/1/on`` and
-    ``false/no/0/off`` (case-insensitive) are accepted. Anything else raises
-    ``ValueError`` naming ``key``.
-    """
-
-    if isinstance(value, bool):
-        return value
-
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in _TRUE_STRINGS:
-            return True
-        if lowered in _FALSE_STRINGS:
-            return False
-
-    raise ValueError(f"{key!r} must be a boolean (true/false), got {value!r}.")
-
 
 def _reject_unknown_keys(
     config: dict[str, Any], allowed: frozenset[str], *, section: str
@@ -91,6 +70,7 @@ def _parse_padding_voxels(value: Any) -> int | tuple[int, int, int]:
         if (
             isinstance(item, bool)
             or not isinstance(item, int | float)
+            or not math.isfinite(item)
             or float(item) != int(item)
             or int(item) < 0
         ):
@@ -156,6 +136,10 @@ class GeometryConfig:
                 raise ValueError(f"'spacing' must have length 3, got {spacing}.")
 
             for value in spacing:
+                if not math.isfinite(value):
+                    raise ValueError(
+                        f"'spacing' values must be finite numbers. Got {spacing}."
+                    )
                 if value <= 0 and value != -1:
                     raise ValueError(
                         "'spacing' values must be > 0, or -1 to keep the native "

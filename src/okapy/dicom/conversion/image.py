@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from statistics import mode
 
 import numpy as np
 import pydicom
@@ -237,12 +236,11 @@ def _handle_slice_gaps(
     """Fill missing slices and check the resulting slice spacing is uniform."""
 
     d_slices = np.diff(np.asarray(orthogonal_positions, dtype=float))
-    slice_spacing = _mode_rounded(d_slices)
+    slice_spacing = _reference_gap(d_slices)
 
     if slice_spacing <= 0:
         raise ValueError(
-            f"The most frequent slice spacing of series {series_uid} is "
-            f"{slice_spacing}."
+            f"The median slice spacing of series {series_uid} is {slice_spacing}."
         )
 
     # Number of slice spacings covered by each gap.
@@ -294,11 +292,17 @@ def _handle_slice_gaps(
     )
 
 
-def _mode_rounded(values: np.ndarray) -> float:
+def _reference_gap(values: np.ndarray) -> float:
+    """Reference slice spacing: the median gap.
+
+    Unlike the most frequent gap it does not depend on the slice order when
+    every gap is jittered, and a few missing-slice gaps do not move it.
+    """
+
     if len(values) == 0:
         return 1.0
 
-    return float(mode(np.round(values, decimals=5)))
+    return float(np.median(np.round(values, decimals=5)))
 
 
 def _interp_missing_slice(image_xyz: np.ndarray, idx: int) -> np.ndarray:

@@ -28,8 +28,10 @@ from okapy.dicom.conversion.suv_common import (
     apply_rescale,
     average_count_rate_time_s,
     bqml_to_suvbw,
+    check_administration_utc_offset,
     cm2ml_to_suvbw,
     decay_corrected_dose_bq,
+    dicom_datetime_utc_offset,
     get_optional_float,
     get_optional_str,
     gml_to_suvbw,
@@ -527,7 +529,16 @@ def _dose_at_reference_time(frame: _Frame) -> float:
     dose_bq = radionuclide_total_dose_bq(rph)
     half_life_s = radionuclide_half_life_s(rph)
 
-    reference_dt = _decay_correction_reference_datetime(frame, half_life_s)
+    reference_dt, reference_offset, reference_source = (
+        _decay_correction_reference_datetime(frame, half_life_s)
+    )
+
+    check_administration_utc_offset(
+        rph,
+        reference_offset=reference_offset,
+        reference_source=reference_source,
+        series_uid=get_optional_str(ds, "SeriesInstanceUID"),
+    )
 
     return decay_corrected_dose_bq(
         dose_bq=dose_bq,
@@ -545,7 +556,11 @@ def _dose_at_reference_time(frame: _Frame) -> float:
     )
 
 
-def _decay_correction_reference_datetime(frame: _Frame, half_life_s: float) -> datetime:
+def _decay_correction_reference_datetime(
+    frame: _Frame, half_life_s: float
+) -> tuple[datetime, timedelta | None, str]:
+    """Decay reference datetime, the UTC offset of its DT value and its source."""
+
     meta = frame.meta
     decay_corrected = (meta.decay_corrected or "").upper()
 
@@ -563,7 +578,11 @@ def _decay_correction_reference_datetime(frame: _Frame, half_life_s: float) -> d
                 "is unknown and SUVbw cannot be computed."
             )
 
-        return parse_dicom_datetime(meta.decay_correction_datetime)
+        return (
+            parse_dicom_datetime(meta.decay_correction_datetime),
+            dicom_datetime_utc_offset(meta.decay_correction_datetime),
+            "Decay Correction DateTime (0018,9701)",
+        )
 
     content = _functional_group(frame.dataset, frame.index, "FrameContentSequence")
 
@@ -578,7 +597,11 @@ def _decay_correction_reference_datetime(frame: _Frame, half_life_s: float) -> d
     frame_reference_dt = get_optional_str(content, "FrameReferenceDateTime")
 
     if frame_reference_dt is not None:
-        return parse_dicom_datetime(frame_reference_dt)
+        return (
+            parse_dicom_datetime(frame_reference_dt),
+            dicom_datetime_utc_offset(frame_reference_dt),
+            "Frame Reference DateTime (0018,9151)",
+        )
 
     frame_acquisition_dt = get_optional_str(content, "FrameAcquisitionDateTime")
     frame_duration_ms = get_optional_float(content, "FrameAcquisitionDuration")
@@ -608,4 +631,8 @@ def _decay_correction_reference_datetime(frame: _Frame, half_life_s: float) -> d
     # Frame Acquisition Duration is stored in ms.
     tave_s = average_count_rate_time_s(frame_duration_ms / 1000.0, half_life_s)
 
-    return parse_dicom_datetime(frame_acquisition_dt) + timedelta(seconds=tave_s)
+    return (
+        parse_dicom_datetime(frame_acquisition_dt) + timedelta(seconds=tave_s),
+        dicom_datetime_utc_offset(frame_acquisition_dt),
+        "Frame Acquisition DateTime (0018,9074)",
+    )

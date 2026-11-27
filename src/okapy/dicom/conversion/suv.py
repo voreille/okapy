@@ -21,8 +21,10 @@ from okapy.dicom.conversion.suv_common import (
     apply_rescale,
     average_count_rate_time_s,
     bqml_to_suvbw,
+    check_administration_utc_offset,
     cm2ml_to_suvbw,
     decay_corrected_dose_bq,
+    dicom_datetime_utc_offset,
     get_optional_float,
     get_optional_str,
     get_required_float,
@@ -43,6 +45,10 @@ from okapy.dicom.conversion.suv_common import (
 from okapy.dicom.models import DicomSeries
 
 logger = logging.getLogger(__name__)
+
+#: A decay reference datetime, the UTC offset of the DT value it was read from
+#: (``None`` when it has none) and the name of that source.
+_ReferenceDatetime = tuple[datetime, timedelta | None, str]
 
 __all__ = [
     "PETMetadata",
@@ -255,9 +261,20 @@ def _dose_at_image_reference_time(s, meta: PETMetadata) -> float:
     half_life_s = radionuclide_half_life_s(rph)
 
     if decay_correction == "START":
-        reference_dt = _image_reference_datetime_for_start(s, meta, half_life_s)
+        reference_dt, reference_offset, reference_source = (
+            _image_reference_datetime_for_start(s, meta, half_life_s)
+        )
     else:
-        reference_dt = _voxel_measurement_datetime_for_none(s, meta, half_life_s)
+        reference_dt, reference_offset, reference_source = (
+            _voxel_measurement_datetime_for_none(s, meta, half_life_s)
+        )
+
+    check_administration_utc_offset(
+        rph,
+        reference_offset=reference_offset,
+        reference_source=reference_source,
+        series_uid=get_optional_str(s, "SeriesInstanceUID"),
+    )
 
     return decay_corrected_dose_bq(
         dose_bq=dose_bq,
@@ -274,7 +291,7 @@ def _dose_at_image_reference_time(s, meta: PETMetadata) -> float:
 
 def _image_reference_datetime_for_start(
     s, meta: PETMetadata, half_life_s: float
-) -> datetime:
+) -> _ReferenceDatetime:
     """Scan start datetime, i.e. the time the voxel values were corrected to.
 
     Manual, "Determining the scan start datetime", in order of preference:
@@ -293,31 +310,40 @@ def _image_reference_datetime_for_start(
     if manufacturer == "SIEMENS":
         private_dt = _private_datetime(s, SIEMENS_SCAN_START_TAG)
         if private_dt is not None:
-            return private_dt
+            return (*private_dt, "the Siemens private scan start datetime")
 
     if manufacturer == "GE":
         private_dt = _private_datetime(s, GE_SCAN_START_TAG)
         if private_dt is not None:
-            return private_dt
+            return (*private_dt, "the GE private scan start datetime")
 
-    acquisition_dt = _acquisition_datetime(s)
+    acquisition_dt, acquisition_offset = _acquisition_datetime(s)
+    source = "AcquisitionDateTime (0008,002A)"
     series_dt = _series_datetime(s)
 
     if series_dt is not None and acquisition_dt == series_dt:
-        return acquisition_dt
+        return acquisition_dt, acquisition_offset, source
 
     frame_reference_s = _frame_reference_time_s(s)
 
     if manufacturer == "GE":
-        return acquisition_dt - timedelta(seconds=frame_reference_s)
+        return (
+            acquisition_dt - timedelta(seconds=frame_reference_s),
+            acquisition_offset,
+            source,
+        )
 
     tave_s = average_count_rate_time_s(_actual_frame_duration_s(s), half_life_s)
-    return acquisition_dt + timedelta(seconds=tave_s - frame_reference_s)
+    return (
+        acquisition_dt + timedelta(seconds=tave_s - frame_reference_s),
+        acquisition_offset,
+        source,
+    )
 
 
 def _voxel_measurement_datetime_for_none(
     s, meta: PETMetadata, half_life_s: float
-) -> datetime:
+) -> _ReferenceDatetime:
     """Measurement time, i.e. the time the uncorrected voxel values occurred."""
 
     warn_unrecognized_manufacturer(
@@ -326,7 +352,12 @@ def _voxel_measurement_datetime_for_none(
     )
 
     tave_s = average_count_rate_time_s(_actual_frame_duration_s(s), half_life_s)
-    return _acquisition_datetime(s) + timedelta(seconds=tave_s)
+    acquisition_dt, acquisition_offset = _acquisition_datetime(s)
+    return (
+        acquisition_dt + timedelta(seconds=tave_s),
+        acquisition_offset,
+        "AcquisitionDateTime (0008,002A)",
+    )
 
 
 def _actual_frame_duration_s(s) -> float:
@@ -349,10 +380,12 @@ def _frame_reference_time_s(s) -> float:
     return value / 1000.0
 
 
-def _acquisition_datetime(s) -> datetime:
+def _acquisition_datetime(s) -> tuple[datetime, timedelta | None]:
+    """Acquisition datetime and the UTC offset of its DT value, if any."""
+
     value = get_optional_str(s, "AcquisitionDateTime")
     if value is not None:
-        return parse_dicom_datetime(value)
+        return parse_dicom_datetime(value), dicom_datetime_utc_offset(value)
 
     date_value = getattr(s, "AcquisitionDate", None)
     time_value = getattr(s, "AcquisitionTime", None)
@@ -360,10 +393,11 @@ def _acquisition_datetime(s) -> datetime:
     if date_value is None or time_value is None:
         raise SUVComputationError("Missing AcquisitionDate/AcquisitionTime.")
 
-    return datetime.combine(
+    acquisition_dt = datetime.combine(
         parse_dicom_date(str(date_value)),
         parse_dicom_time(str(time_value)),
     )
+    return acquisition_dt, None
 
 
 def _series_datetime(s) -> datetime | None:
@@ -384,7 +418,11 @@ def _series_datetime(s) -> datetime | None:
         return None
 
 
-def _private_datetime(s, private: tuple[int, str, int]) -> datetime | None:
+def _private_datetime(
+    s, private: tuple[int, str, int]
+) -> tuple[datetime, timedelta | None] | None:
+    """Private datetime tag and the UTC offset of its value, if any."""
+
     tag = private_tag(s, *private)
     if tag is None:
         return None
@@ -403,7 +441,7 @@ def _private_datetime(s, private: tuple[int, str, int]) -> datetime | None:
         return None
 
     try:
-        return parse_dicom_datetime(value)
+        return parse_dicom_datetime(value), dicom_datetime_utc_offset(value)
     except SUVComputationError:
         logger.warning(
             "Could not parse private datetime tag (%04X,%04X): %r", *tag, value

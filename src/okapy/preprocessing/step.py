@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any, TypeVar
 
+import numpy as np
 import SimpleITK as sitk
 
 from okapy.core.geometry import image_physical_box
@@ -226,6 +227,16 @@ class StudyPreprocessingStep:
                     output_path=output_mask_path,
                 )
 
+                if not np.any(sitk.GetArrayViewFromImage(geometry_mask.image)):
+                    logger.warning(
+                        "Dropping mask %r for image %s (%s): it is empty after "
+                        "resampling to the target grid.",
+                        mask.label,
+                        image.series_instance_uid,
+                        image.modality_key,
+                    )
+                    continue
+
                 local_mask = self.mask_processors.apply(
                     geometry_mask,
                     key=geometry_image.modality_key,
@@ -233,6 +244,17 @@ class StudyPreprocessingStep:
                 )
 
                 processed_masks.append(local_mask)
+
+            if (
+                image_masks
+                and not processed_masks
+                and self._skip_image_without_masks(image, geometry_config)
+            ):
+                # Every mask vanished on the target grid: same rule as an image
+                # without masks, so it gets no plan either.
+                plans.pop()
+                skipped_images.append(image)
+                continue
 
             processed_image = self.image_processors.apply(
                 geometry_image,

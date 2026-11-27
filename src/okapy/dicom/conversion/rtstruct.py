@@ -195,9 +195,9 @@ class RTStructMaskConverter:
 
         size_xyz = reference_image.GetSize()
         mask_xyz = np.zeros(size_xyz, dtype=np.uint8)
-        # Contours are XOR-ed per slice, so a contour inside another one on the
-        # same slice is a hole, whatever their order in the sequence.
-        planes: dict[int, np.ndarray] = {}
+        # Contours per slice as (in-plane vertices, rasterized pixels). They are
+        # combined by nesting depth once every contour has been read.
+        slice_contours: dict[int, list[tuple[np.ndarray, np.ndarray]]] = {}
         clipped = 0
 
         for contour in contour_sequence:
@@ -269,8 +269,9 @@ class RTStructMaskConverter:
 
             contour_plane = np.zeros(mask_xyz.shape[:2], dtype=bool)
             contour_plane[rr, cc] = True
-            plane = planes.setdefault(z_index, np.zeros(mask_xyz.shape[:2], dtype=bool))
-            plane ^= contour_plane
+            slice_contours.setdefault(z_index, []).append(
+                (in_plane.copy(), contour_plane)
+            )
 
         if clipped:
             logger.warning(
@@ -280,8 +281,8 @@ class RTStructMaskConverter:
                 label,
             )
 
-        for z_index, plane in planes.items():
-            mask_xyz[:, :, z_index] = plane
+        for z_index, contours in slice_contours.items():
+            mask_xyz[:, :, z_index] = _combine_slice_contours(contours)
 
         return mask_xyz
 
@@ -322,6 +323,80 @@ class RTStructMaskConverter:
             reference_image.series_instance_uid,
             extension=self.extension,
         )
+
+
+def _combine_slice_contours(
+    contours: list[tuple[np.ndarray, np.ndarray]],
+) -> np.ndarray:
+    """Combine the contours of one ROI on one slice by nesting depth.
+
+    A contour's depth is the number of other contours of the slice that contain
+    it. Even depths add area, odd depths cut a hole. Contours are painted from
+    the shallowest to the deepest, so each pixel takes the value of the deepest
+    contour covering it; contours that only touch (same depth) fill their union.
+    """
+
+    depths = [
+        sum(
+            _polygon_contains(other, vertices)
+            for j, (other, _) in enumerate(contours)
+            if j != i
+        )
+        for i, (vertices, _) in enumerate(contours)
+    ]
+
+    plane = np.zeros(contours[0][1].shape, dtype=bool)
+    for depth, (_, pixels) in sorted(
+        zip(depths, contours, strict=True), key=lambda item: item[0]
+    ):
+        plane[pixels] = depth % 2 == 0
+    return plane
+
+
+def _polygon_contains(polygon_xy: np.ndarray, points_xy: np.ndarray) -> bool:
+    """Whether ``polygon_xy`` contains the contour with vertices ``points_xy``.
+
+    Contained means every vertex is inside or on the boundary of the polygon
+    and at least one is strictly inside, so contours that only share an edge or
+    a corner are not nested.
+    """
+
+    on_boundary = _on_polygon_boundary(polygon_xy, points_xy)
+    inside = _points_strictly_inside(polygon_xy, points_xy) & ~on_boundary
+    return bool(np.all(inside | on_boundary) and np.any(inside))
+
+
+def _on_polygon_boundary(
+    polygon_xy: np.ndarray, points_xy: np.ndarray, tolerance: float = 1e-6
+) -> np.ndarray:
+    start = polygon_xy[None, :, :]
+    end = np.roll(polygon_xy, -1, axis=0)[None, :, :]
+    points = points_xy[:, None, :]
+    edge = end - start
+    length_sq = np.sum(edge**2, axis=2)
+    t = np.where(
+        length_sq > 0,
+        np.sum((points - start) * edge, axis=2) / np.where(length_sq > 0, length_sq, 1),
+        0.0,
+    )
+    closest = start + np.clip(t, 0.0, 1.0)[:, :, None] * edge
+    distance = np.sqrt(np.sum((points - closest) ** 2, axis=2))
+    return np.any(distance <= tolerance, axis=1)
+
+
+def _points_strictly_inside(
+    polygon_xy: np.ndarray, points_xy: np.ndarray
+) -> np.ndarray:
+    """Even-odd ray casting; points on the boundary give an arbitrary result."""
+
+    x, y = points_xy[:, 0:1], points_xy[:, 1:2]
+    x0, y0 = polygon_xy[None, :, 0], polygon_xy[None, :, 1]
+    x1 = np.roll(polygon_xy[:, 0], -1)[None, :]
+    y1 = np.roll(polygon_xy[:, 1], -1)[None, :]
+    crosses = (y0 > y) != (y1 > y)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        x_cross = x0 + (y - y0) * (x1 - x0) / (y1 - y0)
+    return np.sum(crosses & (x < x_cross), axis=1) % 2 == 1
 
 
 def _roi_number_to_name(dcm) -> dict[int, str]:

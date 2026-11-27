@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from okapy.core.config_values import parse_bool
 from okapy.dicom.collector import DicomStudyCollector
 from okapy.dicom.conversion.image import SimpleITKImageSeriesConverter
 from okapy.dicom.conversion.rtstruct import RTStructMaskConverter
@@ -41,15 +42,21 @@ def build_dicom_conversion_step(
         ),
         rtstruct_converter=RTStructMaskConverter(
             extension=extension,
-            check_reference_uid=bool(
-                conversion.get("check_rtstruct_reference_uid", True)
+            check_reference_uid=parse_bool(
+                conversion.get("check_rtstruct_reference_uid", True),
+                key="check_rtstruct_reference_uid",
             ),
         ),
         seg_converter=SegMaskConverter(
             extension=extension,
-            check_reference_uid=bool(conversion.get("check_seg_reference_uid", True)),
+            check_reference_uid=parse_bool(
+                conversion.get("check_seg_reference_uid", True),
+                key="check_seg_reference_uid",
+            ),
         ),
-        continue_on_error=bool(conversion.get("continue_on_error", False)),
+        continue_on_error=parse_bool(
+            conversion.get("continue_on_error", False), key="continue_on_error"
+        ),
     )
 
 
@@ -57,7 +64,9 @@ def _build_identity_config(
     general: dict[str, Any],
 ) -> SeriesIdentityConfig:
     return SeriesIdentityConfig(
-        use_submodalities=bool(general.get("submodalities", False)),
+        use_submodalities=parse_bool(
+            general.get("submodalities", False), key="submodalities"
+        ),
         submodality_separator=str(general.get("submodality_separator", " --- ")),
         submodality_modalities=tuple(
             str(modality)

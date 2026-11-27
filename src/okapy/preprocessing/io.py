@@ -4,7 +4,7 @@ from pathlib import Path
 
 import SimpleITK as sitk
 
-from okapy.dicom.conversion.utils import safe_name, short_uid
+from okapy.dicom.conversion.utils import fit_filename, safe_name, short_uid
 
 
 def write_image_unique(image: sitk.Image, path: Path) -> Path:
@@ -34,10 +34,11 @@ def write_image_unique(image: sitk.Image, path: Path) -> Path:
 def image_output_name(
     *, patient_id: str | None, modality_key: str, series_instance_uid: str
 ) -> str:
-    return (
+    return fit_filename(
         f"{safe_name(patient_id)}__"
         f"{safe_name(modality_key)}__"
-        f"{short_uid(series_instance_uid)}.nii.gz"
+        f"{short_uid(series_instance_uid)}",
+        "nii.gz",
     )
 
 
@@ -49,10 +50,11 @@ def mask_output_name(
     target_series_instance_uid: str | None,
     reference_series_instance_uid: str,
 ) -> str:
-    return (
+    return fit_filename(
         f"{safe_name(patient_id)}__"
         f"{safe_name(target_modality_key)}__"
         f"{short_uid(target_series_instance_uid)}__"
         f"{safe_name(label)}__"
-        f"ref-{short_uid(reference_series_instance_uid)}.nii.gz"
+        f"ref-{short_uid(reference_series_instance_uid)}",
+        "nii.gz",
     )

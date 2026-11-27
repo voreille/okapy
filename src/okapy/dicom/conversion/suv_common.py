@@ -721,6 +721,64 @@ def parse_dicom_datetime(value: str) -> datetime:
         raise SUVComputationError(f"Invalid DICOM DT value {value!r}: {exc}.") from exc
 
 
+def dicom_datetime_utc_offset(value: str) -> timedelta | None:
+    """UTC offset suffix of a DICOM DT value, or ``None`` when it has none.
+
+    The value is validated like :func:`parse_dicom_datetime`.
+    """
+
+    parse_dicom_datetime(value)
+    match = _DT_PATTERN.fullmatch(str(value).strip())
+    assert match is not None  # validated above
+    sign, off_h, off_m = match.groups()[7:]
+
+    if sign is None:
+        return None
+
+    offset = timedelta(hours=int(off_h), minutes=int(off_m))
+    return -offset if sign == "-" else offset
+
+
+def check_administration_utc_offset(
+    rph,
+    *,
+    reference_offset: timedelta | None,
+    reference_source: str,
+    series_uid: str | None,
+) -> None:
+    """Raise if the start and reference datetimes carry different UTC offsets.
+
+    Datetimes are compared as naive wall-clock values. That is only right when
+    both are in the same time zone: when both Radiopharmaceutical Start
+    DateTime (0018,1078) and the decay-correction reference carry a UTC
+    offset and the offsets differ, the uptake time would be wrong. An offset on
+    one side only, or none, keeps the wall-clock comparison.
+    """
+
+    start_datetime = get_optional_str(rph, "RadiopharmaceuticalStartDateTime")
+    if start_datetime is None or reference_offset is None:
+        return
+
+    start_offset = dicom_datetime_utc_offset(start_datetime)
+    if start_offset is None or start_offset == reference_offset:
+        return
+
+    raise SUVComputationError(
+        f"Cannot compute SUVbw for series {series_uid}: "
+        "RadiopharmaceuticalStartDateTime (0018,1078) has UTC offset "
+        f"{_format_utc_offset(start_offset)} but {reference_source} has UTC "
+        f"offset {_format_utc_offset(reference_offset)}; okapy compares them as "
+        "wall-clock times, so the uptake time would be wrong."
+    )
+
+
+def _format_utc_offset(offset: timedelta) -> str:
+    minutes = int(offset.total_seconds() // 60)
+    sign = "-" if minutes < 0 else "+"
+    hours, minutes = divmod(abs(minutes), 60)
+    return f"{sign}{hours:02d}{minutes:02d}"
+
+
 def parse_dicom_date(value: str) -> date:
     """Parse a DICOM DA value (``YYYYMMDD``)."""
 

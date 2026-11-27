@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -24,6 +25,13 @@ SAME_POSITION_TOLERANCE = 1e-5
 
 _UNSAFE_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 _MAX_NAME_LENGTH = 128
+
+#: NAME_MAX of common filesystems (ext4, APFS, NTFS), in bytes.
+_MAX_FILENAME_BYTES = 255
+#: Length a too-long file name is truncated to, leaving room for the ``(n)``
+#: counter :func:`write_image_unique` adds on a name collision.
+_TRUNCATED_FILENAME_BYTES = _MAX_FILENAME_BYTES - 16
+_FILENAME_HASH_LENGTH = 10
 
 
 def safe_name(value: object | None) -> str:
@@ -58,7 +66,25 @@ def make_filename(*parts: object, extension: str) -> str:
     :func:`safe_name` and :func:`short_uid` results pass through unchanged.
     """
 
-    return "__".join(safe_name(part) for part in parts) + f".{extension}"
+    return fit_filename("__".join(safe_name(part) for part in parts), extension)
+
+
+def fit_filename(stem: str, extension: str) -> str:
+    """Return ``stem.extension``, shortened if it exceeds 255 bytes.
+
+    A name that fits is returned unchanged. A longer one is truncated and ends
+    with a short hash of the full name, so different long names stay distinct.
+    """
+
+    name = f"{stem}.{extension}"
+    if len(name.encode()) <= _MAX_FILENAME_BYTES:
+        return name
+
+    digest = hashlib.sha1(name.encode()).hexdigest()[:_FILENAME_HASH_LENGTH]
+    tail = f"__{digest}.{extension}"
+    keep = _TRUNCATED_FILENAME_BYTES - len(tail.encode())
+    head = stem.encode()[:keep].decode(errors="ignore")
+    return head + tail
 
 
 def ensure_inside(path: Path, root: Path) -> Path:
