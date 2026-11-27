@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -20,6 +22,8 @@ from okapy.core.geometry import (
 )
 from okapy.core.models import ImageVolume, MaskVolume, VolumeStage
 from okapy.preprocessing.models import GeometryConfig
+
+logger = logging.getLogger(__name__)
 
 
 def masks_for_image(
@@ -43,6 +47,23 @@ def masks_for_image(
         for mask in masks
         if mask.reference_series_instance_uid == image.series_instance_uid
     ]
+
+
+def drop_empty_masks(masks: list[MaskVolume]) -> list[MaskVolume]:
+    """Return ``masks`` without the all-zero ones, warning for each dropped mask."""
+
+    kept = []
+    for mask in masks:
+        if np.any(sitk.GetArrayViewFromImage(mask.image)):
+            kept.append(mask)
+        else:
+            logger.warning(
+                "Dropping empty mask %r (reference series %s): it has no "
+                "non-zero voxels.",
+                mask.label,
+                mask.reference_series_instance_uid,
+            )
+    return kept
 
 
 def compute_common_fov(images: list[ImageVolume]) -> PhysicalBox | None:
@@ -86,7 +107,8 @@ def make_reference_grid(
     :func:`okapy.core.geometry.make_reference_image_on_aligned_grid`), so with
     native spacing the image and masks are cropped without interpolation. With
     ``crop_to_masks`` it covers the union of the masks plus ``padding_voxels``
-    voxels of the target grid on each side.
+    voxels of the target grid on each side. With ``crop_to_common_fov`` the
+    grid (padding included) is clipped to ``common_fov``.
     """
 
     spacing = _resolve_target_spacing(
@@ -99,8 +121,8 @@ def make_reference_grid(
     if geometry_config.crop_to_masks:
         if not masks:
             raise ValueError(
-                f"Cannot crop image {image.path} to masks because no masks were "
-                "provided."
+                f"Cannot crop image {image.series_instance_uid} to masks because "
+                "no masks were provided."
             )
 
         mask_extents = [mask_index_extent(mask.image, image.image) for mask in masks]
@@ -111,8 +133,10 @@ def make_reference_grid(
             )
         )
 
+    clip_extents = []
+
     if geometry_config.crop_to_common_fov and common_fov is not None:
-        extents.append(box_index_extent(common_fov, image.image))
+        clip_extents.append(box_index_extent(common_fov, image.image))
 
     return make_reference_image_on_aligned_grid(
         image=image.image,
@@ -121,6 +145,7 @@ def make_reference_grid(
         padding_voxels=geometry_config.padding_voxels
         if geometry_config.crop_to_masks
         else 0,
+        clip_extents=clip_extents,
         pixel_id=pixel_id,
     )
 
@@ -130,8 +155,14 @@ def resample_image_volume_to_reference(
     reference: sitk.Image,
     *,
     geometry_config: GeometryConfig,
-    output_path: Path,
+    output_path: Path | None,
 ) -> ImageVolume:
+    """Resample ``image`` onto ``reference``.
+
+    The returned volume's ``path`` is ``output_path``; pass ``None`` when the
+    result will not be written, so it never points to a missing file.
+    """
+
     resampled = resample_to_reference(
         image.image,
         reference,
@@ -140,9 +171,8 @@ def resample_image_volume_to_reference(
         output_pixel_type=sitk.sitkFloat32,
     )
 
-    return image.with_image(
+    resampled_volume = image.with_image(
         resampled,
-        path=output_path,
         stage=VolumeStage.PREPROCESSED,
         source_path=image.path,
         metadata={
@@ -153,6 +183,7 @@ def resample_image_volume_to_reference(
             }
         },
     )
+    return replace(resampled_volume, path=output_path)
 
 
 def resample_mask_volume_to_reference(
@@ -161,13 +192,14 @@ def resample_mask_volume_to_reference(
     *,
     target_image: ImageVolume,
     geometry_config: GeometryConfig,
-    output_path: Path,
+    output_path: Path | None,
 ) -> MaskVolume:
     """Resample a binary mask onto ``reference``.
 
     Masks are always resampled with linear interpolation and thresholded at
     0.5 (see ``okapy.core.geometry.MASK_INTERPOLATOR``). This is not
-    configurable.
+    configurable. The returned volume's ``path`` is ``output_path`` (``None``
+    when the result will not be written).
     """
 
     # Preserve the interpolated fractions until thresholding.
@@ -192,9 +224,8 @@ def resample_mask_volume_to_reference(
         sitk.sitkUInt8,
     )
 
-    return mask.with_image(
+    resampled_volume = mask.with_image(
         resampled_binary,
-        path=output_path,
         stage=VolumeStage.PREPROCESSED,
         target_identity=target_image.identity,
         source_path=mask.path,
@@ -208,17 +239,4 @@ def resample_mask_volume_to_reference(
             }
         },
     )
-
-
-def resolve_target_spacing(
-    image: ImageVolume,
-    geometry_config: GeometryConfig,
-) -> tuple[float, float, float]:
-    native_spacing = image.geometry.spacing
-
-    return tuple(
-        native_spacing[i]
-        if geometry_config.spacing[i] == -1
-        else geometry_config.spacing[i]
-        for i in range(3)
-    )
+    return replace(resampled_volume, path=output_path)

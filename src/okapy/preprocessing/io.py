@@ -4,23 +4,7 @@ from pathlib import Path
 
 import SimpleITK as sitk
 
-
-def safe_name(value: object | None) -> str:
-    if value is None:
-        return "unknown"
-    return (
-        str(value)
-        .replace(" ", "_")
-        .replace("/", "_")
-        .replace("\\", "_")
-        .replace(":", "-")
-    )
-
-
-def short_uid(uid: str | None) -> str:
-    if uid is None:
-        return "unknown"
-    return str(uid).split(".")[-1]
+from okapy.dicom.conversion.utils import safe_name, short_uid
 
 
 def write_image_unique(image: sitk.Image, path: Path) -> Path:

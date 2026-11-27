@@ -133,9 +133,13 @@ class ImageGeometry:
 
 @dataclass(frozen=True)
 class ImageVolume:
-    """Image volume used across conversion, preprocessing, and extraction."""
+    """Image volume used across conversion, preprocessing, and extraction.
 
-    path: Path
+    ``path`` is the file holding ``image``, or ``None`` when the volume only
+    lives in memory (e.g. preprocessing with ``write_outputs=False``).
+    """
+
+    path: Path | None
     image: sitk.Image
     identity: SeriesIdentity
     geometry: ImageGeometry
@@ -148,7 +152,7 @@ class ImageVolume:
     def from_sitk(
         cls,
         *,
-        path: Path,
+        path: Path | None,
         image: sitk.Image,
         identity: SeriesIdentity,
         stage: VolumeStage = VolumeStage.CONVERTED,
@@ -220,9 +224,12 @@ class MaskVolume:
     For preprocessed masks, target_identity is the image series/grid onto which
     the mask has been resampled. This is important for PET/CT when a CT
     RTSTRUCT is reused on PT.
+
+    ``path`` is the file holding ``image``, or ``None`` when the volume only
+    lives in memory.
     """
 
-    path: Path
+    path: Path | None
     image: sitk.Image
     identity: MaskIdentity
     geometry: ImageGeometry
@@ -236,7 +243,7 @@ class MaskVolume:
     def from_sitk(
         cls,
         *,
-        path: Path,
+        path: Path | None,
         image: sitk.Image,
         identity: MaskIdentity,
         stage: VolumeStage = VolumeStage.CONVERTED,

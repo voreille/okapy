@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +16,10 @@ from okapy.core.models import (
     StudyVolumes,
     VolumeCollection,
 )
+from okapy.dicom.conversion.utils import ensure_inside, safe_name
 from okapy.preprocessing.geometry import (
     compute_common_fov,
+    drop_empty_masks,
     make_reference_grid,
     masks_for_image,
     resample_image_volume_to_reference,
@@ -35,6 +38,8 @@ from okapy.preprocessing.models import (
 )
 from okapy.preprocessing.processor_pipeline import ProcessorPipeline
 from okapy.preprocessing.selector import select_section_config
+
+logger = logging.getLogger(__name__)
 
 
 class StudyPreprocessingStep:
@@ -76,8 +81,8 @@ class StudyPreprocessingStep:
         processed_studies: list[StudyVolumes] = []
 
         for index, study in enumerate(volumes.studies):
-            study_name = study.study_instance_uid or f"study_{index:04d}"
-            study_output_dir = output_dir / study_name
+            study_name = safe_name(study.study_instance_uid or f"study_{index:04d}")
+            study_output_dir = ensure_inside(output_dir / study_name, output_dir)
 
             processed_study = self.preprocess_study(
                 images=study.images,
@@ -102,8 +107,13 @@ class StudyPreprocessingStep:
         """Preprocess one study."""
 
         output_dir = Path(output_dir)
-        image_output_dir = output_dir / self.study_config.image_output_subdir
-        mask_output_dir = output_dir / self.study_config.mask_output_subdir
+        write_outputs = self.study_config.write_outputs
+        image_output_dir = ensure_inside(
+            output_dir / self.study_config.image_output_subdir, output_dir
+        )
+        mask_output_dir = ensure_inside(
+            output_dir / self.study_config.mask_output_subdir, output_dir
+        )
 
         if study_instance_uid is None and images:
             study_instance_uid = images[0].study_instance_uid
@@ -111,6 +121,9 @@ class StudyPreprocessingStep:
         image_mask_sets: list[ImageMaskSet] = []
         plans: list[PreprocessingPlan] = []
         skipped_images: list[ImageVolume] = []
+
+        # Empty masks have no extent: drop them before any geometry is computed.
+        masks = drop_empty_masks(masks)
 
         common_fov = None
 
@@ -129,11 +142,13 @@ class StudyPreprocessingStep:
                 combine_segmentation=(self.study_config.combine_segmentation),
             )
 
-            if not image_masks and self.study_config.skip_images_without_masks:
+            geometry_config = self._geometry_config_for_image(image)
+
+            if not image_masks and self._skip_image_without_masks(
+                image, geometry_config
+            ):
                 skipped_images.append(image)
                 continue
-
-            geometry_config = self._geometry_config_for_image(image)
 
             if geometry_config.crop_to_common_fov and common_fov is None:
                 raise ValueError(
@@ -149,11 +164,17 @@ class StudyPreprocessingStep:
             )
             physical_roi = image_physical_box(reference_grid)
 
-            output_image_path = image_output_dir / image_output_name(
-                patient_id=image.patient_id,
-                modality_key=image.modality_key,
-                series_instance_uid=image.series_instance_uid,
-            )
+            output_image_path = None
+            if write_outputs:
+                output_image_path = ensure_inside(
+                    image_output_dir
+                    / image_output_name(
+                        patient_id=image.patient_id,
+                        modality_key=image.modality_key,
+                        series_instance_uid=image.series_instance_uid,
+                    ),
+                    image_output_dir,
+                )
 
             plan = PreprocessingPlan(
                 image=image,
@@ -163,7 +184,7 @@ class StudyPreprocessingStep:
                 physical_roi=physical_roi,
                 reference_grid=reference_grid,
                 output_image_path=output_image_path,
-                output_mask_dir=mask_output_dir,
+                output_mask_dir=mask_output_dir if write_outputs else None,
             )
             plans.append(plan)
 
@@ -179,13 +200,23 @@ class StudyPreprocessingStep:
             processed_masks: list[MaskVolume] = []
 
             for mask in image_masks:
-                output_mask_path = mask_output_dir / mask_output_name(
-                    patient_id=mask.patient_id,
-                    label=mask.label,
-                    target_modality_key=(geometry_image.modality_key),
-                    target_series_instance_uid=(geometry_image.series_instance_uid),
-                    reference_series_instance_uid=(mask.reference_series_instance_uid),
-                )
+                output_mask_path = None
+                if write_outputs:
+                    output_mask_path = ensure_inside(
+                        mask_output_dir
+                        / mask_output_name(
+                            patient_id=mask.patient_id,
+                            label=mask.label,
+                            target_modality_key=geometry_image.modality_key,
+                            target_series_instance_uid=(
+                                geometry_image.series_instance_uid
+                            ),
+                            reference_series_instance_uid=(
+                                mask.reference_series_instance_uid
+                            ),
+                        ),
+                        mask_output_dir,
+                    )
 
                 geometry_mask = resample_mask_volume_to_reference(
                     mask,
@@ -209,7 +240,7 @@ class StudyPreprocessingStep:
                 masks=processed_masks,
             )
 
-            if self.study_config.write_outputs:
+            if write_outputs:
                 processed_image = self._write_image(processed_image)
                 processed_masks = [self._write_mask(mask) for mask in processed_masks]
 
@@ -233,6 +264,35 @@ class StudyPreprocessingStep:
             return result, diagnostics
 
         return result
+
+    def _skip_image_without_masks(
+        self,
+        image: ImageVolume,
+        geometry_config: GeometryConfig,
+    ) -> bool:
+        """Decide whether an image without (non-empty) masks is skipped."""
+
+        skip = self.study_config.skip_images_without_masks
+
+        if skip is False and geometry_config.crop_to_masks:
+            raise ValueError(
+                f"Image {image.series_instance_uid} has no masks, but its "
+                "geometry config has crop_to_masks=True and "
+                "skip_images_without_masks=False. Set crop_to_masks=False or "
+                "allow skipping images without masks."
+            )
+
+        if skip is None:
+            skip = geometry_config.crop_to_masks
+
+        if skip:
+            logger.warning(
+                "Skipping image %s (%s): no masks apply to it.",
+                image.series_instance_uid,
+                image.modality_key,
+            )
+
+        return skip
 
     def _geometry_config_for_image(
         self,
