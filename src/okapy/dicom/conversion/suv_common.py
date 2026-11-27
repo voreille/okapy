@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from datetime import date, datetime, time, timedelta
 
 import numpy as np
@@ -39,6 +40,13 @@ MBQ_DOSE_THRESHOLD = 1e4
 
 # Manual, "Patient's weight": values at or above this are stored in grams.
 GRAM_WEIGHT_THRESHOLD = 1000.0
+
+# PatientSize is defined in metres; above this it can only be centimetres.
+MAX_PATIENT_SIZE_M = 3.0
+
+# Manufacturer (0008,0070) prefixes identifying GE. Matching is by prefix:
+# other vendors' names may well contain "GE" (Imagen, Agfa-Gevaert, ...).
+GE_MANUFACTURER_PREFIXES = ("GE MEDICAL", "GEMS", "GE ", "GENERAL ELECTRIC")
 
 
 def warn_once(emitted_warnings: set[str], key: str, message: str, *args) -> None:
@@ -84,8 +92,30 @@ def get_required_float(ds, name: str) -> float:
     return value
 
 
-def positive_float_tag(ds, tag: tuple[int, int]) -> float | None:
+def private_tag(
+    ds, group: int, private_creator: str, element_offset: int
+) -> tuple[int, int] | None:
+    """Tag of a private element, resolved through its Private Creator.
+
+    PS3.5 7.8.1: a private element number only has a meaning inside the block
+    reserved by its Private Creator, which may be any of (gggg,0010-00FF).
+    Returns ``None`` when the creator is absent or the element is not present.
+    """
+
+    try:
+        block = ds.private_block(group, private_creator)
+    except KeyError:
+        return None
+
+    tag = block.get_tag(element_offset)
     if tag not in ds:
+        return None
+
+    return (tag.group, tag.element)
+
+
+def positive_float_tag(ds, tag: tuple[int, int] | None) -> float | None:
+    if tag is None or tag not in ds:
         return None
 
     value = ds[tag].value
@@ -167,9 +197,34 @@ def patient_weight_g(weight: float | None) -> float:
     return patient_weight_kg(weight) * 1000.0
 
 
-def patient_size_m(size: float | None) -> float:
+def patient_size_m(
+    size: float | None,
+    *,
+    emitted_warnings: set[str] | None = None,
+) -> float:
+    """PatientSize (0010,1020) in metres.
+
+    The attribute is defined in metres, but values in centimetres are common.
+    No patient is taller than 3 m, so a larger value is read as centimetres
+    and converted, with a warning. Pass ``emitted_warnings`` to warn once per
+    image rather than once per call.
+    """
+
     if size is None or size <= 0:
         raise SUVComputationError("PatientSize is required and must be positive.")
+
+    if size > MAX_PATIENT_SIZE_M:
+        message = (
+            "PatientSize (0010,1020) is %g, but it is defined in metres and no "
+            "patient is taller than %g m. Interpreting it as centimetres (%g m)."
+        )
+        args = (size, MAX_PATIENT_SIZE_M, size / 100.0)
+        if emitted_warnings is None:
+            logger.warning(message, *args)
+        else:
+            warn_once(emitted_warnings, "patient_size_cm", message, *args)
+
+        return size / 100.0
 
     return size
 
@@ -193,7 +248,7 @@ def normalize_suv_type(suv_type: str | None) -> str | None:
 
 
 def normalize_manufacturer(manufacturer: str | None) -> str:
-    m = (manufacturer or "").upper()
+    m = (manufacturer or "").strip().upper()
 
     if "SIEMENS" in m:
         return "SIEMENS"
@@ -201,7 +256,7 @@ def normalize_manufacturer(manufacturer: str | None) -> str:
     if "PHILIPS" in m:
         return "PHILIPS"
 
-    if "GE" in m or "GEMS" in m or "GENERAL ELECTRIC" in m:
+    if m == "GE" or m.startswith(GE_MANUFACTURER_PREFIXES):
         return "GE"
 
     return "UNKNOWN"
@@ -536,30 +591,127 @@ def warn_unrecognized_manufacturer(
 # --------------------------------------------------------------------------
 
 
+# DICOM PS3.5 6.2, TM: HH[MM[SS[.F{1,6}]]]. The legacy ACR-NEMA form
+# HH:MM:SS is still accepted by stripping the colons.
+_TM_PATTERN = re.compile(r"(\d{2})(?:(\d{2})(?:(\d{2})(?:\.(\d{1,6}))?)?)?", re.ASCII)
+
+# DICOM PS3.5 6.2, DT: YYYYMMDD[HH[MM[SS[.F{1,6}]]]][&ZZXX]. Reduced precision
+# below the day is accepted, as is an optional UTC offset.
+_DT_PATTERN = re.compile(
+    r"(\d{4})(\d{2})(\d{2})"
+    r"(?:(\d{2})(?:(\d{2})(?:(\d{2})(?:\.(\d{1,6}))?)?)?)?"
+    r"(?:([+-])(\d{2})(\d{2}))?",
+    re.ASCII,
+)
+
+_DA_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})", re.ASCII)
+
+# PS3.5 6.2: the UTC offset of a DT value lies in -1200..+1400.
+_MIN_UTC_OFFSET_MIN = -12 * 60
+_MAX_UTC_OFFSET_MIN = 14 * 60
+
+
 def parse_dicom_datetime(value: str) -> datetime:
-    value = str(value).strip()
+    """Parse a DICOM DT value into a naive datetime.
 
-    # Drop the fractional seconds and the UTC offset suffix.
-    value = value.split(".")[0]
-    value = value.split("+")[0]
-    value = value.split("-")[0] if len(value) > 8 else value
+    The result holds the wall-clock fields written in the string. A UTC offset
+    suffix is validated and dropped, so every datetime used in the SUV
+    computation is naive and differences between them never mix naive and
+    tz-aware values.
+    """
 
-    return datetime.strptime(value, "%Y%m%d%H%M%S")
+    text = str(value).strip()
+    match = _DT_PATTERN.fullmatch(text)
+
+    if match is None:
+        raise SUVComputationError(
+            f"Invalid DICOM DT value {value!r}: expected "
+            "YYYYMMDD[HH[MM[SS[.FFFFFF]]]] with an optional &ZZXX UTC offset."
+        )
+
+    year, month, day, hour, minute, second, fraction, sign, off_h, off_m = (
+        match.groups()
+    )
+
+    if sign is not None:
+        offset_min = int(off_h) * 60 + int(off_m)
+        if sign == "-":
+            offset_min = -offset_min
+        if int(off_m) >= 60 or not (
+            _MIN_UTC_OFFSET_MIN <= offset_min <= _MAX_UTC_OFFSET_MIN
+        ):
+            raise SUVComputationError(
+                f"Invalid DICOM DT value {value!r}: UTC offset out of range."
+            )
+
+    try:
+        return datetime(
+            int(year),
+            int(month),
+            int(day),
+            int(hour or 0),
+            int(minute or 0),
+            int(second or 0),
+            _microseconds(fraction),
+        )
+    except ValueError as exc:
+        raise SUVComputationError(f"Invalid DICOM DT value {value!r}: {exc}.") from exc
 
 
 def parse_dicom_date(value: str) -> date:
-    return datetime.strptime(str(value).strip(), "%Y%m%d").date()
+    """Parse a DICOM DA value (``YYYYMMDD``)."""
+
+    match = _DA_PATTERN.fullmatch(str(value).strip())
+
+    if match is None:
+        raise SUVComputationError(
+            f"Invalid DICOM DA value {value!r}: expected YYYYMMDD."
+        )
+
+    try:
+        return date(*(int(group) for group in match.groups()))
+    except ValueError as exc:
+        raise SUVComputationError(f"Invalid DICOM DA value {value!r}: {exc}.") from exc
 
 
 def parse_dicom_time(value: str) -> time:
-    value = str(value).strip()
+    """Parse a DICOM TM value, honouring reduced precision.
 
-    if "." in value:
-        value = value.split(".")[0]
+    ``"1030"`` is 10:30:00 (``HHMM``), not 10:03:00; odd-length values such as
+    ``"930"`` are ambiguous and rejected.
+    """
 
-    value = value.replace(":", "")
+    text = str(value).strip()
 
-    return datetime.strptime(value, "%H%M%S").time()
+    # Legacy ACR-NEMA form HH:MM:SS.
+    if re.fullmatch(r"\d{2}:\d{2}:\d{2}(?:\.\d+)?", text, re.ASCII):
+        text = text.replace(":", "")
+
+    match = _TM_PATTERN.fullmatch(text)
+
+    if match is None:
+        raise SUVComputationError(
+            f"Invalid DICOM TM value {value!r}: expected HH[MM[SS[.FFFFFF]]]."
+        )
+
+    hour, minute, second, fraction = match.groups()
+
+    try:
+        return time(
+            int(hour),
+            int(minute or 0),
+            int(second or 0),
+            _microseconds(fraction),
+        )
+    except ValueError as exc:
+        raise SUVComputationError(f"Invalid DICOM TM value {value!r}: {exc}.") from exc
+
+
+def _microseconds(fraction: str | None) -> int:
+    if not fraction:
+        return 0
+
+    return int(fraction.ljust(6, "0"))
 
 
 def _seconds_of_day(dt: datetime) -> int:

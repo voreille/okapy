@@ -36,6 +36,7 @@ from okapy.dicom.conversion.suv_common import (
     patient_weight_g,
     patient_weight_kg,
     positive_float_tag,
+    private_tag,
     radionuclide_half_life_s,
     radionuclide_total_dose_bq,
     radiopharmaceutical_item,
@@ -51,14 +52,18 @@ __all__ = [
     "SUVComputationError",
 ]
 
+# Private attributes as (group, Private Creator, element offset within the
+# creator's block). PS3.5 7.8.1: the element is only meaningful inside the
+# block reserved by its creator, e.g. (0009,0010)=GEMS_PETD_01 -> (0009,100D).
+
 # Private scan start datetime attributes (manual, "Determining the scan start
 # datetime"): the most reliable source, but vendor-specific.
-SIEMENS_SCAN_START_TAG = (0x0071, 0x1022)
-GE_SCAN_START_TAG = (0x0009, 0x100D)
+SIEMENS_SCAN_START_TAG = (0x0071, "SIEMENS MED PT", 0x22)
+GE_SCAN_START_TAG = (0x0009, "GEMS_PETD_01", 0x0D)
 
 # Philips private scale factors for Units=CNTS.
-PHILIPS_SUV_SCALE_FACTOR_TAG = (0x7053, 0x1000)
-PHILIPS_ACTIVITY_SCALE_FACTOR_TAG = (0x7053, 0x1009)
+PHILIPS_SUV_SCALE_FACTOR_TAG = (0x7053, "Philips PET Private Group", 0x00)
+PHILIPS_ACTIVITY_SCALE_FACTOR_TAG = (0x7053, "Philips PET Private Group", 0x09)
 
 SUPPORTED_UNITS = ("BQML", "GML", "CM2ML", "CNTS")
 
@@ -100,7 +105,15 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
         if _is_enhanced_pet(series):
             return self._enhanced_converter().convert(series, output_dir)
 
-        return super().convert(series, output_dir)
+        try:
+            return super().convert(series, output_dir)
+        except SUVComputationError as exc:
+            uid = series.series_instance_uid
+            if uid and uid in str(exc):
+                raise
+            raise SUVComputationError(
+                f"Cannot compute SUVbw for series {uid}: {exc}"
+            ) from exc
 
     def _enhanced_converter(self) -> EnhancedPETSUVConverter:
         return EnhancedPETSUVConverter(
@@ -153,7 +166,9 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
         factor_kg = normalization_factor_kg(
             suv_type=suv_type,
             weight_kg=weight_kg,
-            height_m=patient_size_m(meta.patient_size_m),
+            height_m=patient_size_m(
+                meta.patient_size_m, emitted_warnings=meta.emitted_warnings
+            ),
             sex=patient_sex(meta.patient_sex),
         )
 
@@ -173,7 +188,9 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
 
         bsa_m2 = body_surface_area_m2(
             weight_kg=patient_weight_kg(meta.patient_weight_kg),
-            height_m=patient_size_m(meta.patient_size_m),
+            height_m=patient_size_m(
+                meta.patient_size_m, emitted_warnings=meta.emitted_warnings
+            ),
         )
         bsa_cm2 = bsa_m2 * 10_000.0
 
@@ -187,13 +204,17 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
         if manufacturer == "PHILIPS":
             # Prefer the activity concentration factor: it converts counts to
             # Bq/ml, after which the normal SUVbw logic applies.
-            activity_factor = positive_float_tag(s, PHILIPS_ACTIVITY_SCALE_FACTOR_TAG)
+            activity_factor = positive_float_tag(
+                s, private_tag(s, *PHILIPS_ACTIVITY_SCALE_FACTOR_TAG)
+            )
             if activity_factor is not None:
                 activity_bqml = scaled_counts * activity_factor
                 return self._bqml_to_suvbw(activity_bqml, s, meta)
 
             # Then the SUV factor: a direct SUVbw if SUVType is BW/empty.
-            suv_factor = positive_float_tag(s, PHILIPS_SUV_SCALE_FACTOR_TAG)
+            suv_factor = positive_float_tag(
+                s, private_tag(s, *PHILIPS_SUV_SCALE_FACTOR_TAG)
+            )
             if suv_factor is not None:
                 suv_type = normalize_suv_type(meta.suv_type)
                 if suv_type not in {None, "", "BW"}:
@@ -205,7 +226,8 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
 
         raise SUVComputationError(
             "Units=CNTS requires the Philips Activity Concentration Scale Factor "
-            "(7053,1009) or SUV Scale Factor (7053,1000) on a PHILIPS image; "
+            "(7053,xx09) or SUV Scale Factor (7053,xx00) of the private creator "
+            "'Philips PET Private Group' on a PHILIPS image; "
             f"Manufacturer is {meta.manufacturer!r} and neither factor is usable."
         )
 
@@ -383,12 +405,15 @@ def _series_datetime(s) -> datetime | None:
             parse_dicom_date(str(date_value)),
             parse_dicom_time(str(time_value)),
         )
-    except ValueError:
+    except SUVComputationError:
+        # Optional: an unparsable SeriesTime only disables the "acquisition
+        # equals series" shortcut.
         return None
 
 
-def _private_datetime(s, tag: tuple[int, int]) -> datetime | None:
-    if tag not in s:
+def _private_datetime(s, private: tuple[int, str, int]) -> datetime | None:
+    tag = private_tag(s, *private)
+    if tag is None:
         return None
 
     value = s[tag].value
@@ -399,13 +424,15 @@ def _private_datetime(s, tag: tuple[int, int]) -> datetime | None:
     if isinstance(value, bytes):
         value = value.decode("utf-8", errors="ignore")
 
-    value = str(value).strip().split(".")[0]
+    value = str(value).strip().rstrip("\x00").strip()
 
     if not value:
         return None
 
     try:
         return parse_dicom_datetime(value)
-    except ValueError:
-        logger.warning("Could not parse private datetime tag %s: %r", tag, value)
+    except SUVComputationError:
+        logger.warning(
+            "Could not parse private datetime tag (%04X,%04X): %r", *tag, value
+        )
         return None
