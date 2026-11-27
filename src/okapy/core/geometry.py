@@ -6,7 +6,20 @@ from itertools import product
 import numpy as np
 import SimpleITK as sitk
 
-from okapy.core.models import ImageGeometry
+# Binary masks are always resampled the same way: linear (trilinear in 3D)
+# interpolation of the 0/1 volume, then a threshold at MASK_THRESHOLD. This is
+# the IBSI fractional route and is deliberately not configurable.
+#
+# Linear interpolation places the boundary with sub-voxel precision, which
+# nearest neighbour cannot do. B-spline is not an option because its kernel has
+# negative lobes: interpolating a 0/1 step over- and undershoots, and
+# thresholding the result leaves detached speckle outside the boundary and
+# pinholes inside thin structures. Clamping to [0, 1] does not help, since the
+# ringing values that cross the threshold already lie inside that range.
+# B-spline remains available for images through ``image_interpolator``.
+MASK_INTERPOLATOR = sitk.sitkLinear
+MASK_INTERPOLATOR_NAME = "linear"
+MASK_THRESHOLD = 0.5
 
 
 @dataclass(frozen=True)
@@ -35,13 +48,6 @@ class PhysicalBox:
             max_value - min_value
             for min_value, max_value in zip(self.min_xyz, self.max_xyz, strict=True)
         )
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "min_xyz": self.min_xyz,
-            "max_xyz": self.max_xyz,
-            "size_xyz": self.size_xyz,
-        }
 
 
 def image_physical_box(image: sitk.Image) -> PhysicalBox:
@@ -295,18 +301,6 @@ def make_reference_image_on_aligned_grid(
     return reference
 
 
-def make_reference_image_from_geometry(
-    geometry: ImageGeometry,
-    *,
-    pixel_id: int = sitk.sitkFloat32,
-) -> sitk.Image:
-    reference = sitk.Image(geometry.size, pixel_id)
-    reference.SetSpacing(geometry.spacing)
-    reference.SetOrigin(geometry.origin)
-    reference.SetDirection(geometry.direction)
-    return reference
-
-
 def resample_to_reference(
     image: sitk.Image,
     reference: sitk.Image,
@@ -374,19 +368,3 @@ def _interpolator_from_order(order: int) -> int:
     if order == 3:
         return sitk.sitkBSpline
     raise ValueError("Unsupported interpolation order. Use 0, 1, or 3.")
-
-
-# Binary masks are always resampled the same way: linear (trilinear in 3D)
-# interpolation of the 0/1 volume, then a threshold at MASK_THRESHOLD. This is
-# the IBSI fractional route and is deliberately not configurable.
-#
-# Linear interpolation places the boundary with sub-voxel precision, which
-# nearest neighbour cannot do. B-spline is not an option because its kernel has
-# negative lobes: interpolating a 0/1 step over- and undershoots, and
-# thresholding the result leaves detached speckle outside the boundary and
-# pinholes inside thin structures. Clamping to [0, 1] does not help, since the
-# ringing values that cross the threshold already lie inside that range.
-# B-spline remains available for images through ``image_interpolator``.
-MASK_INTERPOLATOR = sitk.sitkLinear
-MASK_INTERPOLATOR_NAME = "linear"
-MASK_THRESHOLD = 0.5

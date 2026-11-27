@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Any
 
 from okapy.features.backends.command import CommandFeatureBackend
+from okapy.features.backends.pet import PETFeatureBackend, PETFeatureConfig
 from okapy.features.backends.pyradiomics_local import LocalPyradiomicsBackend
-from okapy.features.native.pet import PETFeatureBackend, PETFeatureConfig
 from okapy.features.step import FeatureExtractionStep
 
 

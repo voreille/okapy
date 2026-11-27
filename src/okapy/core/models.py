@@ -103,33 +103,6 @@ class ImageGeometry:
             direction=tuple(float(x) for x in image.GetDirection()),
         )
 
-    def copy_to(self, image: sitk.Image) -> sitk.Image:
-        """Copy this geometry to an existing SimpleITK image."""
-
-        if image.GetDimension() != 3:
-            raise ValueError(
-                f"Only 3D images are supported, got dimension={image.GetDimension()}."
-            )
-
-        if tuple(image.GetSize()) != self.size:
-            raise ValueError(
-                "Cannot copy geometry to image with different size: "
-                f"geometry size={self.size}, image size={tuple(image.GetSize())}."
-            )
-
-        image.SetSpacing(self.spacing)
-        image.SetOrigin(self.origin)
-        image.SetDirection(self.direction)
-        return image
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "size": self.size,
-            "spacing": self.spacing,
-            "origin": self.origin,
-            "direction": self.direction,
-        }
-
 
 @dataclass(frozen=True)
 class ImageVolume:
@@ -291,12 +264,6 @@ class MaskVolume:
         if self.target_identity is None:
             return None
         return self.target_identity.series_instance_uid
-
-    @property
-    def target_modality(self) -> str | None:
-        if self.target_identity is None:
-            return None
-        return self.target_identity.modality
 
     @property
     def target_modality_key(self) -> str | None:

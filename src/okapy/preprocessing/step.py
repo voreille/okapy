@@ -2,12 +2,10 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import SimpleITK as sitk
 
-# Import processors for side-effect registration of built-ins.
-import okapy.preprocessing.processors  # noqa: F401
 from okapy.core.geometry import image_physical_box
 from okapy.core.models import (
     ImageMaskSet,
@@ -41,6 +39,8 @@ from okapy.preprocessing.selector import select_section_config
 
 logger = logging.getLogger(__name__)
 
+_Volume = TypeVar("_Volume", ImageVolume, MaskVolume)
+
 
 class StudyPreprocessingStep:
     """Preprocess converted image and mask volumes at study level.
@@ -64,8 +64,8 @@ class StudyPreprocessingStep:
     ) -> None:
         self.study_config = study_config
         self.geometry_section = geometry_section or {}
-        self.image_processors = image_processors or ProcessorPipeline.empty()
-        self.mask_processors = mask_processors or ProcessorPipeline.empty()
+        self.image_processors = image_processors or ProcessorPipeline()
+        self.mask_processors = mask_processors or ProcessorPipeline()
 
     def run(
         self,
@@ -241,8 +241,8 @@ class StudyPreprocessingStep:
             )
 
             if write_outputs:
-                processed_image = self._write_image(processed_image)
-                processed_masks = [self._write_mask(mask) for mask in processed_masks]
+                processed_image = self._write_volume(processed_image)
+                processed_masks = [self._write_volume(mask) for mask in processed_masks]
 
             image_mask_sets.append(
                 ImageMaskSet(
@@ -307,31 +307,12 @@ class StudyPreprocessingStep:
         return GeometryConfig.from_dict(config)
 
     @staticmethod
-    def _write_image(image: ImageVolume) -> ImageVolume:
-        final_path = write_image_unique(
-            image.image,
-            image.path,
-        )
+    def _write_volume(volume: _Volume) -> _Volume:
+        # Only called when write_outputs is set, so the planned path exists.
+        assert volume.path is not None
+        final_path = write_image_unique(volume.image, volume.path)
 
-        if final_path == image.path:
-            return image
+        if final_path == volume.path:
+            return volume
 
-        return image.with_image(
-            image.image,
-            path=final_path,
-        )
-
-    @staticmethod
-    def _write_mask(mask: MaskVolume) -> MaskVolume:
-        final_path = write_image_unique(
-            mask.image,
-            mask.path,
-        )
-
-        if final_path == mask.path:
-            return mask
-
-        return mask.with_image(
-            mask.image,
-            path=final_path,
-        )
+        return volume.with_image(volume.image, path=final_path)

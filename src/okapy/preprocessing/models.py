@@ -106,7 +106,8 @@ def _parse_padding_voxels(value: Any) -> int | tuple[int, int, int]:
                 "'padding_voxels' must have 3 values (x, y, z), got "
                 f"{len(value)}: {value!r}."
             )
-        return tuple(as_voxels(item) for item in value)
+        x, y, z = (as_voxels(item) for item in value)
+        return (x, y, z)
 
     return as_voxels(value)
 

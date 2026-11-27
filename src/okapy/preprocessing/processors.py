@@ -4,7 +4,6 @@ import numpy as np
 import SimpleITK as sitk
 
 from okapy.core.models import ImageVolume, MaskVolume
-from okapy.preprocessing.registry import register_processor
 
 
 class IdentityProcessor:
@@ -235,12 +234,3 @@ def _sitk_pixel_type(pixel_type: str) -> int:
     if normalized in {"uint16", "ushort"}:
         return sitk.sitkUInt16
     raise ValueError(f"Unsupported SimpleITK pixel type {pixel_type!r}.")
-
-
-register_processor("identity_processor", IdentityProcessor)
-register_processor("standardizer", Standardizer)
-register_processor("masked_standardizer", MaskedStandardizer)
-register_processor("clip_intensity", ClipIntensity)
-register_processor("cast_image", CastImage)
-register_processor("cast_mask", CastMask)
-register_processor("binarize_mask", BinarizeMask)

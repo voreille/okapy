@@ -4,8 +4,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from okapy.core.selection import select
 from okapy.preprocessing.registry import build_processor
-from okapy.preprocessing.selector import modality_from_key
 
 Processor = Callable[..., Any]
 
@@ -52,22 +52,7 @@ class ProcessorPipeline:
         if key is None:
             return self.default
 
-        if key in self.selectors:
-            return self.selectors[key]
-
-        modality = modality_from_key(key)
-        if modality in self.selectors:
-            return self.selectors[modality]
-
-        return self.default
-
-    @classmethod
-    def empty(cls) -> ProcessorPipeline:
-        return cls(
-            common=[],
-            selectors={},
-            default=[],
-        )
+        return select(self.selectors, key, self.default)
 
 
 def _build_processor_list(config: dict[str, Any] | None) -> list[Processor]:

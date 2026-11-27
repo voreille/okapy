@@ -3,9 +3,9 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from okapy.core.selection import modality_from_key, select
 
-def modality_from_key(key: str) -> str:
-    return key.split("_", maxsplit=1)[0]
+__all__ = ["deep_merge", "modality_from_key", "select_section_config"]
 
 
 def select_section_config(
@@ -21,23 +21,12 @@ def select_section_config(
     """
 
     section = section or {}
-    selected = _lookup_selector(section, key=key)
+    selected = deepcopy(select(section, key, section.get("default")) or {})
 
     if include_common:
         return deep_merge(section.get("common") or {}, selected)
 
     return deepcopy(selected)
-
-
-def _lookup_selector(section: dict[str, Any], *, key: str) -> dict[str, Any]:
-    if key in section:
-        return deepcopy(section[key] or {})
-
-    modality = modality_from_key(key)
-    if modality in section:
-        return deepcopy(section[modality] or {})
-
-    return deepcopy(section.get("default") or {})
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
