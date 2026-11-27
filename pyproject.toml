@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "okapy"
-version = "0.2.0"
+version = "0.3.0"
 description = "Modular biomedical image conversion, preprocessing, and feature extraction"
 authors = [
     { name = "Valentin Oreiller", email = "valentin.oreiller@gmail.com" }
