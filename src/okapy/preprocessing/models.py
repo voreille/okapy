@@ -105,6 +105,13 @@ class GeometryConfig:
     default_image_value: float = 0.0
     default_mask_value: int = 0
 
+    def __post_init__(self) -> None:
+        # Single source of padding validation, also for configs built directly
+        # (from_dict already passes a parsed value, which re-parses unchanged).
+        object.__setattr__(
+            self, "padding_voxels", _parse_padding_voxels(self.padding_voxels)
+        )
+
     @classmethod
     def from_dict(cls, config: dict[str, Any] | None) -> GeometryConfig:
         config = config or {}

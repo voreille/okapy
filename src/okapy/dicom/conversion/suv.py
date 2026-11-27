@@ -23,12 +23,10 @@ from okapy.dicom.conversion.suv_common import (
     average_count_rate_time_s,
     bqml_to_suvbw,
     check_administration_utc_offset,
-    cm2ml_to_suvbw,
     decay_corrected_dose_bq,
     get_optional_float,
     get_optional_str,
     get_required_float,
-    gml_to_suvbw,
     normalize_manufacturer,
     normalize_suv_type,
     parse_dicom_date,
@@ -40,6 +38,7 @@ from okapy.dicom.conversion.suv_common import (
     radionuclide_half_life_s,
     radionuclide_total_dose_bq,
     radiopharmaceutical_item,
+    scaled_to_suvbw,
     warn_unrecognized_manufacturer,
 )
 from okapy.dicom.models import DicomSeries
@@ -132,27 +131,18 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
 
         units = meta.units.upper()
 
-        if units == "BQML":
-            return self._bqml_to_suvbw(scaled, s, meta)
-
-        if units == "GML":
-            return gml_to_suvbw(
-                scaled,
-                suv_type=meta.suv_type,
-                patient_weight=meta.patient_weight_kg,
-                patient_size=meta.patient_size_m,
-                sex=meta.patient_sex,
-                emitted_warnings=meta.emitted_warnings,
-            )
-
-        if units == "CM2ML":
-            return cm2ml_to_suvbw(
-                scaled,
-                suv_type=meta.suv_type,
-                patient_weight=meta.patient_weight_kg,
-                patient_size=meta.patient_size_m,
-                emitted_warnings=meta.emitted_warnings,
-            )
+        suvbw = scaled_to_suvbw(
+            units,
+            scaled,
+            suv_type=meta.suv_type,
+            patient_weight=meta.patient_weight_kg,
+            patient_size=meta.patient_size_m,
+            sex=meta.patient_sex,
+            emitted_warnings=meta.emitted_warnings,
+            bqml=lambda activity_bqml: self._bqml_to_suvbw(activity_bqml, s, meta),
+        )
+        if suvbw is not None:
+            return suvbw
 
         if units == "CNTS":
             return self._cnts_to_suvbw(scaled, s, meta)

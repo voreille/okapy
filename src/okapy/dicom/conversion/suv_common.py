@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 
 import numpy as np
@@ -405,6 +406,49 @@ def cm2ml_to_suvbw(
     bsa_cm2 = bsa_m2 * 10_000.0
 
     return scaled * weight_g / bsa_cm2
+
+
+def scaled_to_suvbw(
+    units: str,
+    scaled: np.ndarray,
+    *,
+    suv_type: str | None,
+    patient_weight: float | None,
+    patient_size: float | None,
+    sex: str | None,
+    emitted_warnings: set[str] | None,
+    bqml: Callable[[np.ndarray], np.ndarray],
+) -> np.ndarray | None:
+    """SUVbw from rescaled values in ``units`` (GML, CM2ML or BQML).
+
+    ``bqml`` converts Bq/ml values to SUVbw (the dose at the reference time
+    depends on the image type). Returns ``None`` for any other units: the
+    caller handles them and reports unsupported ones.
+    """
+
+    if units == "GML":
+        return gml_to_suvbw(
+            scaled,
+            suv_type=suv_type,
+            patient_weight=patient_weight,
+            patient_size=patient_size,
+            sex=sex,
+            emitted_warnings=emitted_warnings,
+        )
+
+    if units == "CM2ML":
+        return cm2ml_to_suvbw(
+            scaled,
+            suv_type=suv_type,
+            patient_weight=patient_weight,
+            patient_size=patient_size,
+            emitted_warnings=emitted_warnings,
+        )
+
+    if units == "BQML":
+        return bqml(scaled)
+
+    return None
 
 
 # --------------------------------------------------------------------------

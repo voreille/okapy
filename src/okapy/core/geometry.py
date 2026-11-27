@@ -124,23 +124,18 @@ _TIE_TOLERANCE = 1e-6
 
 
 def _per_axis_padding(padding_voxels: int | tuple[int, int, int]) -> np.ndarray:
-    if isinstance(padding_voxels, list | tuple):
-        if len(padding_voxels) != 3:
-            raise ValueError(
-                f"padding_voxels must have 3 values, got {padding_voxels}."
-            )
-        values = padding_voxels
-    else:
-        values = (padding_voxels,) * 3
+    """``padding_voxels`` (one value or one per axis) as a per-axis int array.
 
-    if any(
-        isinstance(v, bool) or not isinstance(v, int | np.integer) or v < 0
-        for v in values
-    ):
-        raise ValueError(
-            f"padding_voxels must be non-negative integers, got {padding_voxels}."
-        )
-    return np.asarray(values, dtype=int)
+    The values are validated with the configuration
+    (``GeometryConfig.from_dict``); only the shape is checked here.
+    """
+
+    padding = np.asarray(padding_voxels, dtype=int)
+    if padding.ndim == 0:
+        return np.full(3, padding)
+    if padding.shape != (3,):
+        raise ValueError(f"padding_voxels must have 3 values, got {padding_voxels}.")
+    return padding
 
 
 def _centres_inside(

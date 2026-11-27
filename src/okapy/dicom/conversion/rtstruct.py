@@ -96,18 +96,19 @@ class RTStructMaskConverter:
         if not series.is_rtstruct:
             raise ValueError(f"Expected RTSTRUCT series, got {series.modality}.")
 
-        datasets = [pydicom.dcmread(str(path)) for path in series.paths]
+        paths = series.paths
 
-        if not datasets:
+        if not paths:
             raise ValueError(f"RTSTRUCT series {series.series_instance_uid} is empty.")
 
-        if len(datasets) > 1:
+        # Only the first file is used: the others are not read.
+        dcm = pydicom.dcmread(str(paths[0]))
+
+        if len(paths) > 1:
             logger.warning(
                 "Multiple RTSTRUCT files found in series %s. Using the first one.",
                 series.series_instance_uid,
             )
-
-        dcm = datasets[0]
 
         if self.check_reference_uid:
             self._check_reference_series(

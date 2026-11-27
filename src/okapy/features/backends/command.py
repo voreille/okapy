@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -25,7 +26,9 @@ class CommandFeatureBackend(FeatureBackend):
     The command is run as configured: configs using this backend are trusted
     input. A volume that is only in memory (``path is None``, e.g. with
     ``general.write_outputs: false``) is written as NIfTI into the per-pair
-    work dir before the command runs.
+    work dir before the command runs. The same in-memory image is written
+    once: later pairs get a hard link (or a copy) of that file in their own
+    pair dir.
     """
 
     def __init__(
@@ -50,6 +53,10 @@ class CommandFeatureBackend(FeatureBackend):
         self.params_path = Path(params_path)
         self.timeout_seconds = timeout_seconds
         self.environment = environment
+        # Last in-memory image written per role ("image"/"mask") and its file.
+        # Holding the image keeps its identity from being reused; one entry
+        # per role keeps older volumes from being held alive.
+        self._written: dict[str, tuple[sitk.Image, Path]] = {}
 
     def extract(
         self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path | str
@@ -60,8 +67,8 @@ class CommandFeatureBackend(FeatureBackend):
         output_path = pair_dir / "features.json"
         # Never read a previous run's output if the command does not write one.
         output_path.unlink(missing_ok=True)
-        image_path = _volume_path(image.path, image.image, pair_dir / "image.nii.gz")
-        mask_path = _volume_path(mask.path, mask.image, pair_dir / "mask.nii.gz")
+        image_path = self._volume_path("image", image.path, image.image, pair_dir)
+        mask_path = self._volume_path("mask", mask.path, mask.image, pair_dir)
         command = [
             *self.command,
             "--image",
@@ -105,6 +112,36 @@ class CommandFeatureBackend(FeatureBackend):
             metadata=dict(payload.get("metadata") or {}),
         )
 
+    def _volume_path(
+        self, role: str, path: Path | None, image: sitk.Image, pair_dir: Path
+    ) -> Path:
+        """``path``, or ``image`` as ``<role>.nii.gz`` in ``pair_dir`` when it
+        is only in memory.
+
+        An image already written by this backend is linked (or copied) from
+        that file instead of being written again.
+        """
+
+        if path is not None:
+            return path
+        target = pair_dir / f"{role}.nii.gz"
+        cached = self._written.get(role)
+        if cached is not None and cached[0] is image and cached[1].is_file():
+            source = cached[1]
+            if source == target:
+                return target
+            # Never write through a stale file (it may be a link to another).
+            target.unlink(missing_ok=True)
+            try:
+                os.link(source, target)
+            except OSError:
+                shutil.copyfile(source, target)
+            return target
+        target.unlink(missing_ok=True)
+        sitk.WriteImage(image, str(target))
+        self._written[role] = (image, target)
+        return target
+
     def _pair_dir(self, image: ImageVolume, mask: MaskVolume, work_dir: Path) -> Path:
         """Work dir unique per (image, mask, backend).
 
@@ -135,12 +172,3 @@ class CommandFeatureBackend(FeatureBackend):
             f"{safe_name(mask.label)}-{digest}",
             safe_name(self.name),
         )
-
-
-def _volume_path(path: Path | None, image: sitk.Image, fallback: Path) -> Path:
-    """``path``, or ``image`` written to ``fallback`` when it is only in memory."""
-
-    if path is not None:
-        return path
-    sitk.WriteImage(image, str(fallback))
-    return fallback

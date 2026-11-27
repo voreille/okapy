@@ -30,17 +30,16 @@ from okapy.dicom.conversion.suv_common import (
     average_count_rate_time_s,
     bqml_to_suvbw,
     check_administration_utc_offset,
-    cm2ml_to_suvbw,
     decay_corrected_dose_bq,
     get_optional_float,
     get_optional_str,
-    gml_to_suvbw,
     normalize_suv_type,
     parse_dicom_datetime_with_offset,
     patient_weight_g,
     radionuclide_half_life_s,
     radionuclide_total_dose_bq,
     radiopharmaceutical_item,
+    scaled_to_suvbw,
     warn_once,
 )
 from okapy.dicom.conversion.utils import (
@@ -238,31 +237,22 @@ class EnhancedPETSUVConverter:
         # The frame's SUV type, else the instance-level SUV Type (0054,1006).
         suv_type = normalize_suv_type(suv_type) or normalize_suv_type(meta.suv_type)
 
-        if units == "GML":
-            return gml_to_suvbw(
-                scaled,
-                suv_type=suv_type,
-                patient_weight=meta.patient_weight_kg,
-                patient_size=meta.patient_size_m,
-                sex=meta.patient_sex,
-                emitted_warnings=meta.emitted_warnings,
-            )
-
-        if units == "CM2ML":
-            return cm2ml_to_suvbw(
-                scaled,
-                suv_type=suv_type,
-                patient_weight=meta.patient_weight_kg,
-                patient_size=meta.patient_size_m,
-                emitted_warnings=meta.emitted_warnings,
-            )
-
-        if units == "BQML":
-            return bqml_to_suvbw(
-                scaled,
+        suvbw = scaled_to_suvbw(
+            units,
+            scaled,
+            suv_type=suv_type,
+            patient_weight=meta.patient_weight_kg,
+            patient_size=meta.patient_size_m,
+            sex=meta.patient_sex,
+            emitted_warnings=meta.emitted_warnings,
+            bqml=lambda activity_bqml: bqml_to_suvbw(
+                activity_bqml,
                 weight_g=patient_weight_g(meta.patient_weight_kg),
                 dose_bq=_dose_at_reference_time(frame),
-            )
+            ),
+        )
+        if suvbw is not None:
+            return suvbw
 
         raise SUVComputationError(
             f"Unsupported physical units {units!r} in the Enhanced PET frame."

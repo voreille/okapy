@@ -68,6 +68,7 @@ class PETFeatureBackend(FeatureBackend):
                 candidate_mask=metabolic_mask,
                 diameter_mm=self.config.suvpeak_diameter_mm,
                 restrict_to_mask=self.config.restrict_suvpeak_to_mask,
+                image_array=image_array,
             )
         suffix = self._feature_suffix()
         if self.config.preserve_legacy_names:
@@ -108,8 +109,17 @@ def compute_suvpeak(
     candidate_mask: np.ndarray,
     diameter_mm: float,
     restrict_to_mask: bool,
+    image_array: np.ndarray | None = None,
 ) -> float:
-    image_array = sitk.GetArrayFromImage(image).astype(np.float64)
+    """Mean of ``image`` in a ``diameter_mm`` sphere around the hottest
+    candidate voxel.
+
+    ``image_array`` is ``image`` as a float64 (z, y, x) array, when the caller
+    already has it; otherwise it is read from ``image``.
+    """
+
+    if image_array is None:
+        image_array = sitk.GetArrayFromImage(image).astype(np.float64)
     candidate_indices = np.argwhere(candidate_mask)
     if candidate_indices.size == 0:
         return float("nan")
