@@ -35,19 +35,22 @@ keywords = [
 ]
 
 dependencies = [
-    "SimpleITK",
-    "numpy",
-    "pandas",
-    "pydicom",
+    "SimpleITK>=2.2",
+    "numpy>=1.23",
+    "pandas>=1.5",
+    "pydicom>=3.0",
+    # highdicom 0.28 changed the SEG reading API used by
+    # okapy.dicom.conversion.seg_highdicom_adapter.
     "highdicom>=0.27,<0.28",
-    "PyYAML",
-    "scipy",
-    "scikit-image",
+    "PyYAML>=5.4",
+    "scikit-image>=0.20",
 ]
 
 [project.optional-dependencies]
 radiomics = [
+    # pyradiomics 3.0.1 wheels are built against NumPy 1.x.
     "pyradiomics==3.0.1; python_version == '3.10'",
+    "numpy<2; python_version == '3.10'",
 ]
 
 cli = [
@@ -55,10 +58,15 @@ cli = [
 ]
 
 dev = [
-    "pytest",
+    "pytest>=7",
     "pytest-cov",
     "ruff",
     "mypy",
+    "build",
+    # Parquet golden files.
+    "pyarrow",
+    # Used by the frozen okapy_legacy reference code exercised in tests.
+    "scipy",
 ]
 
 [project.urls]
@@ -68,5 +76,30 @@ Repository = "https://github.com/voreille/okapy"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["okapy*"]
+include = ["okapy", "okapy.*"]
 exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: needs external DICOM data (OKAPY_TEST_DATA / SUV_COMPUTATION_TEST_DATA)",
+    "radiomics: needs a working pyradiomics install",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+extend-exclude = ["src/okapy_legacy"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["okapy", "tests"]
+
+[tool.mypy]
+files = ["src/okapy"]
+python_version = "3.10"
+ignore_missing_imports = true
