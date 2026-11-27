@@ -17,6 +17,7 @@ from okapy.dicom.conversion.enhanced_pet import (
 from okapy.dicom.conversion.image import SimpleITKImageSeriesConverter
 from okapy.dicom.conversion.suv_common import (
     SUVComputationError,
+    _ReferenceDatetime,
     administration_datetime,
     apply_rescale,
     average_count_rate_time_s,
@@ -24,7 +25,6 @@ from okapy.dicom.conversion.suv_common import (
     check_administration_utc_offset,
     cm2ml_to_suvbw,
     decay_corrected_dose_bq,
-    dicom_datetime_utc_offset,
     get_optional_float,
     get_optional_str,
     get_required_float,
@@ -32,7 +32,7 @@ from okapy.dicom.conversion.suv_common import (
     normalize_manufacturer,
     normalize_suv_type,
     parse_dicom_date,
-    parse_dicom_datetime,
+    parse_dicom_datetime_with_offset,
     parse_dicom_time,
     patient_weight_g,
     positive_float_tag,
@@ -45,10 +45,6 @@ from okapy.dicom.conversion.suv_common import (
 from okapy.dicom.models import DicomSeries
 
 logger = logging.getLogger(__name__)
-
-#: A decay reference datetime, the UTC offset of the DT value it was read from
-#: (``None`` when it has none) and the name of that source.
-_ReferenceDatetime = tuple[datetime, timedelta | None, str]
 
 __all__ = [
     "PETMetadata",
@@ -389,7 +385,7 @@ def _acquisition_datetime(s) -> tuple[datetime, timedelta | None]:
 
     value = get_optional_str(s, "AcquisitionDateTime")
     if value is not None:
-        return parse_dicom_datetime(value), dicom_datetime_utc_offset(value)
+        return parse_dicom_datetime_with_offset(value)
 
     date_value = getattr(s, "AcquisitionDate", None)
     time_value = getattr(s, "AcquisitionTime", None)
@@ -445,7 +441,7 @@ def _private_datetime(
         return None
 
     try:
-        return parse_dicom_datetime(value), dicom_datetime_utc_offset(value)
+        return parse_dicom_datetime_with_offset(value)
     except SUVComputationError:
         logger.warning(
             "Could not parse private datetime tag (%04X,%04X): %r", *tag, value

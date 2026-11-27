@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
+from okapy.core.config_values import FEATURE_OPTION_KEYS
 from okapy.core.geometry import MASK_THRESHOLD
 
 logger = logging.getLogger(__name__)
@@ -14,12 +15,6 @@ _LEGACY_DEFAULT_PADDING_MM = 10.0
 
 #: Legacy ``general.padding`` value meaning "do not crop".
 _LEGACY_WHOLE_IMAGE = "whole_image"
-
-#: Keys of ``feature_extraction`` that are options, not selectors.
-_RESERVED_FEATURE_KEYS = frozenset(
-    {"common", "continue_on_error", "result_format", "include_backend"}
-)
-_FEATURE_OPTION_KEYS = _RESERVED_FEATURE_KEYS - {"common"}
 
 #: Legacy ``general.study_processor`` values.
 _LEGACY_STANDARD_STUDY_PROCESSOR = "studyprocessor"
@@ -56,12 +51,7 @@ def legacy_config_keys(config: Mapping[str, Any]) -> list[str]:
     if isinstance(general, Mapping) and "padding" in general:
         keys.append("general.padding")
 
-    features = config.get("feature_extraction") or {}
-    if isinstance(features, Mapping) and any(
-        isinstance(value, Mapping)
-        for selector, value in features.items()
-        if selector not in _FEATURE_OPTION_KEYS
-    ):
+    if any(isinstance(value, Mapping) for value in _feature_selector_values(config)):
         keys.append("feature_extraction")
 
     mask_preprocessing = config.get("mask_preprocessing") or {}
@@ -83,21 +73,39 @@ def new_shape_config_sections(config: Mapping[str, Any]) -> list[str]:
 
     sections = [name for name in _NEW_SHAPE_SECTIONS if name in config]
 
-    features = config.get("feature_extraction") or {}
-    if isinstance(features, Mapping) and any(
-        isinstance(value, list) and value
-        for selector, value in features.items()
-        if selector not in _FEATURE_OPTION_KEYS
+    if any(
+        isinstance(value, list) and value for value in _feature_selector_values(config)
     ):
         sections.append("feature_extraction")
 
     return sections
 
 
-def check_not_mixed_config(config: Mapping[str, Any]) -> None:
-    """Reject a config that mixes legacy keys with new-shape sections."""
+def _feature_selector_values(config: Mapping[str, Any]) -> list[Any]:
+    """Values of the ``feature_extraction`` selectors (``common`` included)."""
 
-    legacy_keys = legacy_config_keys(config)
+    features = config.get("feature_extraction") or {}
+    if not isinstance(features, Mapping):
+        return []
+    return [
+        value
+        for selector, value in features.items()
+        if selector not in FEATURE_OPTION_KEYS
+    ]
+
+
+def check_not_mixed_config(
+    config: Mapping[str, Any],
+    legacy_keys: list[str] | None = None,
+) -> None:
+    """Reject a config that mixes legacy keys with new-shape sections.
+
+    ``legacy_keys`` is :func:`legacy_config_keys` of ``config``, computed here
+    when not given.
+    """
+
+    if legacy_keys is None:
+        legacy_keys = legacy_config_keys(config)
     new_sections = new_shape_config_sections(config)
     if legacy_keys and new_sections:
         raise ValueError(
@@ -318,7 +326,7 @@ def migrate_legacy_feature_extraction_config(
     }
 
     for selector, extractor_groups in feature_config.items():
-        if selector in _FEATURE_OPTION_KEYS:
+        if selector in FEATURE_OPTION_KEYS:
             migrated[selector] = deepcopy(extractor_groups)
             continue
         if not extractor_groups:

@@ -173,13 +173,19 @@ def mask_index_extent(mask: sitk.Image, image: sitk.Image) -> IndexExtent:
             f"Only 3D masks are supported, got dimension={mask.GetDimension()}."
         )
 
-    nonzero_zyx = np.argwhere(sitk.GetArrayFromImage(mask) != 0)
+    array_zyx = sitk.GetArrayViewFromImage(mask)
 
-    if nonzero_zyx.size == 0:
+    # Per-axis projections give the bounding box of the non-zero voxels.
+    nonzero_x, nonzero_y, nonzero_z = (
+        np.flatnonzero(np.any(array_zyx, axis=axes))
+        for axes in ((0, 1), (0, 2), (1, 2))
+    )
+
+    if nonzero_z.size == 0:
         raise ValueError("Cannot compute the extent of an empty mask.")
 
-    min_xyz = nonzero_zyx.min(axis=0)[::-1]
-    max_xyz = nonzero_zyx.max(axis=0)[::-1]
+    min_xyz = np.array([nonzero_x[0], nonzero_y[0], nonzero_z[0]])
+    max_xyz = np.array([nonzero_x[-1], nonzero_y[-1], nonzero_z[-1]])
 
     corners = [
         image.TransformPhysicalPointToContinuousIndex(

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from okapy.core.config_values import parse_bool
+from okapy.core.config_values import FEATURE_OPTION_KEYS, get_bool
 from okapy.features.backends.command import CommandFeatureBackend
 from okapy.features.backends.pet import PETFeatureBackend, PETFeatureConfig
 from okapy.features.backends.pyradiomics_local import LocalPyradiomicsBackend
@@ -15,7 +15,7 @@ def build_feature_extraction_step(config: dict[str, Any]) -> FeatureExtractionSt
     common_backends = [
         _build_backend(item) for item in feature_config.get("common") or []
     ]
-    reserved = {"common", "continue_on_error", "result_format", "include_backend"}
+    reserved = FEATURE_OPTION_KEYS | {"common"}
     backends_by_selector = {
         selector: [_build_backend(item) for item in backend_configs or []]
         for selector, backend_configs in feature_config.items()
@@ -24,9 +24,7 @@ def build_feature_extraction_step(config: dict[str, Any]) -> FeatureExtractionSt
     return FeatureExtractionStep(
         backends_by_selector=backends_by_selector,
         common_backends=common_backends,
-        continue_on_error=parse_bool(
-            feature_config.get("continue_on_error", False), key="continue_on_error"
-        ),
+        continue_on_error=get_bool(feature_config, "continue_on_error", False),
     )
 
 
@@ -37,9 +35,7 @@ def _build_backend(config: dict[str, Any]):
         return LocalPyradiomicsBackend(
             name=name,
             params=config["params"],
-            include_diagnostics=parse_bool(
-                config.get("include_diagnostics", False), key="include_diagnostics"
-            ),
+            include_diagnostics=get_bool(config, "include_diagnostics", False),
             execute_kwargs=dict(config.get("execute_kwargs") or {}),
         )
     if backend_type == "command":
@@ -57,14 +53,10 @@ def _build_backend(config: dict[str, Any]):
                 threshold=float(config.get("threshold", 0.0)),
                 threshold_type=str(config.get("threshold_type", "absolute")),
                 suvpeak_diameter_mm=float(config.get("suvpeak_diameter_mm", 12.0)),
-                restrict_suvpeak_to_mask=parse_bool(
-                    config.get("restrict_suvpeak_to_mask", False),
-                    key="restrict_suvpeak_to_mask",
+                restrict_suvpeak_to_mask=get_bool(
+                    config, "restrict_suvpeak_to_mask", False
                 ),
-                preserve_legacy_names=parse_bool(
-                    config.get("preserve_legacy_names", True),
-                    key="preserve_legacy_names",
-                ),
+                preserve_legacy_names=get_bool(config, "preserve_legacy_names", True),
             ),
         )
     raise ValueError(f"Unknown feature backend type {backend_type!r}.")

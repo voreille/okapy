@@ -674,14 +674,13 @@ _MIN_UTC_OFFSET_MIN = -12 * 60
 _MAX_UTC_OFFSET_MIN = 14 * 60
 
 
-def parse_dicom_datetime(value: str) -> datetime:
-    """Parse a DICOM DT value into a naive datetime.
+#: A decay reference datetime, the UTC offset of the DT value it was read from
+#: (``None`` when it has none) and the name of that source.
+_ReferenceDatetime = tuple[datetime, timedelta | None, str]
 
-    The result holds the wall-clock fields written in the string. A UTC offset
-    suffix is validated and dropped, so every datetime used in the SUV
-    computation is naive and differences between them never mix naive and
-    tz-aware values.
-    """
+
+def _parse_dt(value: str) -> tuple[datetime, timedelta | None]:
+    """Parse and validate a DICOM DT value: (naive datetime, UTC offset)."""
 
     text = str(value).strip()
     match = _DT_PATTERN.fullmatch(text)
@@ -696,6 +695,7 @@ def parse_dicom_datetime(value: str) -> datetime:
         match.groups()
     )
 
+    offset = None
     if sign is not None:
         offset_min = int(off_h) * 60 + int(off_m)
         if sign == "-":
@@ -706,9 +706,12 @@ def parse_dicom_datetime(value: str) -> datetime:
             raise SUVComputationError(
                 f"Invalid DICOM DT value {value!r}: UTC offset out of range."
             )
+        offset = timedelta(hours=int(off_h), minutes=int(off_m))
+        if sign == "-":
+            offset = -offset
 
     try:
-        return datetime(
+        parsed = datetime(
             int(year),
             int(month),
             int(day),
@@ -720,6 +723,20 @@ def parse_dicom_datetime(value: str) -> datetime:
     except ValueError as exc:
         raise SUVComputationError(f"Invalid DICOM DT value {value!r}: {exc}.") from exc
 
+    return parsed, offset
+
+
+def parse_dicom_datetime(value: str) -> datetime:
+    """Parse a DICOM DT value into a naive datetime.
+
+    The result holds the wall-clock fields written in the string. A UTC offset
+    suffix is validated and dropped, so every datetime used in the SUV
+    computation is naive and differences between them never mix naive and
+    tz-aware values.
+    """
+
+    return _parse_dt(value)[0]
+
 
 def dicom_datetime_utc_offset(value: str) -> timedelta | None:
     """UTC offset suffix of a DICOM DT value, or ``None`` when it has none.
@@ -727,16 +744,13 @@ def dicom_datetime_utc_offset(value: str) -> timedelta | None:
     The value is validated like :func:`parse_dicom_datetime`.
     """
 
-    parse_dicom_datetime(value)
-    match = _DT_PATTERN.fullmatch(str(value).strip())
-    assert match is not None  # validated above
-    sign, off_h, off_m = match.groups()[7:]
+    return _parse_dt(value)[1]
 
-    if sign is None:
-        return None
 
-    offset = timedelta(hours=int(off_h), minutes=int(off_m))
-    return -offset if sign == "-" else offset
+def parse_dicom_datetime_with_offset(value: str) -> tuple[datetime, timedelta | None]:
+    """Both :func:`parse_dicom_datetime` and :func:`dicom_datetime_utc_offset`."""
+
+    return _parse_dt(value)
 
 
 def check_administration_utc_offset(

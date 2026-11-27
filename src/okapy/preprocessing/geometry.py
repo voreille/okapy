@@ -49,12 +49,18 @@ def masks_for_image(
     ]
 
 
+def is_empty_mask(mask: MaskVolume) -> bool:
+    """Whether ``mask`` has no non-zero voxel."""
+
+    return not np.any(sitk.GetArrayViewFromImage(mask.image))
+
+
 def drop_empty_masks(masks: list[MaskVolume]) -> list[MaskVolume]:
     """Return ``masks`` without the all-zero ones, warning for each dropped mask."""
 
     kept = []
     for mask in masks:
-        if np.any(sitk.GetArrayViewFromImage(mask.image)):
+        if not is_empty_mask(mask):
             kept.append(mask)
         else:
             logger.warning(

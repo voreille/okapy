@@ -109,13 +109,15 @@ def read_seg_segment_infos(
 
 def read_seg_with_highdicom(
     seg: hd.seg.Segmentation,
+    *,
+    segment_numbers: tuple[int, ...],
+    segment_infos: dict[int, dict[str, Any]],
 ) -> HighdicomSegmentReadResult:
     """Read a regularly spaced patient-coordinate DICOM SEG.
 
-    ``seg`` is the SEG parsed by :func:`parse_seg`.
+    ``seg`` is the SEG parsed by :func:`parse_seg`; ``segment_numbers`` and
+    ``segment_infos`` are what :func:`read_seg_segment_infos` returns for it.
     """
-
-    segment_numbers, segment_infos = read_seg_segment_infos(seg)
 
     volume = seg.get_volume(
         segment_numbers=segment_numbers,

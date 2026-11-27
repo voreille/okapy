@@ -26,7 +26,7 @@ def select_section_config(
     if include_common:
         return deep_merge(section.get("common") or {}, selected)
 
-    return deepcopy(selected)
+    return selected
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:

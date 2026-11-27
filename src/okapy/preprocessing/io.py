@@ -1,44 +1,18 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-import SimpleITK as sitk
-
-from okapy.dicom.conversion.utils import fit_filename, safe_name, short_uid
-
-
-def write_image_unique(image: sitk.Image, path: Path) -> Path:
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if not path.exists():
-        sitk.WriteImage(image, str(path))
-        return path
-
-    stem = path.name
-    if stem.endswith(".nii.gz"):
-        base = stem.removesuffix(".nii.gz")
-        suffix = ".nii.gz"
-    else:
-        base = path.stem
-        suffix = path.suffix
-
-    counter = 1
-    while True:
-        candidate = path.with_name(f"{base}({counter}){suffix}")
-        if not candidate.exists():
-            sitk.WriteImage(image, str(candidate))
-            return candidate
-        counter += 1
+from okapy.dicom.conversion.utils import (
+    fit_filename,
+    make_filename,
+    safe_name,
+    short_uid,
+)
 
 
 def image_output_name(
     *, patient_id: str | None, modality_key: str, series_instance_uid: str
 ) -> str:
-    return fit_filename(
-        f"{safe_name(patient_id)}__"
-        f"{safe_name(modality_key)}__"
-        f"{short_uid(series_instance_uid)}",
-        "nii.gz",
+    return make_filename(
+        patient_id, modality_key, short_uid(series_instance_uid), extension="nii.gz"
     )
 
 
@@ -50,6 +24,7 @@ def mask_output_name(
     target_series_instance_uid: str | None,
     reference_series_instance_uid: str,
 ) -> str:
+    # Not make_filename: it would re-truncate "ref-<uid>" to 128 characters.
     return fit_filename(
         f"{safe_name(patient_id)}__"
         f"{safe_name(target_modality_key)}__"

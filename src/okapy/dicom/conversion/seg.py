@@ -14,8 +14,8 @@ from okapy.core.models import (
     VolumeStage,
 )
 from okapy.dicom.conversion.utils import (
-    ensure_inside,
     image_metadata,
+    join_inside,
     make_filename,
     referenced_series_uids,
     short_uid,
@@ -94,7 +94,13 @@ class SegMaskConverter:
                 exc,
             )
             masks_xyz = None
-        raw_volume = read_seg_with_highdicom(seg) if masks_xyz is None else None
+        raw_volume = (
+            read_seg_with_highdicom(
+                seg, segment_numbers=segment_numbers, segment_infos=segment_infos
+            )
+            if masks_xyz is None
+            else None
+        )
 
         requested_labels = set(labels) if labels is not None else None
 
@@ -129,9 +135,7 @@ class SegMaskConverter:
                 label=label,
                 segment_number=segment_number,
             )
-            path = write_image_unique(
-                mask_image, ensure_inside(output_dir / filename, output_dir)
-            )
+            path = write_image_unique(mask_image, join_inside(output_dir, filename))
 
             masks.append(
                 MaskVolume.from_sitk(

@@ -8,7 +8,7 @@ from typing import Any
 import SimpleITK as sitk
 
 # ``parse_bool`` is re-exported here: it used to live in this module.
-from okapy.core.config_values import parse_bool
+from okapy.core.config_values import get_bool, parse_bool
 from okapy.core.geometry import PhysicalBox
 from okapy.core.models import ImageVolume, MaskVolume
 
@@ -148,12 +148,8 @@ class GeometryConfig:
         return cls(
             spacing=spacing,
             image_interpolator=str(config.get("image_interpolator", "linear")),
-            crop_to_masks=parse_bool(
-                config.get("crop_to_masks", True), key="crop_to_masks"
-            ),
-            crop_to_common_fov=parse_bool(
-                config.get("crop_to_common_fov", False), key="crop_to_common_fov"
-            ),
+            crop_to_masks=get_bool(config, "crop_to_masks", True),
+            crop_to_common_fov=get_bool(config, "crop_to_common_fov", False),
             padding_voxels=padding_voxels,
             default_image_value=float(config.get("default_image_value", 0.0)),
             default_mask_value=int(config.get("default_mask_value", 0)),
@@ -206,18 +202,13 @@ class StudyPreprocessingConfig:
         skip = general.get("skip_images_without_masks")
 
         return cls(
-            combine_segmentation=parse_bool(
-                general.get("combine_segmentation", False),
-                key="combine_segmentation",
-            ),
+            combine_segmentation=get_bool(general, "combine_segmentation", False),
             skip_images_without_masks=(
                 None
                 if skip is None
                 else parse_bool(skip, key="skip_images_without_masks")
             ),
-            write_outputs=parse_bool(
-                general.get("write_outputs", True), key="write_outputs"
-            ),
+            write_outputs=get_bool(general, "write_outputs", True),
             image_output_subdir=str(general.get("image_output_subdir", "images")),
             mask_output_subdir=str(general.get("mask_output_subdir", "masks")),
         )

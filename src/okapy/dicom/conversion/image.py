@@ -11,8 +11,8 @@ from okapy.dicom.conversion.utils import (
     SLICE_SPACING_TOLERANCE,
     check_no_duplicate_positions,
     check_stacking_along_normal,
-    ensure_inside,
     geometry_from_positions,
+    join_inside,
     make_filename,
     short_uid,
     sitk_image_from_array_xyz,
@@ -101,9 +101,7 @@ class SimpleITKImageSeriesConverter:
         )
 
         filename = self._make_filename(series)
-        path = write_image_unique(
-            image, ensure_inside(output_dir / filename, output_dir)
-        )
+        path = write_image_unique(image, join_inside(output_dir, filename))
 
         identity = build_series_identity(
             series,
@@ -162,14 +160,41 @@ class SimpleITKImageSeriesConverter:
 
     def _get_physical_values(self, slices, paths, modality: str) -> np.ndarray:
         # Modality LUT: RescaleSlope / RescaleIntercept when present (1 / 0
-        # otherwise), for every modality.
-        arrays = [
-            _float_or_default(s, "RescaleSlope", 1.0) * s.pixel_array
-            + _float_or_default(s, "RescaleIntercept", 0.0)
-            for s in slices
-        ]
+        # otherwise), for every modality. Integer pixel data is rescaled in
+        # place into one float64 volume, which is what ``slope * pixels +
+        # intercept`` gives slice by slice.
+        out = None
 
-        return np.stack(arrays, axis=-1)
+        for i, s in enumerate(slices):
+            slope = _float_or_default(s, "RescaleSlope", 1.0)
+            pixels = s.pixel_array
+            intercept = _float_or_default(s, "RescaleIntercept", 0.0)
+
+            if out is None and pixels.dtype.kind in "iu":
+                out = np.empty((*pixels.shape, len(slices)), dtype=np.float64)
+
+            if (
+                out is None
+                or pixels.dtype.kind not in "iu"
+                or pixels.shape != out.shape[:-1]
+            ):
+                # Float pixel data or inconsistent shapes: keep NumPy's own
+                # dtype promotion and errors for the remaining slices.
+                done = [] if out is None else [out[..., j] for j in range(i)]
+                rest = [slope * pixels + intercept] + [
+                    _float_or_default(t, "RescaleSlope", 1.0) * t.pixel_array
+                    + _float_or_default(t, "RescaleIntercept", 0.0)
+                    for t in slices[i + 1 :]
+                ]
+                return np.stack(done + rest, axis=-1)
+
+            if slope == 1 and intercept == 0:
+                out[..., i] = pixels
+            else:
+                np.multiply(pixels, slope, out=out[..., i])
+                out[..., i] += intercept
+
+        return out
 
     def _make_filename(self, series: DicomSeries) -> str:
         return make_filename(
@@ -233,17 +258,16 @@ def _handle_slice_gaps(
     modality: str,
     series_uid: str,
 ) -> np.ndarray:
-    """Fill missing slices and check the resulting slice spacing is uniform."""
+    """Fill missing slices and check the resulting slice spacing is uniform.
+
+    Only called for more than one slice, sorted along the normal and without
+    duplicate positions, so every gap (and the median gap) is positive.
+    """
 
     d_slices = np.round(
         np.diff(np.asarray(orthogonal_positions, dtype=float)), decimals=5
     )
-    median_spacing = float(np.median(d_slices)) if len(d_slices) else 1.0
-
-    if median_spacing <= 0:
-        raise ValueError(
-            f"The median slice spacing of series {series_uid} is {median_spacing}."
-        )
+    median_spacing = float(np.median(d_slices))
 
     # Gaps that round to zero median spacings are not slice steps at all.
     near_duplicates = np.round(d_slices / median_spacing) < 1
@@ -311,9 +335,6 @@ def _reference_gap(values: np.ndarray) -> float:
     gaps (e.g. 2 gaps, one of them missing a slice). The median does not depend
     on the slice order when every gap is jittered.
     """
-
-    if len(values) == 0:
-        return 1.0
 
     single_steps = values[values <= _SINGLE_STEP_GAP_FACTOR * values.min()]
     return float(np.median(single_steps))

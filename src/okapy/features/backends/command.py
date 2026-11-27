@@ -10,7 +10,7 @@ from pathlib import Path
 import SimpleITK as sitk
 
 from okapy.core.models import ImageVolume, MaskVolume
-from okapy.dicom.conversion.utils import ensure_inside, safe_name
+from okapy.dicom.conversion.utils import join_inside, safe_name
 from okapy.features.backends.base import FeatureBackend
 from okapy.features.models import FeatureSet
 
@@ -55,7 +55,7 @@ class CommandFeatureBackend(FeatureBackend):
         self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path | str
     ) -> FeatureSet:
         work_dir = Path(work_dir)
-        pair_dir = ensure_inside(self._pair_dir(image, mask, work_dir), work_dir)
+        pair_dir = self._pair_dir(image, mask, work_dir)
         pair_dir.mkdir(parents=True, exist_ok=True)
         output_path = pair_dir / "features.json"
         # Never read a previous run's output if the command does not write one.
@@ -129,11 +129,11 @@ class CommandFeatureBackend(FeatureBackend):
             self.name,
         ]
         digest = hashlib.sha1(json.dumps(raw).encode("utf-8")).hexdigest()[:12]
-        return (
-            work_dir
-            / safe_name(image.series_instance_uid)
-            / f"{safe_name(mask.label)}-{digest}"
-            / safe_name(self.name)
+        return join_inside(
+            work_dir,
+            safe_name(image.series_instance_uid),
+            f"{safe_name(mask.label)}-{digest}",
+            safe_name(self.name),
         )
 
 

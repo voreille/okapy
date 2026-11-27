@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, TypeVar
 
-import numpy as np
 import SimpleITK as sitk
 
 from okapy.core.geometry import image_physical_box
@@ -15,20 +15,21 @@ from okapy.core.models import (
     StudyVolumes,
     VolumeCollection,
 )
-from okapy.dicom.conversion.utils import ensure_inside, safe_name
+from okapy.dicom.conversion.utils import (
+    join_inside,
+    study_output_dir,
+    write_image_unique,
+)
 from okapy.preprocessing.geometry import (
     compute_common_fov,
     drop_empty_masks,
+    is_empty_mask,
     make_reference_grid,
     masks_for_image,
     resample_image_volume_to_reference,
     resample_mask_volume_to_reference,
 )
-from okapy.preprocessing.io import (
-    image_output_name,
-    mask_output_name,
-    write_image_unique,
-)
+from okapy.preprocessing.io import image_output_name, mask_output_name
 from okapy.preprocessing.models import (
     GeometryConfig,
     PreprocessingDiagnostics,
@@ -82,13 +83,12 @@ class StudyPreprocessingStep:
         processed_studies: list[StudyVolumes] = []
 
         for index, study in enumerate(volumes.studies):
-            study_name = safe_name(study.study_instance_uid or f"study_{index:04d}")
-            study_output_dir = ensure_inside(output_dir / study_name, output_dir)
-
             processed_study = self.preprocess_study(
                 images=study.images,
                 masks=study.masks,
-                output_dir=study_output_dir,
+                output_dir=study_output_dir(
+                    output_dir, study.study_instance_uid, index
+                ),
                 study_instance_uid=study.study_instance_uid,
             )
 
@@ -109,12 +109,10 @@ class StudyPreprocessingStep:
 
         output_dir = Path(output_dir)
         write_outputs = self.study_config.write_outputs
-        image_output_dir = ensure_inside(
-            output_dir / self.study_config.image_output_subdir, output_dir
+        image_output_dir = join_inside(
+            output_dir, self.study_config.image_output_subdir
         )
-        mask_output_dir = ensure_inside(
-            output_dir / self.study_config.mask_output_subdir, output_dir
-        )
+        mask_output_dir = join_inside(output_dir, self.study_config.mask_output_subdir)
 
         if study_instance_uid is None and images:
             study_instance_uid = images[0].study_instance_uid
@@ -167,14 +165,13 @@ class StudyPreprocessingStep:
 
             output_image_path = None
             if write_outputs:
-                output_image_path = ensure_inside(
-                    image_output_dir
-                    / image_output_name(
+                output_image_path = join_inside(
+                    image_output_dir,
+                    image_output_name(
                         patient_id=image.patient_id,
                         modality_key=image.modality_key,
                         series_instance_uid=image.series_instance_uid,
                     ),
-                    image_output_dir,
                 )
 
             plan = PreprocessingPlan(
@@ -203,9 +200,9 @@ class StudyPreprocessingStep:
             for mask in image_masks:
                 output_mask_path = None
                 if write_outputs:
-                    output_mask_path = ensure_inside(
-                        mask_output_dir
-                        / mask_output_name(
+                    output_mask_path = join_inside(
+                        mask_output_dir,
+                        mask_output_name(
                             patient_id=mask.patient_id,
                             label=mask.label,
                             target_modality_key=geometry_image.modality_key,
@@ -216,7 +213,6 @@ class StudyPreprocessingStep:
                                 mask.reference_series_instance_uid
                             ),
                         ),
-                        mask_output_dir,
                     )
 
                 geometry_mask = resample_mask_volume_to_reference(
@@ -227,7 +223,7 @@ class StudyPreprocessingStep:
                     output_path=output_mask_path,
                 )
 
-                if not np.any(sitk.GetArrayViewFromImage(geometry_mask.image)):
+                if is_empty_mask(geometry_mask):
                     logger.warning(
                         "Dropping mask %r for image %s (%s): it is empty after "
                         "resampling to the target grid.",
@@ -332,9 +328,8 @@ class StudyPreprocessingStep:
     def _write_volume(volume: _Volume) -> _Volume:
         # Only called when write_outputs is set, so the planned path exists.
         assert volume.path is not None
-        final_path = write_image_unique(volume.image, volume.path)
-
-        if final_path == volume.path:
-            return volume
-
-        return volume.with_image(volume.image, path=final_path)
+        return replace(
+            volume,
+            path=write_image_unique(volume.image, volume.path),
+            metadata=dict(volume.metadata),
+        )

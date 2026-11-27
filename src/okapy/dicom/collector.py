@@ -170,7 +170,6 @@ def _build_series(
                 InvalidDicomSeries(
                     series_instance_uid=series_uid,
                     reason=reason,
-                    paths=tuple(record.path for record in sorted_records),
                 )
             )
             continue

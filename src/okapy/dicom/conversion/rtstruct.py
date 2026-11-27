@@ -18,8 +18,8 @@ from okapy.core.models import (
 )
 from okapy.dicom.conversion.utils import (
     SLICE_MATCH_TOLERANCE,
-    ensure_inside,
     image_metadata,
+    join_inside,
     make_filename,
     referenced_series_uids,
     sitk_mask_like_reference,
@@ -28,6 +28,18 @@ from okapy.dicom.conversion.utils import (
 from okapy.dicom.models import DicomSeries
 
 logger = logging.getLogger(__name__)
+
+_CHECK_REFERENCE_DEPRECATED = (
+    "RTStructMaskConverter.check_reference is deprecated; use "
+    "check_reference_uid instead."
+)
+
+
+def _warn_check_reference_deprecated(
+    message: str = _CHECK_REFERENCE_DEPRECATED,
+) -> None:
+    # stacklevel=3: past this helper and the converter method, at the caller.
+    warnings.warn(message, DeprecationWarning, stacklevel=3)
 
 
 class EmptyContourError(RuntimeError):
@@ -52,11 +64,9 @@ class RTStructMaskConverter:
         check_reference: bool | None = None,
     ) -> None:
         if check_reference is not None:
-            warnings.warn(
+            _warn_check_reference_deprecated(
                 "RTStructMaskConverter(check_reference=...) is deprecated; use "
-                "check_reference_uid=... instead.",
-                DeprecationWarning,
-                stacklevel=2,
+                "check_reference_uid=... instead."
             )
             check_reference_uid = check_reference
 
@@ -68,22 +78,12 @@ class RTStructMaskConverter:
     def check_reference(self) -> bool:
         """Deprecated alias of :attr:`check_reference_uid`."""
 
-        warnings.warn(
-            "RTStructMaskConverter.check_reference is deprecated; use "
-            "check_reference_uid instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        _warn_check_reference_deprecated()
         return self.check_reference_uid
 
     @check_reference.setter
     def check_reference(self, value: bool) -> None:
-        warnings.warn(
-            "RTStructMaskConverter.check_reference is deprecated; use "
-            "check_reference_uid instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
+        _warn_check_reference_deprecated()
         self.check_reference_uid = value
 
     def convert(
@@ -158,9 +158,7 @@ class RTStructMaskConverter:
                 reference_image=reference_image,
                 label=label,
             )
-            path = write_image_unique(
-                mask_image, ensure_inside(output_dir / filename, output_dir)
-            )
+            path = write_image_unique(mask_image, join_inside(output_dir, filename))
 
             masks.append(
                 MaskVolume.from_sitk(
@@ -205,9 +203,10 @@ class RTStructMaskConverter:
 
         size_xyz = reference_image.GetSize()
         mask_xyz = np.zeros(size_xyz, dtype=np.uint8)
-        # Contours per slice as (in-plane vertices, rasterized pixels). They are
-        # combined by nesting depth once every contour has been read.
-        slice_contours: dict[int, list[tuple[np.ndarray, np.ndarray]]] = {}
+        # Contours per slice as (in-plane vertices, rasterized pixel rows and
+        # columns). They are combined by nesting depth once every contour has
+        # been read.
+        slice_contours: dict[int, list[_SliceContour]] = {}
         clipped = 0
 
         for contour in contour_sequence:
@@ -277,11 +276,7 @@ class RTStructMaskConverter:
             if len(rr) == 0:
                 continue
 
-            contour_plane = np.zeros(mask_xyz.shape[:2], dtype=bool)
-            contour_plane[rr, cc] = True
-            slice_contours.setdefault(z_index, []).append(
-                (in_plane.copy(), contour_plane)
-            )
+            slice_contours.setdefault(z_index, []).append((in_plane, rr, cc))
 
         if clipped:
             logger.warning(
@@ -292,7 +287,9 @@ class RTStructMaskConverter:
             )
 
         for z_index, contours in slice_contours.items():
-            mask_xyz[:, :, z_index] = _combine_slice_contours(contours)
+            mask_xyz[:, :, z_index] = _combine_slice_contours(
+                contours, shape=mask_xyz.shape[:2]
+            )
 
         return mask_xyz
 
@@ -335,8 +332,18 @@ class RTStructMaskConverter:
         )
 
 
+#: One contour of a slice: in-plane vertices, and the rows and columns of the
+#: pixels it rasterizes to.
+_SliceContour = tuple[np.ndarray, np.ndarray, np.ndarray]
+
+#: Distance (in pixels) within which a vertex is on a polygon boundary.
+_BOUNDARY_TOLERANCE = 1e-6
+
+
 def _combine_slice_contours(
-    contours: list[tuple[np.ndarray, np.ndarray]],
+    contours: list[_SliceContour],
+    *,
+    shape: tuple[int, int],
 ) -> np.ndarray:
     """Combine the contours of one ROI on one slice by nesting depth.
 
@@ -346,20 +353,40 @@ def _combine_slice_contours(
     contour covering it; contours that only touch (same depth) fill their union.
     """
 
-    depths = [
-        sum(
-            _polygon_contains(other, vertices)
-            for j, (other, _) in enumerate(contours)
-            if j != i
+    plane = np.zeros(shape, dtype=bool)
+
+    if len(contours) == 1:
+        _, rr, cc = contours[0]
+        plane[rr, cc] = True
+        return plane
+
+    # A contour can only be contained in another whose bounding box, widened by
+    # the boundary tolerance, holds its own: skip the full test otherwise. The
+    # margin also covers the rounding of the containment test on far vertices.
+    boxes = []
+    for vertices, _, _ in contours:
+        low, high = vertices.min(axis=0), vertices.max(axis=0)
+        margin = _BOUNDARY_TOLERANCE + 1e-12 * float(
+            np.max(np.abs(np.concatenate((low, high))))
         )
-        for i, (vertices, _) in enumerate(contours)
+        boxes.append((low, high, margin))
+
+    def contains(j: int, i: int) -> bool:
+        other_low, other_high, margin = boxes[j]
+        low, high, _ = boxes[i]
+        if np.any(low < other_low - margin) or np.any(high > other_high + margin):
+            return False
+        return _polygon_contains(contours[j][0], contours[i][0])
+
+    depths = [
+        sum(contains(j, i) for j in range(len(contours)) if j != i)
+        for i in range(len(contours))
     ]
 
-    plane = np.zeros(contours[0][1].shape, dtype=bool)
-    for depth, (_, pixels) in sorted(
+    for depth, (_, rr, cc) in sorted(
         zip(depths, contours, strict=True), key=lambda item: item[0]
     ):
-        plane[pixels] = depth % 2 == 0
+        plane[rr, cc] = depth % 2 == 0
     return plane
 
 
@@ -377,17 +404,21 @@ def _polygon_contains(polygon_xy: np.ndarray, points_xy: np.ndarray) -> bool:
 
 
 def _on_polygon_boundary(
-    polygon_xy: np.ndarray, points_xy: np.ndarray, tolerance: float = 1e-6
+    polygon_xy: np.ndarray,
+    points_xy: np.ndarray,
+    tolerance: float = _BOUNDARY_TOLERANCE,
 ) -> np.ndarray:
     start = polygon_xy[None, :, :]
     end = np.roll(polygon_xy, -1, axis=0)[None, :, :]
     points = points_xy[:, None, :]
     edge = end - start
     length_sq = np.sum(edge**2, axis=2)
-    t = np.where(
-        length_sq > 0,
-        np.sum((points - start) * edge, axis=2) / np.where(length_sq > 0, length_sq, 1),
-        0.0,
+    projection = np.sum((points - start) * edge, axis=2)
+    t = np.divide(
+        projection,
+        length_sq,
+        out=np.zeros_like(projection),
+        where=length_sq > 0,
     )
     closest = start + np.clip(t, 0.0, 1.0)[:, :, None] * edge
     distance = np.sqrt(np.sum((points - closest) ** 2, axis=2))

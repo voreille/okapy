@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from okapy.config import ConfigSource, load_config
-from okapy.core.config_values import parse_bool
+from okapy.core.config_values import get_bool
 from okapy.dicom.conversion.builder import build_dicom_conversion_step
 from okapy.features.builder import build_feature_extraction_step
 from okapy.pipeline.extraction import ExtractionPipeline
@@ -22,9 +22,7 @@ def build_extraction_pipeline(
         preprocessing=build_preprocessing_step(config),
         feature_extraction=build_feature_extraction_step(config),
         result_format=str(feature_config.get("result_format", "long")),
-        include_feature_backend=parse_bool(
-            feature_config.get("include_backend", False), key="include_backend"
-        ),
+        include_feature_backend=get_bool(feature_config, "include_backend", False),
     )
 
 

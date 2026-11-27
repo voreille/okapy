@@ -11,7 +11,7 @@ import yaml
 
 from okapy.config.legacy import (
     check_not_mixed_config,
-    is_legacy_config,
+    legacy_config_keys,
     migrate_legacy_config,
 )
 
@@ -69,8 +69,9 @@ def load_config(source: ConfigSource) -> Config:
     if not config:
         raise ValueError("Okapy configuration cannot be empty.")
 
-    if is_legacy_config(config):
-        check_not_mixed_config(config)
+    legacy_keys = legacy_config_keys(config)
+    if legacy_keys:
+        check_not_mixed_config(config, legacy_keys)
         return migrate_legacy_config(config)
 
     return config

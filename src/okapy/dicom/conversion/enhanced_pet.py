@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -24,6 +24,7 @@ import pydicom
 from okapy.core.models import ImageVolume, VolumeStage
 from okapy.dicom.conversion.suv_common import (
     SUVComputationError,
+    _ReferenceDatetime,
     administration_datetime,
     apply_rescale,
     average_count_rate_time_s,
@@ -31,12 +32,11 @@ from okapy.dicom.conversion.suv_common import (
     check_administration_utc_offset,
     cm2ml_to_suvbw,
     decay_corrected_dose_bq,
-    dicom_datetime_utc_offset,
     get_optional_float,
     get_optional_str,
     gml_to_suvbw,
     normalize_suv_type,
-    parse_dicom_datetime,
+    parse_dicom_datetime_with_offset,
     patient_weight_g,
     radionuclide_half_life_s,
     radionuclide_total_dose_bq,
@@ -47,9 +47,9 @@ from okapy.dicom.conversion.utils import (
     SLICE_SPACING_TOLERANCE,
     check_no_duplicate_positions,
     check_stacking_along_normal,
-    ensure_inside,
     functional_group_sequences,
     geometry_from_positions,
+    join_inside,
     make_filename,
     short_uid,
     sitk_image_from_array_xyz,
@@ -159,7 +159,7 @@ class EnhancedPETSUVConverter:
 
         path = write_image_unique(
             image,
-            ensure_inside(output_dir / self._make_filename(series), output_dir),
+            join_inside(output_dir, self._make_filename(series)),
         )
 
         return ImageVolume.from_sitk(
@@ -560,7 +560,7 @@ def _dose_at_reference_time(frame: _Frame) -> float:
 
 def _decay_correction_reference_datetime(
     frame: _Frame, half_life_s: float
-) -> tuple[datetime, timedelta | None, str]:
+) -> _ReferenceDatetime:
     """Decay reference datetime, the UTC offset of its DT value and its source."""
 
     meta = frame.meta
@@ -581,8 +581,7 @@ def _decay_correction_reference_datetime(
             )
 
         return (
-            parse_dicom_datetime(meta.decay_correction_datetime),
-            dicom_datetime_utc_offset(meta.decay_correction_datetime),
+            *parse_dicom_datetime_with_offset(meta.decay_correction_datetime),
             "Decay Correction DateTime (0018,9701)",
         )
 
@@ -600,8 +599,7 @@ def _decay_correction_reference_datetime(
 
     if frame_reference_dt is not None:
         return (
-            parse_dicom_datetime(frame_reference_dt),
-            dicom_datetime_utc_offset(frame_reference_dt),
+            *parse_dicom_datetime_with_offset(frame_reference_dt),
             "Frame Reference DateTime (0018,9151)",
         )
 
@@ -633,8 +631,11 @@ def _decay_correction_reference_datetime(
     # Frame Acquisition Duration is stored in ms.
     tave_s = average_count_rate_time_s(frame_duration_ms / 1000.0, half_life_s)
 
+    acquisition_dt, acquisition_offset = parse_dicom_datetime_with_offset(
+        frame_acquisition_dt
+    )
     return (
-        parse_dicom_datetime(frame_acquisition_dt) + timedelta(seconds=tave_s),
-        dicom_datetime_utc_offset(frame_acquisition_dt),
+        acquisition_dt + timedelta(seconds=tave_s),
+        acquisition_offset,
         "Frame Acquisition DateTime (0018,9074)",
     )

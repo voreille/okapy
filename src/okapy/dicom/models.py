@@ -181,7 +181,6 @@ class InvalidDicomSeries:
 
     series_instance_uid: str
     reason: str
-    paths: tuple[Path, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -233,9 +232,3 @@ class DicomCollection:
     @property
     def mask_series(self) -> tuple[DicomSeries, ...]:
         return self.rtstruct_series + self.seg_series
-
-    @property
-    def invalid_series(self) -> tuple[InvalidDicomSeries, ...]:
-        return tuple(
-            series for study in self.studies for series in study.invalid_series
-        )

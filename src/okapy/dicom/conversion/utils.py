@@ -4,10 +4,13 @@ import hashlib
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import SimpleITK as sitk
+
+from okapy.dicom.tags import get_optional_str as get_optional_str
+from okapy.dicom.tags import referenced_series_uids as referenced_series_uids
+from okapy.dicom.tags import to_jsonable as to_jsonable
 
 #: Maximum distance, in voxels, between a SEG frame or RTSTRUCT contour and the
 #: reference slice it is assigned to.
@@ -96,6 +99,19 @@ def ensure_inside(path: Path, root: Path) -> Path:
     return path
 
 
+def join_inside(root: Path, *parts: str | Path) -> Path:
+    """Return ``root`` joined with ``parts``, checked by :func:`ensure_inside`."""
+
+    return ensure_inside(root.joinpath(*parts), root)
+
+
+def study_output_dir(output_dir: Path, study_uid: str | None, index: int) -> Path:
+    """Output directory of the ``index``-th study, named after its UID."""
+
+    study_name = safe_name(study_uid) if study_uid else f"study_{index:04d}"
+    return join_inside(output_dir, study_name)
+
+
 def check_no_duplicate_positions(
     orthogonal_positions,
     *,
@@ -182,80 +198,6 @@ def geometry_from_positions(
         z_spacing = single_slice_spacing()
 
     return origin, (col_spacing, row_spacing, z_spacing), direction
-
-
-def get_optional_str(ds, name: str) -> str | None:
-    """Attribute ``name`` of ``ds`` as a stripped string, None if absent/empty."""
-
-    value = getattr(ds, name, None)
-
-    if value is None:
-        return None
-
-    value = str(value).strip()
-    return value or None
-
-
-def to_jsonable(value: Any) -> Any:
-    """Convert pydicom/highdicom metadata to simple serializable values.
-
-    Scalars are kept, bytes are decoded, lists/tuples and dicts are converted
-    item by item and anything else (including pydicom multi-values) becomes a
-    string.
-    """
-
-    if value is None:
-        return None
-
-    if isinstance(value, (str, int, float, bool)):
-        return value
-
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="ignore")
-
-    if isinstance(value, dict):
-        return {str(k): to_jsonable(v) for k, v in value.items()}
-
-    if isinstance(value, (list, tuple)):
-        return [to_jsonable(v) for v in value]
-
-    return str(value)
-
-
-def referenced_series_uids(
-    ds,
-    *,
-    rtstruct: bool = True,
-    derivation: bool = False,
-) -> tuple[str, ...]:
-    """Unique referenced SeriesInstanceUID values of ``ds``, in order found.
-
-    Always read from ReferencedSeriesSequence (SEG and others). ``rtstruct``
-    adds the RTSTRUCT nesting ReferencedFrameOfReferenceSequence ->
-    RTReferencedStudySequence -> RTReferencedSeriesSequence; ``derivation``
-    adds the SourceImageSequence items of the DerivationImageSequence in the
-    per-frame, then shared, functional groups (best effort: they often
-    reference SOP instances only).
-    """
-
-    items = list(getattr(ds, "ReferencedSeriesSequence", []))
-
-    if rtstruct:
-        for frame_item in getattr(ds, "ReferencedFrameOfReferenceSequence", []):
-            for study_item in getattr(frame_item, "RTReferencedStudySequence", []):
-                items.extend(getattr(study_item, "RTReferencedSeriesSequence", []))
-
-    if derivation:
-        for groups_name in (
-            "PerFrameFunctionalGroupsSequence",
-            "SharedFunctionalGroupsSequence",
-        ):
-            for group in getattr(ds, groups_name, []):
-                for derivation_item in getattr(group, "DerivationImageSequence", []):
-                    items.extend(getattr(derivation_item, "SourceImageSequence", []))
-
-    uids = (getattr(item, "SeriesInstanceUID", None) for item in items)
-    return tuple(dict.fromkeys(str(uid) for uid in uids if uid is not None))
 
 
 def functional_group_sequences(ds, frame_index: int, name: str) -> list:

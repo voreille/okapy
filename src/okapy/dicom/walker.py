@@ -8,15 +8,15 @@ from typing import Any
 import pydicom
 from pydicom.errors import InvalidDicomError
 
-from okapy.dicom.conversion.utils import (
-    get_optional_str,
-    referenced_series_uids,
-    to_jsonable,
-)
 from okapy.dicom.models import (
     ALLOWED_MODALITIES,
     IMAGE_MODALITIES,
     DicomFileRecord,
+)
+from okapy.dicom.tags import (
+    get_optional_str,
+    referenced_series_uids,
+    to_jsonable,
 )
 
 logger = logging.getLogger(__name__)
@@ -203,9 +203,11 @@ class DicomWalker:
         Standard/base tags are still included when requested. This is intentional:
         if a tag is listed in additional_dicom_tags, the caller likely wants it in
         the final feature table even if Okapy also stores it as a first-class field.
+        Values are made CSV/JSON-friendly with :func:`to_jsonable`; sequence-valued
+        tags should usually be handled by dedicated code instead.
         """
         return {
-            tag: _get_dicom_value(ds, tag)
+            tag: to_jsonable(getattr(ds, tag, None))
             for tag in self.additional_dicom_tags
             if hasattr(ds, tag)
         }
@@ -213,17 +215,6 @@ class DicomWalker:
 
 def _unique_preserve_order(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(values))
-
-
-def _get_dicom_value(ds, name: str) -> Any:
-    """Extract a DICOM value in a CSV/JSON-friendly form.
-
-    Simple scalar values are preserved, bytes are decoded, and complex DICOM
-    objects (including multi-values) are converted to strings. Sequence-valued
-    tags should usually be handled by dedicated code instead of being requested
-    as extra tags.
-    """
-    return to_jsonable(getattr(ds, name, None))
 
 
 def _get_int(ds, name: str) -> int | None:

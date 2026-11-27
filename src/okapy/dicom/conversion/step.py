@@ -15,7 +15,7 @@ from okapy.dicom.conversion.image import SimpleITKImageSeriesConverter
 from okapy.dicom.conversion.rtstruct import RTStructMaskConverter
 from okapy.dicom.conversion.seg import SegMaskConverter
 from okapy.dicom.conversion.suv import PETSUVConverter
-from okapy.dicom.conversion.utils import ensure_inside, safe_name
+from okapy.dicom.conversion.utils import study_output_dir
 from okapy.dicom.models import DicomSeries, DicomStudy, InvalidDicomSeries
 
 logger = logging.getLogger(__name__)
@@ -78,13 +78,12 @@ class DicomConversionStep:
 
         for index, study in enumerate(collection.studies):
             study_uid = study.study_instance_uid
-            study_name = safe_name(study_uid) if study_uid else f"study_{index:04d}"
-            study_output_dir = ensure_inside(output_dir / study_name, output_dir)
+            study_dir = study_output_dir(output_dir, study_uid, index)
 
             try:
                 converted_study = self.convert_study(
                     study,
-                    output_dir=study_output_dir,
+                    output_dir=study_dir,
                     labels=labels,
                 )
             except Exception:
@@ -207,34 +206,29 @@ class DicomConversionStep:
 
         for series in series_list:
             try:
+                converter = self._mask_converter(series)
                 reference_image = self._resolve_reference_image(
                     series=series,
                     images_by_uid=images_by_uid,
+                    check_reference_uid=(
+                        converter is None or converter.check_reference_uid
+                    ),
                 )
 
-                if series.is_rtstruct:
-                    series_masks = self.rtstruct_converter.convert(
-                        series=series,
-                        reference_image=reference_image,
-                        output_dir=output_dir,
-                        labels=labels,
-                    )
-
-                elif series.is_seg:
-                    series_masks = self.seg_converter.convert(
-                        series=series,
-                        reference_image=reference_image,
-                        output_dir=output_dir,
-                        labels=labels,
-                    )
-
-                else:
+                if converter is None:
                     logger.warning(
                         "Skipping unsupported mask series %s with modality %s.",
                         series.series_instance_uid,
                         series.modality,
                     )
                     continue
+
+                series_masks = converter.convert(
+                    series=series,
+                    reference_image=reference_image,
+                    output_dir=output_dir,
+                    labels=labels,
+                )
 
             except Exception:
                 if not self.continue_on_error:
@@ -250,20 +244,23 @@ class DicomConversionStep:
 
         return masks
 
-    def _checks_reference_uid(self, series: DicomSeries) -> bool:
-        """Whether the converter of ``series`` checks its reference UID."""
+    def _mask_converter(
+        self, series: DicomSeries
+    ) -> RTStructMaskConverter | SegMaskConverter | None:
+        """Converter of an RTSTRUCT or SEG ``series``, ``None`` if unsupported."""
 
         if series.is_rtstruct:
-            return self.rtstruct_converter.check_reference_uid
+            return self.rtstruct_converter
         if series.is_seg:
-            return self.seg_converter.check_reference_uid
-        return True
+            return self.seg_converter
+        return None
 
     def _resolve_reference_image(
         self,
         *,
         series: DicomSeries,
         images_by_uid: dict[str, ImageVolume],
+        check_reference_uid: bool,
     ) -> ImageVolume:
         """Resolve the image referenced by an RTSTRUCT or SEG series."""
 
@@ -275,11 +272,7 @@ class DicomConversionStep:
             if image is not None:
                 return image
 
-        if (
-            referenced_uids
-            and len(images_by_uid) == 1
-            and not self._checks_reference_uid(series)
-        ):
+        if referenced_uids and len(images_by_uid) == 1 and not check_reference_uid:
             # The reference UID check is disabled: keep the old behaviour of
             # putting the mask on the only image of the study.
             image = next(iter(images_by_uid.values()))
