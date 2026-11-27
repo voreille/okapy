@@ -8,7 +8,14 @@ import numpy as np
 import SimpleITK as sitk
 from pydicom.dataset import Dataset
 
-from okapy.dicom.conversion.utils import SLICE_MATCH_TOLERANCE
+from okapy.dicom.conversion.utils import (
+    SLICE_MATCH_TOLERANCE,
+    functional_group_sequences,
+)
+
+
+class FrameBetweenSlicesError(ValueError):
+    """A SEG frame is on the reference in-plane grid but between its slices."""
 
 
 @dataclass(frozen=True)
@@ -26,10 +33,6 @@ class HighdicomSegmentReadResult:
     volume: hd.Volume
     segment_numbers: tuple[int, ...]
     segment_infos: dict[int, dict[str, Any]]
-
-    @property
-    def available_segments(self) -> list[int]:
-        return list(self.segment_numbers)
 
     def segment_data(self, segment_number: int) -> np.ndarray:
         """Return one segment in z, y, x array order."""
@@ -69,18 +72,17 @@ class HighdicomSegmentReadResult:
         return array[..., channel_index]
 
 
+def parse_seg(dcm: Dataset) -> hd.seg.Segmentation:
+    """Parse a DICOM SEG dataset once; ``dcm`` itself is left unchanged."""
+
+    return hd.seg.Segmentation.from_dataset(dcm)
+
+
 def read_seg_segment_infos(
-    dcm: Dataset,
+    seg: hd.seg.Segmentation,
 ) -> tuple[tuple[int, ...], dict[int, dict[str, Any]]]:
     """Return the segment numbers and their labels / descriptions."""
 
-    seg = hd.seg.Segmentation.from_dataset(dcm)
-    return _segment_infos(seg)
-
-
-def _segment_infos(
-    seg: hd.seg.Segmentation,
-) -> tuple[tuple[int, ...], dict[int, dict[str, Any]]]:
     segment_numbers = tuple(int(n) for n in seg.get_segment_numbers())
 
     if not segment_numbers:
@@ -106,12 +108,16 @@ def _segment_infos(
 
 
 def read_seg_with_highdicom(
-    dcm: Dataset,
+    seg: hd.seg.Segmentation,
+    *,
+    segment_numbers: tuple[int, ...],
+    segment_infos: dict[int, dict[str, Any]],
 ) -> HighdicomSegmentReadResult:
-    """Read a regularly spaced patient-coordinate DICOM SEG."""
+    """Read a regularly spaced patient-coordinate DICOM SEG.
 
-    seg = hd.seg.Segmentation.from_dataset(dcm)
-    segment_numbers, segment_infos = _segment_infos(seg)
+    ``seg`` is the SEG parsed by :func:`parse_seg`; ``segment_numbers`` and
+    ``segment_infos`` are what :func:`read_seg_segment_infos` returns for it.
+    """
 
     volume = seg.get_volume(
         segment_numbers=segment_numbers,
@@ -188,8 +194,9 @@ def segments_on_reference_grid(
     Returns binary masks in x, y, z order per segment number, or None when the
     frames do not share the in-plane grid of ``reference`` (other size,
     orientation, pixel spacing or in-plane origin); the caller then has to
-    resample. Raises ValueError when a frame lies between reference slices or
-    outside the reference volume.
+    resample. Raises FrameBetweenSlicesError (a ValueError) when a frame lies
+    between reference slices, and ValueError when it is outside the reference
+    volume.
     """
 
     size_xyz = reference.GetSize()
@@ -201,7 +208,9 @@ def segments_on_reference_grid(
     direction = np.asarray(reference.GetDirection(), dtype=float).reshape(3, 3)
     spacing = reference.GetSpacing()
 
-    frames: list[tuple[int, int]] = []
+    # Read every frame position first: a frame on another in-plane grid means
+    # resampling, whatever the other frames look like.
+    frame_positions: list[tuple[int, tuple[float, ...], np.ndarray]] = []
 
     for frame in range(n_frames):
         orientation = _frame_attribute(
@@ -233,33 +242,35 @@ def segments_on_reference_grid(
         ):
             return None
 
-        index = np.asarray(
-            reference.TransformPhysicalPointToContinuousIndex(
-                tuple(float(x) for x in position)
-            )
-        )
+        position = tuple(float(x) for x in position)
+        index = np.asarray(reference.TransformPhysicalPointToContinuousIndex(position))
 
         if np.any(np.abs(index[:2]) > SLICE_MATCH_TOLERANCE):
             return None
 
+        frame_positions.append((int(segment_number or 1), position, index))
+
+    frames: list[tuple[int, int]] = []
+
+    for frame, (segment_number, position, index) in enumerate(frame_positions):
         slice_index = round(index[2])
         offset = abs(index[2] - slice_index)
 
         if offset > SLICE_MATCH_TOLERANCE:
-            raise ValueError(
-                f"SEG frame {frame + 1} at {tuple(float(x) for x in position)} lies "
+            raise FrameBetweenSlicesError(
+                f"SEG frame {frame + 1} at {position} lies "
                 f"{offset:.2f} slices from the nearest slice of the reference image "
                 f"(tolerance {SLICE_MATCH_TOLERANCE})."
             )
 
         if not 0 <= slice_index < size_xyz[2]:
             raise ValueError(
-                f"SEG frame {frame + 1} at {tuple(float(x) for x in position)} is "
+                f"SEG frame {frame + 1} at {position} is "
                 f"outside the reference image (slice index {slice_index}, "
                 f"{size_xyz[2]} slices)."
             )
 
-        frames.append((int(segment_number or 1), slice_index))
+        frames.append((segment_number, slice_index))
 
     pixels = np.asarray(dcm.pixel_array)
     if n_frames == 1:
@@ -284,16 +295,8 @@ def segments_on_reference_grid(
 def _frame_attribute(dcm: Dataset, frame: int, sequence: str, keyword: str):
     """Return ``keyword`` from the per-frame or shared functional groups."""
 
-    groups = []
-    if "PerFrameFunctionalGroupsSequence" in dcm:
-        groups.append(dcm.PerFrameFunctionalGroupsSequence[frame])
-    if "SharedFunctionalGroupsSequence" in dcm:
-        groups.append(dcm.SharedFunctionalGroupsSequence[0])
-
-    for group in groups:
-        if sequence in group and len(group[sequence].value) > 0:
-            item = group[sequence].value[0]
-            if keyword in item:
-                return item[keyword].value
+    for items in functional_group_sequences(dcm, frame, sequence):
+        if keyword in items[0]:
+            return items[0][keyword].value
 
     return None

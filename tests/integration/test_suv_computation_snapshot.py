@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("radiomics.featureextractor", exc_type=ImportError)
+
 from okapy_legacy.dicomconverter.converter import ExtractorConverter
 from tests.helpers.assertions import assert_or_update_features
 
@@ -11,8 +15,8 @@ def test_suv_computation_legacy_snapshot(
 ):
     output_dir = tmp_path / "nifti"
 
-    # Adapt this path to your legacy params file
-    params_path = Path("tests/configs/legacy_suv_features.yaml")
+    tests_dir = Path(__file__).parents[1]
+    params_path = tests_dir / "configs/legacy_suv_features.yaml"
 
     converter = ExtractorConverter.from_params(params_path)
 
@@ -21,9 +25,7 @@ def test_suv_computation_legacy_snapshot(
         output_folder=output_dir,
     )
 
-    golden_path = (
-        Path("tests/data/golden/suv_computation_dro/legacy_features.parquet")
-    )
+    golden_path = tests_dir / "data/golden/suv_computation_dro/legacy_features.parquet"
 
     assert_or_update_features(
         actual=features,

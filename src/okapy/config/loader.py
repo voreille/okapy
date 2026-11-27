@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import yaml
 
+from okapy.config.legacy import (
+    check_not_mixed_config,
+    legacy_config_keys,
+    migrate_legacy_config,
+)
 
 Config = dict[str, Any]
 ConfigSource = str | Path | Mapping[str, Any]
@@ -26,14 +32,18 @@ def load_config(source: ConfigSource) -> Config:
     Returns
     -------
     dict
-        A mutable copy of the configuration.
+        A mutable copy of the configuration. A legacy-shaped configuration
+        (see :func:`okapy.config.legacy.is_legacy_config`) is migrated to the
+        new shape.
 
     Raises
     ------
     FileNotFoundError
         If the configuration path does not exist.
     ValueError
-        If the YAML is empty or its root is not a mapping.
+        If the YAML is empty or its root is not a mapping, a legacy
+        configuration cannot be migrated, or legacy keys are mixed with
+        new-shape sections.
     """
 
     if isinstance(source, Mapping):
@@ -58,5 +68,10 @@ def load_config(source: ConfigSource) -> Config:
 
     if not config:
         raise ValueError("Okapy configuration cannot be empty.")
+
+    legacy_keys = legacy_config_keys(config)
+    if legacy_keys:
+        check_not_mixed_config(config, legacy_keys)
+        return migrate_legacy_config(config)
 
     return config

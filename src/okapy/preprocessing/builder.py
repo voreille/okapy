@@ -10,11 +10,17 @@ from okapy.preprocessing.step import StudyPreprocessingStep
 def build_preprocessing_step(
     config: dict[str, Any],
 ) -> StudyPreprocessingStep:
+    if "intensity_preprocessing" in config:
+        raise ValueError(
+            "'intensity_preprocessing' is not a configuration section; rename it "
+            "to 'local_preprocessing'."
+        )
+
     return StudyPreprocessingStep(
         study_config=StudyPreprocessingConfig.from_dict(config),
         geometry_section=(config.get("geometry_preprocessing") or {}),
         image_processors=ProcessorPipeline.from_config(
-            config.get("local_preprocessing") or config.get("intensity_preprocessing")
+            config.get("local_preprocessing")
         ),
         mask_processors=ProcessorPipeline.from_config(config.get("mask_preprocessing")),
     )

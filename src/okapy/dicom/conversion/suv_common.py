@@ -12,11 +12,15 @@ Computation": https://oncoray.github.io/suv_computation/suv.html
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timedelta
 import logging
 import math
+import re
+from collections.abc import Callable
+from datetime import date, datetime, time, timedelta
 
 import numpy as np
+
+from okapy.dicom.conversion.utils import get_optional_str
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +44,13 @@ MBQ_DOSE_THRESHOLD = 1e4
 # Manual, "Patient's weight": values at or above this are stored in grams.
 GRAM_WEIGHT_THRESHOLD = 1000.0
 
+# PatientSize is defined in metres; above this it can only be centimetres.
+MAX_PATIENT_SIZE_M = 3.0
+
+# Manufacturer (0008,0070) prefixes identifying GE. Matching is by prefix:
+# other vendors' names may well contain "GE" (Imagen, Agfa-Gevaert, ...).
+GE_MANUFACTURER_PREFIXES = ("GE MEDICAL", "GEMS", "GE ", "GENERAL ELECTRIC")
+
 
 def warn_once(emitted_warnings: set[str], key: str, message: str, *args) -> None:
     """Log ``message`` once per image rather than once per frame."""
@@ -54,16 +65,6 @@ def warn_once(emitted_warnings: set[str], key: str, message: str, *args) -> None
 # --------------------------------------------------------------------------
 # Attribute access
 # --------------------------------------------------------------------------
-
-
-def get_optional_str(ds, name: str) -> str | None:
-    value = getattr(ds, name, None)
-
-    if value is None:
-        return None
-
-    value = str(value).strip()
-    return value or None
 
 
 def get_optional_float(ds, name: str) -> float | None:
@@ -84,8 +85,30 @@ def get_required_float(ds, name: str) -> float:
     return value
 
 
-def positive_float_tag(ds, tag: tuple[int, int]) -> float | None:
+def private_tag(
+    ds, group: int, private_creator: str, element_offset: int
+) -> tuple[int, int] | None:
+    """Tag of a private element, resolved through its Private Creator.
+
+    PS3.5 7.8.1: a private element number only has a meaning inside the block
+    reserved by its Private Creator, which may be any of (gggg,0010-00FF).
+    Returns ``None`` when the creator is absent or the element is not present.
+    """
+
+    try:
+        block = ds.private_block(group, private_creator)
+    except KeyError:
+        return None
+
+    tag = block.get_tag(element_offset)
     if tag not in ds:
+        return None
+
+    return (tag.group, tag.element)
+
+
+def positive_float_tag(ds, tag: tuple[int, int] | None) -> float | None:
+    if tag is None or tag not in ds:
         return None
 
     value = ds[tag].value
@@ -167,9 +190,34 @@ def patient_weight_g(weight: float | None) -> float:
     return patient_weight_kg(weight) * 1000.0
 
 
-def patient_size_m(size: float | None) -> float:
+def patient_size_m(
+    size: float | None,
+    *,
+    emitted_warnings: set[str] | None = None,
+) -> float:
+    """PatientSize (0010,1020) in metres.
+
+    The attribute is defined in metres, but values in centimetres are common.
+    No patient is taller than 3 m, so a larger value is read as centimetres
+    and converted, with a warning. Pass ``emitted_warnings`` to warn once per
+    image rather than once per call.
+    """
+
     if size is None or size <= 0:
         raise SUVComputationError("PatientSize is required and must be positive.")
+
+    if size > MAX_PATIENT_SIZE_M:
+        message = (
+            "PatientSize (0010,1020) is %g, but it is defined in metres and no "
+            "patient is taller than %g m. Interpreting it as centimetres (%g m)."
+        )
+        args = (size, MAX_PATIENT_SIZE_M, size / 100.0)
+        if emitted_warnings is None:
+            logger.warning(message, *args)
+        else:
+            warn_once(emitted_warnings, "patient_size_cm", message, *args)
+
+        return size / 100.0
 
     return size
 
@@ -193,7 +241,7 @@ def normalize_suv_type(suv_type: str | None) -> str | None:
 
 
 def normalize_manufacturer(manufacturer: str | None) -> str:
-    m = (manufacturer or "").upper()
+    m = (manufacturer or "").strip().upper()
 
     if "SIEMENS" in m:
         return "SIEMENS"
@@ -201,7 +249,7 @@ def normalize_manufacturer(manufacturer: str | None) -> str:
     if "PHILIPS" in m:
         return "PHILIPS"
 
-    if "GE" in m or "GEMS" in m or "GENERAL ELECTRIC" in m:
+    if m == "GE" or m.startswith(GE_MANUFACTURER_PREFIXES):
         return "GE"
 
     return "UNKNOWN"
@@ -287,6 +335,120 @@ def body_surface_area_m2(weight_kg: float, height_m: float) -> float:
 
     height_cm = height_m * 100.0
     return 0.007184 * (weight_kg**0.425) * (height_cm**0.725)
+
+
+# --------------------------------------------------------------------------
+# Conversion of real-world values to SUVbw
+# --------------------------------------------------------------------------
+
+
+def bqml_to_suvbw(
+    activity_bqml: np.ndarray,
+    *,
+    weight_g: float,
+    dose_bq: float,
+) -> np.ndarray:
+    """SUVbw from an activity concentration in Bq/ml."""
+
+    return activity_bqml * weight_g / dose_bq
+
+
+def gml_to_suvbw(
+    scaled: np.ndarray,
+    *,
+    suv_type: str | None,
+    patient_weight: float | None,
+    patient_size: float | None,
+    sex: str | None,
+    emitted_warnings: set[str] | None = None,
+) -> np.ndarray:
+    """SUVbw from SUVx values (Units=GML) of SUV type ``suv_type``."""
+
+    suv_type = normalize_suv_type(suv_type)
+
+    if suv_type in {None, "", "BW"}:
+        return scaled
+
+    weight_kg = patient_weight_kg(patient_weight)
+    factor_kg = normalization_factor_kg(
+        suv_type=suv_type,
+        weight_kg=weight_kg,
+        height_m=patient_size_m(patient_size, emitted_warnings=emitted_warnings),
+        sex=patient_sex(sex),
+    )
+
+    # scaled is SUVx = activity * factor_g / dose.
+    # SUVbw = SUVx / factor_g * weight_g.
+    return scaled * weight_kg / factor_kg
+
+
+def cm2ml_to_suvbw(
+    scaled: np.ndarray,
+    *,
+    suv_type: str | None,
+    patient_weight: float | None,
+    patient_size: float | None,
+    emitted_warnings: set[str] | None = None,
+) -> np.ndarray:
+    """SUVbw from SUVbsa values (Units=CM2ML); ``suv_type`` must be BSA."""
+
+    if normalize_suv_type(suv_type) not in {"BSA"}:
+        raise SUVComputationError(
+            f"Units=CM2ML requires SUVType=BSA, got {suv_type!r}."
+        )
+
+    weight_g = patient_weight_g(patient_weight)
+
+    bsa_m2 = body_surface_area_m2(
+        weight_kg=patient_weight_kg(patient_weight),
+        height_m=patient_size_m(patient_size, emitted_warnings=emitted_warnings),
+    )
+    bsa_cm2 = bsa_m2 * 10_000.0
+
+    return scaled * weight_g / bsa_cm2
+
+
+def scaled_to_suvbw(
+    units: str,
+    scaled: np.ndarray,
+    *,
+    suv_type: str | None,
+    patient_weight: float | None,
+    patient_size: float | None,
+    sex: str | None,
+    emitted_warnings: set[str] | None,
+    bqml: Callable[[np.ndarray], np.ndarray],
+) -> np.ndarray | None:
+    """SUVbw from rescaled values in ``units`` (GML, CM2ML or BQML).
+
+    ``bqml`` converts Bq/ml values to SUVbw (the dose at the reference time
+    depends on the image type). Returns ``None`` for any other units: the
+    caller handles them and reports unsupported ones.
+    """
+
+    if units == "GML":
+        return gml_to_suvbw(
+            scaled,
+            suv_type=suv_type,
+            patient_weight=patient_weight,
+            patient_size=patient_size,
+            sex=sex,
+            emitted_warnings=emitted_warnings,
+        )
+
+    if units == "CM2ML":
+        return cm2ml_to_suvbw(
+            scaled,
+            suv_type=suv_type,
+            patient_weight=patient_weight,
+            patient_size=patient_size,
+            emitted_warnings=emitted_warnings,
+        )
+
+    if units == "BQML":
+        return bqml(scaled)
+
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -536,30 +698,199 @@ def warn_unrecognized_manufacturer(
 # --------------------------------------------------------------------------
 
 
+# DICOM PS3.5 6.2, TM: HH[MM[SS[.F{1,6}]]]. The legacy ACR-NEMA form
+# HH:MM:SS is still accepted by stripping the colons.
+_TM_PATTERN = re.compile(r"(\d{2})(?:(\d{2})(?:(\d{2})(?:\.(\d{1,6}))?)?)?", re.ASCII)
+
+# DICOM PS3.5 6.2, DT: YYYYMMDD[HH[MM[SS[.F{1,6}]]]][&ZZXX]. Reduced precision
+# below the day is accepted, as is an optional UTC offset.
+_DT_PATTERN = re.compile(
+    r"(\d{4})(\d{2})(\d{2})"
+    r"(?:(\d{2})(?:(\d{2})(?:(\d{2})(?:\.(\d{1,6}))?)?)?)?"
+    r"(?:([+-])(\d{2})(\d{2}))?",
+    re.ASCII,
+)
+
+_DA_PATTERN = re.compile(r"(\d{4})(\d{2})(\d{2})", re.ASCII)
+
+# PS3.5 6.2: the UTC offset of a DT value lies in -1200..+1400.
+_MIN_UTC_OFFSET_MIN = -12 * 60
+_MAX_UTC_OFFSET_MIN = 14 * 60
+
+
+#: A decay reference datetime, the UTC offset of the DT value it was read from
+#: (``None`` when it has none) and the name of that source.
+ReferenceDatetime = tuple[datetime, timedelta | None, str]
+
+
+def _parse_dt(value: str) -> tuple[datetime, timedelta | None]:
+    """Parse and validate a DICOM DT value: (naive datetime, UTC offset)."""
+
+    text = str(value).strip()
+    match = _DT_PATTERN.fullmatch(text)
+
+    if match is None:
+        raise SUVComputationError(
+            f"Invalid DICOM DT value {value!r}: expected "
+            "YYYYMMDD[HH[MM[SS[.FFFFFF]]]] with an optional &ZZXX UTC offset."
+        )
+
+    year, month, day, hour, minute, second, fraction, sign, off_h, off_m = (
+        match.groups()
+    )
+
+    offset = None
+    if sign is not None:
+        offset_min = int(off_h) * 60 + int(off_m)
+        if sign == "-":
+            offset_min = -offset_min
+        if int(off_m) >= 60 or not (
+            _MIN_UTC_OFFSET_MIN <= offset_min <= _MAX_UTC_OFFSET_MIN
+        ):
+            raise SUVComputationError(
+                f"Invalid DICOM DT value {value!r}: UTC offset out of range."
+            )
+        offset = timedelta(hours=int(off_h), minutes=int(off_m))
+        if sign == "-":
+            offset = -offset
+
+    try:
+        parsed = datetime(
+            int(year),
+            int(month),
+            int(day),
+            int(hour or 0),
+            int(minute or 0),
+            int(second or 0),
+            _microseconds(fraction),
+        )
+    except ValueError as exc:
+        raise SUVComputationError(f"Invalid DICOM DT value {value!r}: {exc}.") from exc
+
+    return parsed, offset
+
+
 def parse_dicom_datetime(value: str) -> datetime:
-    value = str(value).strip()
+    """Parse a DICOM DT value into a naive datetime.
 
-    # Drop the fractional seconds and the UTC offset suffix.
-    value = value.split(".")[0]
-    value = value.split("+")[0]
-    value = value.split("-")[0] if len(value) > 8 else value
+    The result holds the wall-clock fields written in the string. A UTC offset
+    suffix is validated and dropped, so every datetime used in the SUV
+    computation is naive and differences between them never mix naive and
+    tz-aware values.
+    """
 
-    return datetime.strptime(value, "%Y%m%d%H%M%S")
+    return _parse_dt(value)[0]
+
+
+def dicom_datetime_utc_offset(value: str) -> timedelta | None:
+    """UTC offset suffix of a DICOM DT value, or ``None`` when it has none.
+
+    The value is validated like :func:`parse_dicom_datetime`.
+    """
+
+    return _parse_dt(value)[1]
+
+
+def parse_dicom_datetime_with_offset(value: str) -> tuple[datetime, timedelta | None]:
+    """Both :func:`parse_dicom_datetime` and :func:`dicom_datetime_utc_offset`."""
+
+    return _parse_dt(value)
+
+
+def check_administration_utc_offset(
+    rph,
+    *,
+    reference_offset: timedelta | None,
+    reference_source: str,
+    series_uid: str | None,
+) -> None:
+    """Raise if the start and reference datetimes carry different UTC offsets.
+
+    Datetimes are compared as naive wall-clock values. That is only right when
+    both are in the same time zone: when both Radiopharmaceutical Start
+    DateTime (0018,1078) and the decay-correction reference carry a UTC
+    offset and the offsets differ, the uptake time would be wrong. An offset on
+    one side only, or none, keeps the wall-clock comparison.
+    """
+
+    start_datetime = get_optional_str(rph, "RadiopharmaceuticalStartDateTime")
+    if start_datetime is None or reference_offset is None:
+        return
+
+    start_offset = dicom_datetime_utc_offset(start_datetime)
+    if start_offset is None or start_offset == reference_offset:
+        return
+
+    raise SUVComputationError(
+        f"Cannot compute SUVbw for series {series_uid}: "
+        "RadiopharmaceuticalStartDateTime (0018,1078) has UTC offset "
+        f"{_format_utc_offset(start_offset)} but {reference_source} has UTC "
+        f"offset {_format_utc_offset(reference_offset)}; okapy compares them as "
+        "wall-clock times, so the uptake time would be wrong."
+    )
+
+
+def _format_utc_offset(offset: timedelta) -> str:
+    minutes = int(offset.total_seconds() // 60)
+    sign = "-" if minutes < 0 else "+"
+    hours, minutes = divmod(abs(minutes), 60)
+    return f"{sign}{hours:02d}{minutes:02d}"
 
 
 def parse_dicom_date(value: str) -> date:
-    return datetime.strptime(str(value).strip(), "%Y%m%d").date()
+    """Parse a DICOM DA value (``YYYYMMDD``)."""
+
+    match = _DA_PATTERN.fullmatch(str(value).strip())
+
+    if match is None:
+        raise SUVComputationError(
+            f"Invalid DICOM DA value {value!r}: expected YYYYMMDD."
+        )
+
+    try:
+        return date(*(int(group) for group in match.groups()))
+    except ValueError as exc:
+        raise SUVComputationError(f"Invalid DICOM DA value {value!r}: {exc}.") from exc
 
 
 def parse_dicom_time(value: str) -> time:
-    value = str(value).strip()
+    """Parse a DICOM TM value, honouring reduced precision.
 
-    if "." in value:
-        value = value.split(".")[0]
+    ``"1030"`` is 10:30:00 (``HHMM``), not 10:03:00; odd-length values such as
+    ``"930"`` are ambiguous and rejected.
+    """
 
-    value = value.replace(":", "")
+    text = str(value).strip()
 
-    return datetime.strptime(value, "%H%M%S").time()
+    # Legacy ACR-NEMA form HH:MM:SS.
+    if re.fullmatch(r"\d{2}:\d{2}:\d{2}(?:\.\d+)?", text, re.ASCII):
+        text = text.replace(":", "")
+
+    match = _TM_PATTERN.fullmatch(text)
+
+    if match is None:
+        raise SUVComputationError(
+            f"Invalid DICOM TM value {value!r}: expected HH[MM[SS[.FFFFFF]]]."
+        )
+
+    hour, minute, second, fraction = match.groups()
+
+    try:
+        return time(
+            int(hour),
+            int(minute or 0),
+            int(second or 0),
+            _microseconds(fraction),
+        )
+    except ValueError as exc:
+        raise SUVComputationError(f"Invalid DICOM TM value {value!r}: {exc}.") from exc
+
+
+def _microseconds(fraction: str | None) -> int:
+    if not fraction:
+        return 0
+
+    return int(fraction.ljust(6, "0"))
 
 
 def _seconds_of_day(dt: datetime) -> int:

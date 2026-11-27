@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-import logging
 from typing import Any
 
 import pydicom
@@ -12,6 +12,11 @@ from okapy.dicom.models import (
     ALLOWED_MODALITIES,
     IMAGE_MODALITIES,
     DicomFileRecord,
+)
+from okapy.dicom.tags import (
+    get_optional_str,
+    referenced_series_uids,
+    to_jsonable,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,7 +102,12 @@ class DicomWalker:
     ) -> Iterator[DicomFileRecord]:
         """Yield DicomFileRecord objects for valid and supported DICOM files."""
         for path in self.iter_paths(root):
-            record = self._read_record(path)
+            try:
+                record = self._read_record(path)
+            except Exception as exc:
+                # One malformed file must not abort the discovery of the others.
+                logger.warning("Skipping malformed DICOM file %s: %s", path, exc)
+                continue
             if record is not None:
                 yield record
 
@@ -110,7 +120,7 @@ class DicomWalker:
 
     def _iter_paths_one(self, root: Path) -> Iterator[Path]:
         if root.is_file():
-            if self._accept_path(root):
+            if self._accept_path(root, root.parent):
                 yield root
             return
 
@@ -120,11 +130,11 @@ class DicomWalker:
         pattern = "**/*" if self.recursive else "*"
 
         for path in root.glob(pattern):
-            if path.is_file() and self._accept_path(path):
+            if path.is_file() and self._accept_path(path, root):
                 yield path
 
-    def _accept_path(self, path: Path) -> bool:
-        if not self.include_hidden and _is_hidden(path):
+    def _accept_path(self, path: Path, root: Path) -> bool:
+        if not self.include_hidden and _is_hidden(path, root):
             return False
 
         if self.extensions is None:
@@ -144,7 +154,7 @@ class DicomWalker:
             logger.debug("Skipping non-DICOM file %s: %s", path, exc)
             return None
 
-        modality = _get_str(ds, "Modality")
+        modality = get_optional_str(ds, "Modality")
 
         if modality is None:
             logger.debug("Skipping DICOM without Modality, likely DICOMDIR: %s", path)
@@ -173,17 +183,17 @@ class DicomWalker:
 
         return DicomFileRecord(
             path=path.resolve(),
-            sop_class_uid=_get_str(ds, "SOPClassUID"),
+            sop_class_uid=get_optional_str(ds, "SOPClassUID"),
             modality=modality,
-            patient_id=_get_str(ds, "PatientID"),
-            study_instance_uid=_get_str(ds, "StudyInstanceUID"),
-            series_instance_uid=_get_str(ds, "SeriesInstanceUID"),
-            sop_instance_uid=_get_str(ds, "SOPInstanceUID"),
+            patient_id=get_optional_str(ds, "PatientID"),
+            study_instance_uid=get_optional_str(ds, "StudyInstanceUID"),
+            series_instance_uid=get_optional_str(ds, "SeriesInstanceUID"),
+            sop_instance_uid=get_optional_str(ds, "SOPInstanceUID"),
             instance_number=_get_int(ds, "InstanceNumber"),
-            series_description=_get_str(ds, "SeriesDescription"),
+            series_description=get_optional_str(ds, "SeriesDescription"),
             image_position_patient=image_position_patient,
             image_orientation_patient=image_orientation_patient,
-            referenced_series_uids=_get_referenced_series_uids(ds),
+            referenced_series_uids=referenced_series_uids(ds),
             extra_dicom_tags=self._get_extra_dicom_tags(ds),
         )
 
@@ -193,9 +203,11 @@ class DicomWalker:
         Standard/base tags are still included when requested. This is intentional:
         if a tag is listed in additional_dicom_tags, the caller likely wants it in
         the final feature table even if Okapy also stores it as a first-class field.
+        Values are made CSV/JSON-friendly with :func:`to_jsonable`; sequence-valued
+        tags should usually be handled by dedicated code instead.
         """
         return {
-            tag: _get_dicom_value(ds, tag)
+            tag: to_jsonable(getattr(ds, tag, None))
             for tag in self.additional_dicom_tags
             if hasattr(ds, tag)
         }
@@ -203,56 +215,6 @@ class DicomWalker:
 
 def _unique_preserve_order(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(values))
-
-
-def _get_dicom_value(ds, name: str) -> Any:
-    """Extract a DICOM value in a CSV/JSON-friendly form.
-
-    This is deliberately conservative: simple scalar values are preserved,
-    bytes are decoded, multi-values become lists, and complex DICOM objects are
-    converted to strings. Sequence-valued tags should usually be handled by
-    dedicated code instead of being requested as extra tags.
-    """
-    value = getattr(ds, name, None)
-
-    if value is None:
-        return None
-
-    if isinstance(value, (str, int, float, bool)):
-        return value
-
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="ignore")
-
-    # pydicom MultiValue behaves enough like a list for this conversion.
-    if isinstance(value, (list, tuple)):
-        return [_dicom_scalar_to_python(v) for v in value]
-
-    return _dicom_scalar_to_python(value)
-
-
-def _dicom_scalar_to_python(value) -> Any:
-    if value is None:
-        return None
-
-    if isinstance(value, (str, int, float, bool)):
-        return value
-
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="ignore")
-
-    # pydicom DSfloat/IS can generally be converted to float/int, but keeping
-    # str is safer for metadata export because it avoids surprises with VRs.
-    return str(value)
-
-
-def _get_str(ds, name: str) -> str | None:
-    value = getattr(ds, name, None)
-    if value is None:
-        return None
-
-    value = str(value).strip()
-    return value or None
 
 
 def _get_int(ds, name: str) -> int | None:
@@ -305,33 +267,11 @@ def _get_float_tuple6(
     return result[0], result[1], result[2], result[3], result[4], result[5]
 
 
-def _get_referenced_series_uids(ds) -> tuple[str, ...]:
-    """Extract referenced SeriesInstanceUID values from common DICOM locations.
+def _is_hidden(path: Path, root: Path) -> bool:
+    """Whether a part of ``path`` below ``root`` is hidden.
 
-    SEG commonly exposes ReferencedSeriesSequence directly.
-    RTSTRUCT usually nests it under:
-      ReferencedFrameOfReferenceSequence
-        -> RTReferencedStudySequence
-        -> RTReferencedSeriesSequence
+    Only the parts relative to ``root`` are checked, so a root that itself
+    lives under a hidden directory (e.g. ``~/.cache/data``) is still walked.
     """
-    refs: list[str] = []
 
-    # Common for SEG and some other objects.
-    for item in getattr(ds, "ReferencedSeriesSequence", []):
-        uid = getattr(item, "SeriesInstanceUID", None)
-        if uid is not None:
-            refs.append(str(uid))
-
-    # Common for RTSTRUCT.
-    for frame_item in getattr(ds, "ReferencedFrameOfReferenceSequence", []):
-        for study_item in getattr(frame_item, "RTReferencedStudySequence", []):
-            for series_item in getattr(study_item, "RTReferencedSeriesSequence", []):
-                uid = getattr(series_item, "SeriesInstanceUID", None)
-                if uid is not None:
-                    refs.append(str(uid))
-
-    return tuple(dict.fromkeys(refs))
-
-
-def _is_hidden(path: Path) -> bool:
-    return any(part.startswith(".") for part in path.parts)
+    return any(part.startswith(".") for part in path.relative_to(root).parts)

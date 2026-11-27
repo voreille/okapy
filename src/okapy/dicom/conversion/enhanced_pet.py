@@ -13,38 +13,45 @@ the SUV computation manual (v3.0.0).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from pathlib import Path
 import logging
+from dataclasses import dataclass, field
+from datetime import timedelta
+from pathlib import Path
 
 import numpy as np
 import pydicom
+from numpy.typing import DTypeLike
 
+from okapy.core.geometry import as_vec3
 from okapy.core.models import ImageVolume, VolumeStage
 from okapy.dicom.conversion.suv_common import (
+    ReferenceDatetime,
     SUVComputationError,
     administration_datetime,
     apply_rescale,
     average_count_rate_time_s,
-    body_surface_area_m2,
+    bqml_to_suvbw,
+    check_administration_utc_offset,
     decay_corrected_dose_bq,
     get_optional_float,
     get_optional_str,
-    normalization_factor_kg,
     normalize_suv_type,
-    parse_dicom_datetime,
-    patient_sex,
-    patient_size_m,
+    parse_dicom_datetime_with_offset,
     patient_weight_g,
-    patient_weight_kg,
     radionuclide_half_life_s,
     radionuclide_total_dose_bq,
     radiopharmaceutical_item,
+    scaled_to_suvbw,
     warn_once,
 )
 from okapy.dicom.conversion.utils import (
-    safe_name,
+    SLICE_SPACING_TOLERANCE,
+    check_no_duplicate_positions,
+    check_stacking_along_normal,
+    functional_group_sequences,
+    geometry_from_positions,
+    join_inside,
+    make_filename,
     short_uid,
     sitk_image_from_array_xyz,
     write_image_unique,
@@ -115,7 +122,7 @@ class EnhancedPETSUVConverter:
         self,
         *,
         extension: str = "nii.gz",
-        dtype: np.dtype = np.float32,
+        dtype: DTypeLike = np.float32,
         identity_config: SeriesIdentityConfig | None = None,
     ) -> None:
         self.extension = extension
@@ -135,10 +142,13 @@ class EnhancedPETSUVConverter:
         image_xyz = np.transpose(image_xyz, (1, 0, 2))
         image_xyz = image_xyz.astype(self.dtype, copy=False)
 
-        origin, spacing, direction = _geometry(
-            frames=frames,
+        origin, spacing, direction = geometry_from_positions(
+            first_position=frames[0].position,
+            last_position=frames[-1].position,
+            n_slices=len(frames),
             orientation=orientation,
             pixel_spacing=pixel_spacing,
+            single_slice_spacing=lambda: _frame_slice_thickness(frames[0]),
         )
 
         image = sitk_image_from_array_xyz(
@@ -148,7 +158,10 @@ class EnhancedPETSUVConverter:
             direction=direction,
         )
 
-        path = write_image_unique(image, output_dir / self._make_filename(series))
+        path = write_image_unique(
+            image,
+            join_inside(output_dir, self._make_filename(series)),
+        )
 
         return ImageVolume.from_sitk(
             path=path,
@@ -204,78 +217,48 @@ class EnhancedPETSUVConverter:
             )
 
         frames.sort(key=lambda frame: frame.orthogonal_position)
+        _check_frame_geometry(
+            frames, orientation, series_uid=series.series_instance_uid
+        )
 
         return frames, orientation, pixel_spacing
 
     def _make_filename(self, series: DicomSeries) -> str:
-        patient = safe_name(series.patient_id)
-        modality = safe_name(series.modality)
-        uid = short_uid(series.series_instance_uid)
-        return f"{patient}__{modality}__{uid}.{self.extension}"
+        return make_filename(
+            series.patient_id,
+            series.modality,
+            short_uid(series.series_instance_uid),
+            extension=self.extension,
+        )
 
     # -- SUV computation --------------------------------------------------
 
     def _frame_to_suvbw(self, frame: _Frame) -> np.ndarray:
         units, suv_type, scaled = _real_world_values(frame)
         meta = frame.meta
+        # The frame's SUV type, else the instance-level SUV Type (0054,1006).
+        suv_type = normalize_suv_type(suv_type) or normalize_suv_type(meta.suv_type)
 
-        if units == "GML":
-            return self._gml_to_suvbw(scaled, suv_type, meta)
-
-        if units == "CM2ML":
-            return self._cm2ml_to_suvbw(scaled, suv_type, meta)
-
-        if units == "BQML":
-            weight_g = patient_weight_g(meta.patient_weight_kg)
-            return scaled * weight_g / _dose_at_reference_time(frame)
+        suvbw = scaled_to_suvbw(
+            units,
+            scaled,
+            suv_type=suv_type,
+            patient_weight=meta.patient_weight_kg,
+            patient_size=meta.patient_size_m,
+            sex=meta.patient_sex,
+            emitted_warnings=meta.emitted_warnings,
+            bqml=lambda activity_bqml: bqml_to_suvbw(
+                activity_bqml,
+                weight_g=patient_weight_g(meta.patient_weight_kg),
+                dose_bq=_dose_at_reference_time(frame),
+            ),
+        )
+        if suvbw is not None:
+            return suvbw
 
         raise SUVComputationError(
             f"Unsupported physical units {units!r} in the Enhanced PET frame."
         )
-
-    def _gml_to_suvbw(
-        self,
-        scaled: np.ndarray,
-        suv_type: str | None,
-        meta: EnhancedPETMetadata,
-    ) -> np.ndarray:
-        suv_type = normalize_suv_type(suv_type) or normalize_suv_type(meta.suv_type)
-
-        if suv_type in {None, "", "BW"}:
-            return scaled
-
-        weight_kg = patient_weight_kg(meta.patient_weight_kg)
-        factor_kg = normalization_factor_kg(
-            suv_type=suv_type,
-            weight_kg=weight_kg,
-            height_m=patient_size_m(meta.patient_size_m),
-            sex=patient_sex(meta.patient_sex),
-        )
-
-        return scaled * weight_kg / factor_kg
-
-    def _cm2ml_to_suvbw(
-        self,
-        scaled: np.ndarray,
-        suv_type: str | None,
-        meta: EnhancedPETMetadata,
-    ) -> np.ndarray:
-        suv_type = normalize_suv_type(suv_type) or normalize_suv_type(meta.suv_type)
-
-        if suv_type not in {"BSA"}:
-            raise SUVComputationError(
-                f"Units=CM2ML requires SUVType=BSA, got {suv_type!r}."
-            )
-
-        bsa_cm2 = (
-            body_surface_area_m2(
-                weight_kg=patient_weight_kg(meta.patient_weight_kg),
-                height_m=patient_size_m(meta.patient_size_m),
-            )
-            * 10_000.0
-        )
-
-        return scaled * patient_weight_g(meta.patient_weight_kg) / bsa_cm2
 
 
 # --------------------------------------------------------------------------
@@ -295,28 +278,10 @@ def _extract_metadata(ds) -> EnhancedPETMetadata:
 
 
 def _functional_group(ds, frame_index: int, name: str):
-    """Per-frame functional group item, falling back to the shared one.
+    """Item of the ``name`` functional group that applies to one frame."""
 
-    Manual: "Shared Functional Groups define default values for all frames,
-    while Per-frame Functional Groups override them where specified."
-    """
-
-    per_frame = ds.PerFrameFunctionalGroupsSequence[frame_index]
-    sequence = getattr(per_frame, name, None)
-
-    if sequence is not None and len(sequence) > 0:
-        return sequence[0]
-
-    shared = getattr(ds, "SharedFunctionalGroupsSequence", None)
-    if shared is None or len(shared) == 0:
-        return None
-
-    sequence = getattr(shared[0], name, None)
-
-    if sequence is None or len(sequence) == 0:
-        return None
-
-    return sequence[0]
+    sequences = functional_group_sequences(ds, frame_index, name)
+    return sequences[0][0] if sequences else None
 
 
 # --------------------------------------------------------------------------
@@ -347,7 +312,7 @@ def _frame_position(ds, frame_index: int, *, path: Path) -> tuple[float, float, 
             f"Sequence (0020,9113) of frame {frame_index} in {path.name}."
         )
 
-    return tuple(float(x) for x in value)
+    return as_vec3(value)
 
 
 def _frame_pixel_spacing(ds, frame_index: int, *, path: Path) -> tuple[float, float]:
@@ -364,31 +329,40 @@ def _frame_pixel_spacing(ds, frame_index: int, *, path: Path) -> tuple[float, fl
     return row_spacing, col_spacing
 
 
-def _geometry(*, frames, orientation, pixel_spacing):
-    row = orientation[:3]
-    col = orientation[3:]
-    normal = np.cross(row, col)
+def _check_frame_geometry(frames, orientation, *, series_uid: str) -> None:
+    """Reject frames that do not form a regularly spaced, untilted stack.
 
-    direction = tuple(
-        float(x) for x in np.stack([row, col, normal], axis=1).ravel()
+    Enhanced PET frames are not gap-filled: every spacing between consecutive
+    frames must match the median one within ``SLICE_SPACING_TOLERANCE``.
+    """
+
+    if len(frames) < 2:
+        return
+
+    orthogonal_positions = [frame.orthogonal_position for frame in frames]
+    check_no_duplicate_positions(orthogonal_positions, series_uid=series_uid)
+
+    d_frames = np.diff(np.asarray(orthogonal_positions, dtype=float))
+    spacing = float(np.median(d_frames))
+    deviation = np.abs(d_frames - spacing) / spacing
+
+    if np.any(deviation > SLICE_SPACING_TOLERANCE):
+        raise ValueError(
+            f"Enhanced PET series {series_uid} has non-uniform frame spacing: "
+            f"gaps of {d_frames[deviation > SLICE_SPACING_TOLERANCE].tolist()} mm "
+            f"for a frame spacing of {spacing} mm."
+        )
+
+    check_stacking_along_normal(
+        np.asarray([frame.position for frame in frames], dtype=float),
+        np.cross(orientation[:3], orientation[3:]),
+        series_uid=series_uid,
     )
 
-    origin = frames[0].position
-    row_spacing, col_spacing = pixel_spacing
 
-    if len(frames) > 1:
-        first = np.asarray(frames[0].position, dtype=float)
-        last = np.asarray(frames[-1].position, dtype=float)
-        z_spacing = float(np.linalg.norm(last - first) / (len(frames) - 1))
-    else:
-        item = _functional_group(
-            frames[0].dataset,
-            frames[0].index,
-            "PixelMeasuresSequence",
-        )
-        z_spacing = float(getattr(item, "SliceThickness", 1.0) if item else 1.0)
-
-    return origin, (col_spacing, row_spacing, z_spacing), direction
+def _frame_slice_thickness(frame: _Frame) -> float:
+    item = _functional_group(frame.dataset, frame.index, "PixelMeasuresSequence")
+    return float(getattr(item, "SliceThickness", 1.0) if item else 1.0)
 
 
 # --------------------------------------------------------------------------
@@ -405,13 +379,18 @@ def _real_world_values(frame: _Frame) -> tuple[str, str | None, np.ndarray]:
     Transformation Sequence combined with Rescale Type.
     """
 
-    stored = frame.dataset.pixel_array[frame.index]
+    stored = frame.dataset.pixel_array
+    # pydicom returns a 2D array for a single-frame instance.
+    if stored.ndim == 3:
+        stored = stored[frame.index]
     mapping = _select_real_world_value_mapping(frame)
 
     if mapping is not None:
         units, suv_type, item = mapping
         slope = get_optional_float(item, "RealWorldValueSlope")
         intercept = get_optional_float(item, "RealWorldValueIntercept")
+        # _select_real_world_value_mapping only keeps items with a slope.
+        assert slope is not None
 
         scaled = apply_rescale(
             stored,
@@ -465,20 +444,16 @@ def _real_world_values(frame: _Frame) -> tuple[str, str | None, np.ndarray]:
 def _select_real_world_value_mapping(frame: _Frame):
     """Pick the best Real World Value Mapping item for one frame."""
 
-    per_frame = frame.dataset.PerFrameFunctionalGroupsSequence[frame.index]
-    sequence = getattr(per_frame, "RealWorldValueMappingSequence", None)
+    sequences = functional_group_sequences(
+        frame.dataset, frame.index, "RealWorldValueMappingSequence"
+    )
 
-    if sequence is None or len(sequence) == 0:
-        shared = getattr(frame.dataset, "SharedFunctionalGroupsSequence", None)
-        if shared is not None and len(shared) > 0:
-            sequence = getattr(shared[0], "RealWorldValueMappingSequence", None)
-
-    if sequence is None or len(sequence) == 0:
+    if not sequences:
         return None
 
     candidates: list[tuple[int, str, str | None, object]] = []
 
-    for item in sequence:
+    for item in sequences[0]:
         units_and_type = _units_from_measurement_code(item)
 
         if units_and_type is None:
@@ -550,7 +525,16 @@ def _dose_at_reference_time(frame: _Frame) -> float:
     dose_bq = radionuclide_total_dose_bq(rph)
     half_life_s = radionuclide_half_life_s(rph)
 
-    reference_dt = _decay_correction_reference_datetime(frame, half_life_s)
+    reference_dt, reference_offset, reference_source = (
+        _decay_correction_reference_datetime(frame, half_life_s)
+    )
+
+    check_administration_utc_offset(
+        rph,
+        reference_offset=reference_offset,
+        reference_source=reference_source,
+        series_uid=get_optional_str(ds, "SeriesInstanceUID"),
+    )
 
     return decay_corrected_dose_bq(
         dose_bq=dose_bq,
@@ -570,7 +554,9 @@ def _dose_at_reference_time(frame: _Frame) -> float:
 
 def _decay_correction_reference_datetime(
     frame: _Frame, half_life_s: float
-) -> datetime:
+) -> ReferenceDatetime:
+    """Decay reference datetime, the UTC offset of its DT value and its source."""
+
     meta = frame.meta
     decay_corrected = (meta.decay_corrected or "").upper()
 
@@ -588,7 +574,10 @@ def _decay_correction_reference_datetime(
                 "is unknown and SUVbw cannot be computed."
             )
 
-        return parse_dicom_datetime(meta.decay_correction_datetime)
+        return (
+            *parse_dicom_datetime_with_offset(meta.decay_correction_datetime),
+            "Decay Correction DateTime (0018,9701)",
+        )
 
     content = _functional_group(frame.dataset, frame.index, "FrameContentSequence")
 
@@ -603,7 +592,10 @@ def _decay_correction_reference_datetime(
     frame_reference_dt = get_optional_str(content, "FrameReferenceDateTime")
 
     if frame_reference_dt is not None:
-        return parse_dicom_datetime(frame_reference_dt)
+        return (
+            *parse_dicom_datetime_with_offset(frame_reference_dt),
+            "Frame Reference DateTime (0018,9151)",
+        )
 
     frame_acquisition_dt = get_optional_str(content, "FrameAcquisitionDateTime")
     frame_duration_ms = get_optional_float(content, "FrameAcquisitionDuration")
@@ -633,4 +625,11 @@ def _decay_correction_reference_datetime(
     # Frame Acquisition Duration is stored in ms.
     tave_s = average_count_rate_time_s(frame_duration_ms / 1000.0, half_life_s)
 
-    return parse_dicom_datetime(frame_acquisition_dt) + timedelta(seconds=tave_s)
+    acquisition_dt, acquisition_offset = parse_dicom_datetime_with_offset(
+        frame_acquisition_dt
+    )
+    return (
+        acquisition_dt + timedelta(seconds=tave_s),
+        acquisition_offset,
+        "Frame Acquisition DateTime (0018,9074)",
+    )

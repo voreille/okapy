@@ -1,13 +1,10 @@
 from pathlib import Path
 
-import pytest
-
 from okapy.dicom.collector import DicomStudyCollector
 from okapy.dicom.conversion.image import SimpleITKImageSeriesConverter
 from okapy.dicom.conversion.suv import PETSUVConverter
-
-from tests.helpers.image_snapshots import converted_images_summary
 from tests.helpers.assertions import assert_or_update_json
+from tests.helpers.image_snapshots import converted_images_summary
 from tests.helpers.suv_assertions import dro_expects_error
 
 
@@ -51,8 +48,9 @@ def test_suv_computation_new_conversion_snapshot(
 
     actual = converted_images_summary(converted_images)
 
-    golden_path = Path(
-        "tests/data/golden/suv_computation_dro/new_conversion_summary.json"
+    golden_path = (
+        Path(__file__).parents[1]
+        / "data/golden/suv_computation_dro/new_conversion_summary.json"
     )
 
     assert_or_update_json(

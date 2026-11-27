@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from pathlib import Path
 import logging
-from typing import Iterable
+import warnings
+from collections.abc import Iterable
+from pathlib import Path
 
 import numpy as np
 import pydicom
@@ -18,13 +19,27 @@ from okapy.core.models import (
 from okapy.dicom.conversion.utils import (
     SLICE_MATCH_TOLERANCE,
     image_metadata,
-    safe_name,
+    join_inside,
+    make_filename,
+    referenced_series_uids,
     sitk_mask_like_reference,
     write_image_unique,
 )
 from okapy.dicom.models import DicomSeries
 
 logger = logging.getLogger(__name__)
+
+_CHECK_REFERENCE_DEPRECATED = (
+    "RTStructMaskConverter.check_reference is deprecated; use "
+    "check_reference_uid instead."
+)
+
+
+def _warn_check_reference_deprecated(
+    message: str = _CHECK_REFERENCE_DEPRECATED,
+) -> None:
+    # stacklevel=3: past this helper and the converter method, at the caller.
+    warnings.warn(message, DeprecationWarning, stacklevel=3)
 
 
 class EmptyContourError(RuntimeError):
@@ -45,11 +60,31 @@ class RTStructMaskConverter:
         *,
         extension: str = "nii.gz",
         skip_empty: bool = True,
-        check_reference: bool = True,
+        check_reference_uid: bool = True,
+        check_reference: bool | None = None,
     ) -> None:
+        if check_reference is not None:
+            _warn_check_reference_deprecated(
+                "RTStructMaskConverter(check_reference=...) is deprecated; use "
+                "check_reference_uid=... instead."
+            )
+            check_reference_uid = check_reference
+
         self.extension = extension
         self.skip_empty = skip_empty
-        self.check_reference = check_reference
+        self.check_reference_uid = check_reference_uid
+
+    @property
+    def check_reference(self) -> bool:
+        """Deprecated alias of :attr:`check_reference_uid`."""
+
+        _warn_check_reference_deprecated()
+        return self.check_reference_uid
+
+    @check_reference.setter
+    def check_reference(self, value: bool) -> None:
+        _warn_check_reference_deprecated()
+        self.check_reference_uid = value
 
     def convert(
         self,
@@ -61,20 +96,21 @@ class RTStructMaskConverter:
         if not series.is_rtstruct:
             raise ValueError(f"Expected RTSTRUCT series, got {series.modality}.")
 
-        datasets = [pydicom.dcmread(str(path)) for path in series.paths]
+        paths = series.paths
 
-        if not datasets:
+        if not paths:
             raise ValueError(f"RTSTRUCT series {series.series_instance_uid} is empty.")
 
-        if len(datasets) > 1:
+        # Only the first file is used: the others are not read.
+        dcm = pydicom.dcmread(str(paths[0]))
+
+        if len(paths) > 1:
             logger.warning(
                 "Multiple RTSTRUCT files found in series %s. Using the first one.",
                 series.series_instance_uid,
             )
 
-        dcm = datasets[0]
-
-        if self.check_reference:
+        if self.check_reference_uid:
             self._check_reference_series(
                 dcm=dcm,
                 reference_image=reference_image,
@@ -123,7 +159,7 @@ class RTStructMaskConverter:
                 reference_image=reference_image,
                 label=label,
             )
-            path = write_image_unique(mask_image, output_dir / filename)
+            path = write_image_unique(mask_image, join_inside(output_dir, filename))
 
             masks.append(
                 MaskVolume.from_sitk(
@@ -168,6 +204,11 @@ class RTStructMaskConverter:
 
         size_xyz = reference_image.GetSize()
         mask_xyz = np.zeros(size_xyz, dtype=np.uint8)
+        # Contours per slice as (in-plane vertices, rasterized pixel rows and
+        # columns). They are combined by nesting depth once every contour has
+        # been read.
+        slice_contours: dict[int, list[_SliceContour]] = {}
+        clipped = 0
 
         for contour in contour_sequence:
             contour_data = getattr(contour, "ContourData", None)
@@ -175,7 +216,7 @@ class RTStructMaskConverter:
             if contour_data is None:
                 continue
 
-            nodes = np.asarray(contour_data, dtype=float).reshape((-1, 3))
+            nodes = np.asarray(contour_data, dtype=float).reshape(-1, 3)
 
             if nodes.shape[0] < 3:
                 logger.debug(
@@ -209,33 +250,47 @@ class RTStructMaskConverter:
                 )
 
             if z_index < 0 or z_index >= mask_xyz.shape[2]:
-                raise RuntimeError(
-                    f"RTSTRUCT contour for label {label!r} has out-of-bounds "
-                    f"z index {z_index}; mask z size is {mask_xyz.shape[2]}."
+                logger.warning(
+                    "Skipping RTSTRUCT contour for label %r: it is outside the "
+                    "reference image grid (z index %d, %d slices).",
+                    label,
+                    z_index,
+                    mask_xyz.shape[2],
                 )
+                continue
+
+            # A pixel centre is on the grid when its index is in [0, size - 1];
+            # vertices beyond half a voxel outside it mean the polygon is clipped.
+            in_plane = voxel_indices[:, :2]
+            if np.any(in_plane < -0.5) or np.any(
+                in_plane > np.asarray(mask_xyz.shape[:2]) - 0.5
+            ):
+                clipped += 1
 
             # mask_xyz is indexed as [x, y, z]. skimage.draw.polygon returns
             # coordinates for the first and second array dimensions, so we pass
-            # x and y coordinates in that order.
-            rr, cc = polygon(voxel_indices[:, 0], voxel_indices[:, 1])
+            # x and y coordinates in that order; ``shape`` clips to the grid.
+            rr, cc = polygon(
+                voxel_indices[:, 0], voxel_indices[:, 1], shape=mask_xyz.shape[:2]
+            )
 
-            if len(rr) == 0 or len(cc) == 0:
+            if len(rr) == 0:
                 continue
 
-            if (
-                np.min(rr) < 0
-                or np.min(cc) < 0
-                or np.max(rr) >= mask_xyz.shape[0]
-                or np.max(cc) >= mask_xyz.shape[1]
-            ):
-                raise RuntimeError(
-                    f"RTSTRUCT contour for label {label!r} is out of bounds. "
-                    f"x range=({np.min(rr)}, {np.max(rr)}), "
-                    f"y range=({np.min(cc)}, {np.max(cc)}), "
-                    f"mask shape={mask_xyz.shape}."
-                )
+            slice_contours.setdefault(z_index, []).append((in_plane, rr, cc))
 
-            mask_xyz[rr, cc, z_index] = 1
+        if clipped:
+            logger.warning(
+                "%d RTSTRUCT contour(s) for label %r extend outside the reference "
+                "image grid; they were clipped to it.",
+                clipped,
+                label,
+            )
+
+        for z_index, contours in slice_contours.items():
+            mask_xyz[:, :, z_index] = _combine_slice_contours(
+                contours, shape=mask_xyz.shape[:2]
+            )
 
         return mask_xyz
 
@@ -246,7 +301,7 @@ class RTStructMaskConverter:
         reference_image: ImageVolume,
         rtstruct_series: DicomSeries,
     ) -> None:
-        referenced_uids = set(_get_referenced_series_uids_from_rtstruct(dcm))
+        referenced_uids = set(referenced_series_uids(dcm))
 
         if not referenced_uids:
             logger.warning(
@@ -256,12 +311,10 @@ class RTStructMaskConverter:
             return
 
         if reference_image.series_instance_uid not in referenced_uids:
-            logger.warning(
-                "RTSTRUCT series %s references image series %s, but it is being "
-                "rasterized on series %s.",
-                rtstruct_series.series_instance_uid,
-                sorted(referenced_uids),
-                reference_image.series_instance_uid,
+            raise ValueError(
+                f"RTSTRUCT series {rtstruct_series.series_instance_uid} references "
+                f"image series {sorted(referenced_uids)}, not the reference image "
+                f"series {reference_image.series_instance_uid}."
             )
 
     def _make_filename(
@@ -270,15 +323,122 @@ class RTStructMaskConverter:
         reference_image: ImageVolume,
         label: str,
     ) -> str:
-        patient = safe_name(reference_image.patient_id)
-        label = safe_name(label)
-        reference_modality = safe_name(reference_image.modality)
-        reference_uid = safe_name(reference_image.series_instance_uid)
-
-        return (
-            f"{patient}__{label}__RTSTRUCT__{reference_modality}__"
-            f"{reference_uid}.{self.extension}"
+        return make_filename(
+            reference_image.patient_id,
+            label,
+            "RTSTRUCT",
+            reference_image.modality,
+            reference_image.series_instance_uid,
+            extension=self.extension,
         )
+
+
+#: One contour of a slice: in-plane vertices, and the rows and columns of the
+#: pixels it rasterizes to.
+_SliceContour = tuple[np.ndarray, np.ndarray, np.ndarray]
+
+#: Distance (in pixels) within which a vertex is on a polygon boundary.
+_BOUNDARY_TOLERANCE = 1e-6
+
+
+def _combine_slice_contours(
+    contours: list[_SliceContour],
+    *,
+    shape: tuple[int, int],
+) -> np.ndarray:
+    """Combine the contours of one ROI on one slice by nesting depth.
+
+    A contour's depth is the number of other contours of the slice that contain
+    it. Even depths add area, odd depths cut a hole. Contours are painted from
+    the shallowest to the deepest, so each pixel takes the value of the deepest
+    contour covering it; contours that only touch (same depth) fill their union.
+    """
+
+    plane = np.zeros(shape, dtype=bool)
+
+    if len(contours) == 1:
+        _, rr, cc = contours[0]
+        plane[rr, cc] = True
+        return plane
+
+    # A contour can only be contained in another whose bounding box, widened by
+    # the boundary tolerance, holds its own: skip the full test otherwise. The
+    # margin also covers the rounding of the containment test on far vertices.
+    boxes = []
+    for vertices, _, _ in contours:
+        low, high = vertices.min(axis=0), vertices.max(axis=0)
+        margin = _BOUNDARY_TOLERANCE + 1e-12 * float(
+            np.max(np.abs(np.concatenate((low, high))))
+        )
+        boxes.append((low, high, margin))
+
+    def contains(j: int, i: int) -> bool:
+        other_low, other_high, margin = boxes[j]
+        low, high, _ = boxes[i]
+        if np.any(low < other_low - margin) or np.any(high > other_high + margin):
+            return False
+        return _polygon_contains(contours[j][0], contours[i][0])
+
+    depths = [
+        sum(contains(j, i) for j in range(len(contours)) if j != i)
+        for i in range(len(contours))
+    ]
+
+    for depth, (_, rr, cc) in sorted(
+        zip(depths, contours, strict=True), key=lambda item: item[0]
+    ):
+        plane[rr, cc] = depth % 2 == 0
+    return plane
+
+
+def _polygon_contains(polygon_xy: np.ndarray, points_xy: np.ndarray) -> bool:
+    """Whether ``polygon_xy`` contains the contour with vertices ``points_xy``.
+
+    Contained means every vertex is inside or on the boundary of the polygon
+    and at least one is strictly inside, so contours that only share an edge or
+    a corner are not nested.
+    """
+
+    on_boundary = _on_polygon_boundary(polygon_xy, points_xy)
+    inside = _points_strictly_inside(polygon_xy, points_xy) & ~on_boundary
+    return bool(np.all(inside | on_boundary) and np.any(inside))
+
+
+def _on_polygon_boundary(
+    polygon_xy: np.ndarray,
+    points_xy: np.ndarray,
+    tolerance: float = _BOUNDARY_TOLERANCE,
+) -> np.ndarray:
+    start = polygon_xy[None, :, :]
+    end = np.roll(polygon_xy, -1, axis=0)[None, :, :]
+    points = points_xy[:, None, :]
+    edge = end - start
+    length_sq = np.sum(edge**2, axis=2)
+    projection = np.sum((points - start) * edge, axis=2)
+    t = np.divide(
+        projection,
+        length_sq,
+        out=np.zeros_like(projection),
+        where=length_sq > 0,
+    )
+    closest = start + np.clip(t, 0.0, 1.0)[:, :, None] * edge
+    distance = np.sqrt(np.sum((points - closest) ** 2, axis=2))
+    return np.any(distance <= tolerance, axis=1)
+
+
+def _points_strictly_inside(
+    polygon_xy: np.ndarray, points_xy: np.ndarray
+) -> np.ndarray:
+    """Even-odd ray casting; points on the boundary give an arbitrary result."""
+
+    x, y = points_xy[:, 0:1], points_xy[:, 1:2]
+    x0, y0 = polygon_xy[None, :, 0], polygon_xy[None, :, 1]
+    x1 = np.roll(polygon_xy[:, 0], -1)[None, :]
+    y1 = np.roll(polygon_xy[:, 1], -1)[None, :]
+    crosses = (y0 > y) != (y1 > y)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        x_cross = x0 + (y - y0) * (x1 - x0) / (y1 - y0)
+    return np.sum(crosses & (x < x_cross), axis=1) % 2 == 1
 
 
 def _roi_number_to_name(dcm) -> dict[int, str]:
@@ -296,24 +456,3 @@ def _roi_number_to_contours(dcm) -> dict[int, object]:
         mapping[roi_number] = getattr(roi_contour, "ContourSequence", [])
 
     return mapping
-
-
-def _get_referenced_series_uids_from_rtstruct(dcm) -> tuple[str, ...]:
-    """Extract image series UIDs referenced by an RTSTRUCT dataset."""
-
-    refs: list[str] = []
-
-    for frame_ref in getattr(dcm, "ReferencedFrameOfReferenceSequence", []):
-        for study_ref in getattr(frame_ref, "RTReferencedStudySequence", []):
-            for series_ref in getattr(study_ref, "RTReferencedSeriesSequence", []):
-                uid = getattr(series_ref, "SeriesInstanceUID", None)
-                if uid is not None:
-                    refs.append(str(uid))
-
-    # Some objects may also contain the direct sequence.
-    for series_ref in getattr(dcm, "ReferencedSeriesSequence", []):
-        uid = getattr(series_ref, "SeriesInstanceUID", None)
-        if uid is not None:
-            refs.append(str(uid))
-
-    return tuple(dict.fromkeys(refs))

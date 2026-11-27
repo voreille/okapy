@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 def assert_json_close(actual, expected, *, rtol: float = 1e-5, atol: float = 1e-5):
@@ -17,7 +18,7 @@ def assert_json_close(actual, expected, *, rtol: float = 1e-5, atol: float = 1e-
         assert isinstance(expected, list)
         assert len(actual) == len(expected)
 
-        for a, e in zip(actual, expected):
+        for a, e in zip(actual, expected, strict=True):
             assert_json_close(a, e, rtol=rtol, atol=atol)
 
     elif isinstance(actual, float):
@@ -25,6 +26,15 @@ def assert_json_close(actual, expected, *, rtol: float = 1e-5, atol: float = 1e-
 
     else:
         assert actual == expected
+
+
+def _require_golden(golden_path: Path) -> None:
+    if not golden_path.exists():
+        pytest.fail(
+            f"Golden file {golden_path} does not exist; run with UPDATE_GOLDEN=1 "
+            "to create it."
+        )
+
 
 def assert_or_update_json(
     actual: dict,
@@ -36,6 +46,7 @@ def assert_or_update_json(
         golden_path.write_text(json.dumps(actual, indent=2, sort_keys=True))
         return
 
+    _require_golden(golden_path)
     expected = json.loads(golden_path.read_text())
     assert_json_close(actual, expected)
 
@@ -57,7 +68,8 @@ def normalize_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Stable ordering
     sort_cols = [
-        col for col in ["patient_id", "modality", "VOI", "feature_name"]
+        col
+        for col in ["patient_id", "modality", "VOI", "feature_name"]
         if col in df.columns
     ]
 
@@ -79,6 +91,7 @@ def assert_or_update_features(
         actual.to_parquet(golden_path, index=False)
         return
 
+    _require_golden(golden_path)
     expected = pd.read_parquet(golden_path)
     assert_features_close(actual, expected)
 
@@ -105,4 +118,6 @@ def assert_features_close(
                 equal_nan=True,
             )
         else:
-            assert actual[col].astype(str).tolist() == expected[col].astype(str).tolist()
+            assert (
+                actual[col].astype(str).tolist() == expected[col].astype(str).tolist()
+            )

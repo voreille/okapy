@@ -2,14 +2,19 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from statistics import mode
 
 import numpy as np
 import pydicom
+from numpy.typing import DTypeLike
 
 from okapy.core.models import ImageVolume, VolumeStage
 from okapy.dicom.conversion.utils import (
-    safe_name,
+    SLICE_SPACING_TOLERANCE,
+    check_no_duplicate_positions,
+    check_stacking_along_normal,
+    geometry_from_positions,
+    join_inside,
+    make_filename,
     short_uid,
     sitk_image_from_array_xyz,
     write_image_unique,
@@ -24,18 +29,21 @@ class SimpleITKImageSeriesConverter:
     """Convert CT/MR-like DICOM image series to NIfTI.
 
     This intentionally keeps logic close to the old implementation:
+    - reject series without volumetric geometry (IPP/IOP/PixelSpacing)
     - sort slices by ImagePositionPatient projected on slice normal
     - remove inconsistent Rows/Columns
-    - remove duplicate slice positions
+    - reject several slices at one position (4D / dynamic / multi-echo)
+    - reject slices that are not stacked along the slice normal (gantry tilt)
     - handle one missing slice by interpolation
     - handle larger one-gap discontinuity by filling with modality-specific value
+    - reject slice spacing that is still non-uniform after gap handling
     """
 
     def __init__(
         self,
         *,
         extension: str = "nii.gz",
-        dtype: np.dtype = np.float32,
+        dtype: DTypeLike = np.float32,
         identity_config: SeriesIdentityConfig | None = None,
     ) -> None:
         self.extension = extension
@@ -46,53 +54,44 @@ class SimpleITKImageSeriesConverter:
         if not series.is_image:
             raise ValueError(f"Expected image series, got {series.modality}.")
 
+        series_uid = series.series_instance_uid
         slices, paths, orthogonal_positions = self._read_and_sort_slices(series)
         slices, paths, orthogonal_positions = self._clean_slices(
             slices,
             paths,
             orthogonal_positions,
+            series_uid=series_uid,
         )
 
         image_xyz = self._get_physical_values(slices, paths, series.modality)
         image_xyz = np.transpose(image_xyz, (1, 0, 2))
 
-        d_slices = np.diff(np.asarray(orthogonal_positions, dtype=float))
-        slice_spacing = _mode_rounded(d_slices)
-        n_missing_slices, slice_discontinuities = _check_missing_slices(
-            d_slices=d_slices,
-            slice_spacing=slice_spacing,
-        )
-
-        if np.sum(slice_discontinuities) > 1:
-            raise ValueError(
-                f"Too many slice discontinuities in series "
-                f"{series.series_instance_uid}."
+        # A single slice has no gaps to check; its z spacing is SliceThickness.
+        if len(slices) > 1:
+            orientation = np.asarray(slices[0].ImageOrientationPatient, dtype=float)
+            check_stacking_along_normal(
+                np.asarray([s.ImagePositionPatient for s in slices], dtype=float),
+                np.cross(orientation[:3], orientation[3:]),
+                series_uid=series_uid,
             )
-
-        if n_missing_slices == 1:
-            logger.warning(
-                "One slice is missing in series %s. Replacing it by interpolation.",
-                series.series_instance_uid,
-            )
-            image_xyz = _interp_missing_slice(image_xyz, d_slices)
-
-        if np.sum(slice_discontinuities) == 1 and n_missing_slices > 1:
-            logger.warning(
-                "Multiple slices are missing in series %s. Filling gap.",
-                series.series_instance_uid,
-            )
-            image_xyz = _fill_discontinuity(
+            image_xyz = _handle_slice_gaps(
                 image_xyz,
+                orthogonal_positions=orthogonal_positions,
                 modality=series.modality,
-                n_missing_slices=n_missing_slices,
-                slice_discontinuities=slice_discontinuities,
+                series_uid=series_uid,
             )
 
         image_xyz = image_xyz.astype(self.dtype, copy=False)
 
-        origin, spacing, direction = _geometry_from_slices(
-            slices=slices,
-            expected_n_slices=image_xyz.shape[2],
+        origin, spacing, direction = geometry_from_positions(
+            first_position=slices[0].ImagePositionPatient,
+            last_position=slices[-1].ImagePositionPatient,
+            n_slices=image_xyz.shape[2],
+            orientation=slices[0].ImageOrientationPatient,
+            pixel_spacing=slices[0].PixelSpacing,
+            single_slice_spacing=lambda: (
+                _float_or_default(slices[0], "SliceThickness", 1.0) or 1.0
+            ),
         )
 
         image = sitk_image_from_array_xyz(
@@ -103,7 +102,7 @@ class SimpleITKImageSeriesConverter:
         )
 
         filename = self._make_filename(series)
-        path = write_image_unique(image, output_dir / filename)
+        path = write_image_unique(image, join_inside(output_dir, filename))
 
         identity = build_series_identity(
             series,
@@ -125,6 +124,8 @@ class SimpleITKImageSeriesConverter:
         slices = [pydicom.dcmread(str(path)) for path in series.paths]
         paths = list(series.paths)
 
+        _check_volumetric_geometry(slices, series=series)
+
         orientation = np.asarray(slices[0].ImageOrientationPatient, dtype=float)
         normal = np.cross(orientation[:3], orientation[3:])
 
@@ -133,13 +134,13 @@ class SimpleITKImageSeriesConverter:
             for s in slices
         ]
 
-        zipped = list(zip(slices, paths, orthogonal_positions))
+        zipped = list(zip(slices, paths, orthogonal_positions, strict=True))
         zipped.sort(key=lambda x: x[2])
 
-        slices, paths, orthogonal_positions = zip(*zipped)
-        return list(slices), list(paths), list(orthogonal_positions)
+        sorted_slices, sorted_paths, sorted_positions = zip(*zipped, strict=True)
+        return list(sorted_slices), list(sorted_paths), list(sorted_positions)
 
-    def _clean_slices(self, slices, paths, orthogonal_positions):
+    def _clean_slices(self, slices, paths, orthogonal_positions, *, series_uid: str):
         slices, paths, orthogonal_positions = _keep_most_common_shape(
             slices,
             paths,
@@ -154,38 +155,59 @@ class SimpleITKImageSeriesConverter:
             dimension="Columns",
         )
 
-        slices, paths, orthogonal_positions = _drop_duplicate_positions(
-            slices,
-            paths,
-            orthogonal_positions,
-        )
+        check_no_duplicate_positions(orthogonal_positions, series_uid=series_uid)
 
         return slices, paths, orthogonal_positions
 
     def _get_physical_values(self, slices, paths, modality: str) -> np.ndarray:
-        if modality == "CT":
-            arrays = [
-                float(s.RescaleSlope) * s.pixel_array + float(s.RescaleIntercept)
-                for s in slices
-            ]
-        elif modality in {"MR", "NM", "US", "XA", "CR", "DX", "MG", "IO"}:
-            arrays = [s.pixel_array for s in slices]
-        elif modality == "PT":
-            arrays = [
-                float(getattr(s, "RescaleSlope", 1.0)) * s.pixel_array
-                + float(getattr(s, "RescaleIntercept", 0.0))
-                for s in slices
-            ]
-        else:
-            arrays = [s.pixel_array for s in slices]
+        # Modality LUT: RescaleSlope / RescaleIntercept when present (1 / 0
+        # otherwise), for every modality. Integer pixel data is rescaled in
+        # place into one float64 volume, which is what ``slope * pixels +
+        # intercept`` gives slice by slice.
+        out = None
 
-        return np.stack(arrays, axis=-1)
+        for i, s in enumerate(slices):
+            slope = _float_or_default(s, "RescaleSlope", 1.0)
+            pixels = s.pixel_array
+            intercept = _float_or_default(s, "RescaleIntercept", 0.0)
+
+            if out is None and pixels.dtype.kind in "iu":
+                out = np.empty((*pixels.shape, len(slices)), dtype=np.float64)
+
+            if (
+                out is None
+                or pixels.dtype.kind not in "iu"
+                or pixels.shape != out.shape[:-1]
+            ):
+                # Float pixel data or inconsistent shapes: keep NumPy's own
+                # dtype promotion and errors for the remaining slices.
+                done = [] if out is None else [out[..., j] for j in range(i)]
+                rest = [slope * pixels + intercept] + [
+                    _float_or_default(t, "RescaleSlope", 1.0) * t.pixel_array
+                    + _float_or_default(t, "RescaleIntercept", 0.0)
+                    for t in slices[i + 1 :]
+                ]
+                return np.stack(done + rest, axis=-1)
+
+            if slope == 1 and intercept == 0:
+                out[..., i] = pixels
+            else:
+                np.multiply(pixels, slope, out=out[..., i])
+                out[..., i] += intercept
+
+        # ``out`` is None only for an empty ``slices``, which convert() never
+        # passes (_read_and_sort_slices fails on an empty series): the first
+        # slice either allocates ``out`` or returns from the loop.
+        assert out is not None
+        return out
 
     def _make_filename(self, series: DicomSeries) -> str:
-        patient = safe_name(series.patient_id)
-        modality = safe_name(series.modality)
-        uid = short_uid(series.series_instance_uid)
-        return f"{patient}__{modality}__{uid}.{self.extension}"
+        return make_filename(
+            series.patient_id,
+            series.modality,
+            short_uid(series.series_instance_uid),
+            extension=self.extension,
+        )
 
 
 def _keep_most_common_shape(slices, paths, orthogonal_positions, *, dimension: str):
@@ -209,71 +231,134 @@ def _keep_most_common_shape(slices, paths, orthogonal_positions, *, dimension: s
     )
 
 
-def _drop_duplicate_positions(slices, paths, orthogonal_positions):
-    if not slices:
-        return slices, paths, orthogonal_positions
+def _float_or_default(ds, keyword: str, default: float) -> float:
+    value = getattr(ds, keyword, None)
+    if value is None or value == "":
+        return default
+    return float(value)
 
-    keep = [0]
 
-    for i in range(1, len(orthogonal_positions)):
-        if orthogonal_positions[i] != orthogonal_positions[i - 1]:
-            keep.append(i)
+def _check_volumetric_geometry(slices, *, series: DicomSeries) -> None:
+    """Reject series without the geometry needed to build a volume."""
 
-    if len(keep) != len(slices):
-        logger.warning(
-            "Dropping %d duplicated slice positions.", len(slices) - len(keep)
+    required = ("ImagePositionPatient", "ImageOrientationPatient", "PixelSpacing")
+
+    for ds in slices:
+        missing = [
+            keyword for keyword in required if getattr(ds, keyword, None) is None
+        ]
+        if missing:
+            raise ValueError(
+                f"Unsupported image series {series.series_instance_uid} "
+                f"(modality {series.modality}, SOP class "
+                f"{getattr(ds, 'SOPClassUID', None)}): missing {', '.join(missing)}. "
+                "Only volumetric (cross-sectional) image series can be converted."
+            )
+
+
+def _handle_slice_gaps(
+    image_xyz: np.ndarray,
+    *,
+    orthogonal_positions,
+    modality: str,
+    series_uid: str,
+) -> np.ndarray:
+    """Fill missing slices and check the resulting slice spacing is uniform.
+
+    Only called for more than one slice, sorted along the normal and without
+    duplicate positions, so every gap (and the median gap) is positive.
+    """
+
+    d_slices = np.round(
+        np.diff(np.asarray(orthogonal_positions, dtype=float)), decimals=5
+    )
+    if len(d_slices) == 0:
+        return image_xyz
+
+    median_spacing = float(np.median(d_slices))
+
+    # Gaps that round to zero median spacings are not slice steps at all.
+    near_duplicates = np.round(d_slices / median_spacing) < 1
+    if np.any(near_duplicates):
+        raise ValueError(
+            f"Series {series_uid} has near-duplicate slices: gap(s) of "
+            f"{d_slices[near_duplicates].tolist()} mm for a slice spacing of "
+            f"{median_spacing} mm."
         )
 
-    return (
-        [slices[i] for i in keep],
-        [paths[i] for i in keep],
-        [orthogonal_positions[i] for i in keep],
+    slice_spacing = _reference_gap(d_slices)
+
+    # Number of slice spacings covered by each gap.
+    n_steps = np.round(d_slices / slice_spacing).astype(int)
+
+    residual = np.abs(d_slices / n_steps - slice_spacing) / slice_spacing
+    if np.any(residual > SLICE_SPACING_TOLERANCE):
+        raise ValueError(
+            f"Series {series_uid} has non-uniform slice spacing: gaps of "
+            f"{d_slices[residual > SLICE_SPACING_TOLERANCE].tolist()} mm deviate "
+            f"more than {100 * SLICE_SPACING_TOLERANCE:g} % from the slice "
+            f"spacing of {slice_spacing} mm."
+        )
+
+    discontinuities = np.flatnonzero(n_steps > 1)
+
+    if len(discontinuities) > 1:
+        raise ValueError(f"Too many slice discontinuities in series {series_uid}.")
+
+    if len(discontinuities) == 0:
+        return image_xyz
+
+    idx = int(discontinuities[0])
+    n_missing_slices = int(n_steps[idx]) - 1
+
+    if n_missing_slices == 1:
+        logger.warning(
+            "One slice is missing in series %s. Replacing it by interpolation.",
+            series_uid,
+        )
+        return _interp_missing_slice(image_xyz, idx)
+
+    logger.warning(
+        "Multiple slices are missing in series %s. Filling gap.",
+        series_uid,
+    )
+    return _fill_discontinuity(
+        image_xyz,
+        modality=modality,
+        n_missing_slices=n_missing_slices,
+        idx=idx,
     )
 
 
-def _mode_rounded(values: np.ndarray) -> float:
-    if len(values) == 0:
-        return 1.0
-
-    return float(mode(np.round(values, decimals=5)))
+#: Gaps up to this factor of the smallest gap count as single slice steps when
+#: computing the reference slice spacing.
+_SINGLE_STEP_GAP_FACTOR = 1.5
 
 
-def _check_missing_slices(
-    *,
-    d_slices: np.ndarray,
-    slice_spacing: float,
-) -> tuple[int, np.ndarray]:
-    if slice_spacing == 0:
-        raise RuntimeError(
-            "The most frequent slice spacing is 0, probably due to "
-            "multi-channel or duplicate slice data."
-        )
+def _reference_gap(values: np.ndarray) -> float:
+    """Reference slice spacing: the median of the single-step gaps.
 
-    if np.min(np.abs(d_slices)) == 0:
-        raise RuntimeError("Some slices have the same position.")
+    Single-step gaps are those up to 1.5 times the smallest gap, so missing
+    slices do not move the reference even when they are a large share of the
+    gaps (e.g. 2 gaps, one of them missing a slice). The median does not depend
+    on the slice order when every gap is jittered.
+    """
 
-    slice_discontinuities = np.abs(d_slices - slice_spacing) > 0.9 * abs(slice_spacing)
-
-    n_missing_slices = np.round(
-        np.sum(d_slices[slice_discontinuities] / slice_spacing - 1)
-    ).astype(int)
-
-    return int(n_missing_slices), slice_discontinuities
+    single_steps = values[values <= _SINGLE_STEP_GAP_FACTOR * values.min()]
+    return float(np.median(single_steps))
 
 
-def _interp_missing_slice(image_xyz: np.ndarray, d_slices: np.ndarray) -> np.ndarray:
-    mean_slice_spacing = np.mean(d_slices)
-    errors = np.abs(d_slices - mean_slice_spacing)
-    idx = int(np.where(errors > 0.5 * mean_slice_spacing)[0][0])
+def _interp_missing_slice(image_xyz: np.ndarray, idx: int) -> np.ndarray:
+    """Insert the mean of slices ``idx`` and ``idx + 1`` between them."""
 
     new_slice = (image_xyz[:, :, idx] + image_xyz[:, :, idx + 1]) * 0.5
     new_slice = new_slice[..., np.newaxis]
 
     return np.concatenate(
         (
-            image_xyz[..., :idx],
+            image_xyz[..., : idx + 1],
             new_slice,
-            image_xyz[..., idx:],
+            image_xyz[..., idx + 1 :],
         ),
         axis=2,
     )
@@ -284,7 +369,7 @@ def _fill_discontinuity(
     *,
     modality: str,
     n_missing_slices: int,
-    slice_discontinuities: np.ndarray,
+    idx: int,
 ) -> np.ndarray:
     fill_constant = {
         "PT": 0,
@@ -292,7 +377,6 @@ def _fill_discontinuity(
         "MR": 0,
     }.get(modality, 0)
 
-    idx = int(np.where(slice_discontinuities)[0][0])
     fill_shape = image_xyz.shape[:2] + (n_missing_slices,)
 
     return np.concatenate(
@@ -303,33 +387,3 @@ def _fill_discontinuity(
         ),
         axis=2,
     )
-
-
-def _geometry_from_slices(slices, expected_n_slices: int):
-    first = slices[0]
-    last = slices[-1]
-
-    origin = tuple(float(x) for x in first.ImagePositionPatient)
-
-    orientation = np.asarray(first.ImageOrientationPatient, dtype=float)
-    row = orientation[:3]
-    col = orientation[3:]
-    normal = np.cross(row, col)
-
-    direction_matrix = np.stack([row, col, normal], axis=1)
-    direction = tuple(float(x) for x in direction_matrix.ravel())
-
-    row_spacing, col_spacing = [float(x) for x in first.PixelSpacing]
-
-    if expected_n_slices > 1:
-        first_pos = np.asarray(first.ImagePositionPatient, dtype=float)
-        last_pos = np.asarray(last.ImagePositionPatient, dtype=float)
-        z_spacing = float(
-            np.linalg.norm(last_pos - first_pos) / (expected_n_slices - 1)
-        )
-    else:
-        z_spacing = float(getattr(first, "SliceThickness", 1.0))
-
-    spacing = (col_spacing, row_spacing, z_spacing)
-
-    return origin, spacing, direction

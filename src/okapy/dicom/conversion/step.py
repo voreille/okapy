@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from okapy.core.models import (
@@ -15,8 +16,8 @@ from okapy.dicom.conversion.image import SimpleITKImageSeriesConverter
 from okapy.dicom.conversion.rtstruct import RTStructMaskConverter
 from okapy.dicom.conversion.seg import SegMaskConverter
 from okapy.dicom.conversion.suv import PETSUVConverter
-from okapy.dicom.models import DicomSeries, DicomStudy
-
+from okapy.dicom.conversion.utils import study_output_dir
+from okapy.dicom.models import DicomSeries, DicomStudy, InvalidDicomSeries
 
 logger = logging.getLogger(__name__)
 
@@ -78,13 +79,12 @@ class DicomConversionStep:
 
         for index, study in enumerate(collection.studies):
             study_uid = study.study_instance_uid
-            study_name = study_uid or f"study_{index:04d}"
-            study_output_dir = output_dir / study_name
+            study_dir = study_output_dir(output_dir, study_uid, index)
 
             try:
                 converted_study = self.convert_study(
                     study,
-                    output_dir=study_output_dir,
+                    output_dir=study_dir,
                     labels=labels,
                 )
             except Exception:
@@ -117,6 +117,8 @@ class DicomConversionStep:
         image_output_dir.mkdir(parents=True, exist_ok=True)
         mask_output_dir.mkdir(parents=True, exist_ok=True)
 
+        self._report_invalid_series(study.invalid_series)
+
         images = self._convert_images(
             study.image_series,
             output_dir=image_output_dir,
@@ -141,9 +143,25 @@ class DicomConversionStep:
             image_mask_sets=image_mask_sets,
         )
 
+    def _report_invalid_series(
+        self,
+        invalid_series: tuple[InvalidDicomSeries, ...],
+    ) -> None:
+        """Raise for series the collector could not group, or log and skip."""
+
+        for series in invalid_series:
+            if not self.continue_on_error:
+                raise ValueError(series.reason)
+
+            logger.error(
+                "Skipping invalid series %s: %s",
+                series.series_instance_uid,
+                series.reason,
+            )
+
     def _convert_images(
         self,
-        series_list: list[DicomSeries],
+        series_list: Sequence[DicomSeries],
         *,
         output_dir: Path,
     ) -> list[ImageVolume]:
@@ -179,7 +197,7 @@ class DicomConversionStep:
 
     def _convert_masks(
         self,
-        series_list: list[DicomSeries],
+        series_list: Sequence[DicomSeries],
         *,
         images_by_uid: dict[str, ImageVolume],
         output_dir: Path,
@@ -189,34 +207,29 @@ class DicomConversionStep:
 
         for series in series_list:
             try:
+                converter = self._mask_converter(series)
                 reference_image = self._resolve_reference_image(
                     series=series,
                     images_by_uid=images_by_uid,
+                    check_reference_uid=(
+                        converter is None or converter.check_reference_uid
+                    ),
                 )
 
-                if series.is_rtstruct:
-                    series_masks = self.rtstruct_converter.convert(
-                        series=series,
-                        reference_image=reference_image,
-                        output_dir=output_dir,
-                        labels=labels,
-                    )
-
-                elif series.is_seg:
-                    series_masks = self.seg_converter.convert(
-                        series=series,
-                        reference_image=reference_image,
-                        output_dir=output_dir,
-                        labels=labels,
-                    )
-
-                else:
+                if converter is None:
                     logger.warning(
                         "Skipping unsupported mask series %s with modality %s.",
                         series.series_instance_uid,
                         series.modality,
                     )
                     continue
+
+                series_masks = converter.convert(
+                    series=series,
+                    reference_image=reference_image,
+                    output_dir=output_dir,
+                    labels=labels,
+                )
 
             except Exception:
                 if not self.continue_on_error:
@@ -232,11 +245,23 @@ class DicomConversionStep:
 
         return masks
 
-    @staticmethod
+    def _mask_converter(
+        self, series: DicomSeries
+    ) -> RTStructMaskConverter | SegMaskConverter | None:
+        """Converter of an RTSTRUCT or SEG ``series``, ``None`` if unsupported."""
+
+        if series.is_rtstruct:
+            return self.rtstruct_converter
+        if series.is_seg:
+            return self.seg_converter
+        return None
+
     def _resolve_reference_image(
+        self,
         *,
         series: DicomSeries,
         images_by_uid: dict[str, ImageVolume],
+        check_reference_uid: bool,
     ) -> ImageVolume:
         """Resolve the image referenced by an RTSTRUCT or SEG series."""
 
@@ -248,11 +273,37 @@ class DicomConversionStep:
             if image is not None:
                 return image
 
+        if referenced_uids and len(images_by_uid) == 1 and not check_reference_uid:
+            # The reference UID check is disabled: keep the old behaviour of
+            # putting the mask on the only image of the study.
+            image = next(iter(images_by_uid.values()))
+
+            logger.warning(
+                "Mask series %s references image series %s, which are not "
+                "available, and its reference UID check is disabled. Using the "
+                "only available image series %s.",
+                series.series_instance_uid,
+                list(referenced_uids),
+                image.series_instance_uid,
+            )
+
+            return image
+
+        if referenced_uids:
+            # The referenced image is missing or failed to convert: never put
+            # the mask on another image.
+            raise ValueError(
+                f"Mask series {series.series_instance_uid} references image "
+                f"series {list(referenced_uids)}, which are not available "
+                "(missing or failed to convert). "
+                f"Available image series: {sorted(images_by_uid)}."
+            )
+
         if len(images_by_uid) == 1:
             image = next(iter(images_by_uid.values()))
 
             logger.warning(
-                "No referenced image series was resolved for mask series %s. "
+                "Mask series %s has no referenced image series. "
                 "Using the only available image series %s.",
                 series.series_instance_uid,
                 image.series_instance_uid,
@@ -260,13 +311,11 @@ class DicomConversionStep:
 
             return image
 
-        available_uids = sorted(images_by_uid)
-
         raise RuntimeError(
             "Could not resolve reference image for mask series "
-            f"{series.series_instance_uid}. "
-            f"Referenced series: {list(referenced_uids)}. "
-            f"Available image series: {available_uids}."
+            f"{series.series_instance_uid}: it has no referenced series and "
+            f"there is not exactly one image series. "
+            f"Available image series: {sorted(images_by_uid)}."
         )
 
     @staticmethod

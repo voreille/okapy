@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
-import logging
-
-from okapy.dicom.walker import DicomWalker
 
 from okapy.dicom.models import (
+    IMAGE_MODALITIES,
     DicomCollection,
     DicomFileRecord,
     DicomSeries,
     DicomStudy,
-    IMAGE_MODALITIES,
+    InvalidDicomSeries,
 )
+from okapy.dicom.walker import DicomWalker
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,13 @@ class DicomStudyCollector:
         studies = _build_studies(records)
 
         if self.require_image_series:
-            studies = tuple(study for study in studies if len(study.image_series) > 0)
+            # Studies with invalid series are kept so the conversion step can
+            # report them instead of silently dropping the study.
+            studies = tuple(
+                study
+                for study in studies
+                if len(study.image_series) > 0 or len(study.invalid_series) > 0
+            )
 
         if not studies:
             raise RuntimeError("No DICOM studies containing image series were found.")
@@ -96,7 +102,7 @@ def _build_studies(records: list[DicomFileRecord]) -> tuple[DicomStudy, ...]:
     studies = []
 
     for study_uid, study_records in sorted(records_by_study.items()):
-        series = _build_series(study_records)
+        series, invalid_series = _build_series(study_records)
 
         patient_ids = sorted(
             {
@@ -121,6 +127,7 @@ def _build_studies(records: list[DicomFileRecord]) -> tuple[DicomStudy, ...]:
                 study_instance_uid=study_uid,
                 patient_id=patient_id,
                 series=series,
+                invalid_series=invalid_series,
             )
         )
 
@@ -129,7 +136,7 @@ def _build_studies(records: list[DicomFileRecord]) -> tuple[DicomStudy, ...]:
 
 def _build_series(
     study_records: list[DicomFileRecord],
-) -> tuple[DicomSeries, ...]:
+) -> tuple[tuple[DicomSeries, ...], tuple[InvalidDicomSeries, ...]]:
     records_by_series: dict[str, list[DicomFileRecord]] = defaultdict(list)
 
     for record in study_records:
@@ -145,6 +152,7 @@ def _build_series(
         records_by_series[series_uid].append(record)
 
     series_list = []
+    invalid_series = []
 
     for series_uid, series_records in sorted(records_by_series.items()):
         sorted_records = _sort_series_records(series_records)
@@ -153,12 +161,18 @@ def _build_series(
         modality = modalities[0]
 
         if len(modalities) > 1:
-            logger.warning(
-                "Series %s contains multiple modalities: %s. Using first one: %s",
-                series_uid,
-                modalities,
-                modality,
+            reason = (
+                f"Series {series_uid} contains files of several modalities: "
+                f"{modalities}. Refusing to convert it."
             )
+            logger.warning("%s", reason)
+            invalid_series.append(
+                InvalidDicomSeries(
+                    series_instance_uid=series_uid,
+                    reason=reason,
+                )
+            )
+            continue
 
         series_list.append(
             DicomSeries(
@@ -168,7 +182,7 @@ def _build_series(
             )
         )
 
-    return tuple(
+    sorted_series = tuple(
         sorted(
             series_list,
             key=lambda s: (
@@ -178,6 +192,7 @@ def _build_series(
             ),
         )
     )
+    return sorted_series, tuple(invalid_series)
 
 
 def _sort_series_records(

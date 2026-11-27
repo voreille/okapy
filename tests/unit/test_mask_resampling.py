@@ -4,9 +4,9 @@ import numpy as np
 import SimpleITK as sitk
 
 from okapy.core.geometry import MASK_THRESHOLD
-from okapy.core.models import ImageVolume, MaskIdentity, MaskVolume, SeriesIdentity
 from okapy.preprocessing.geometry import resample_mask_volume_to_reference
 from okapy.preprocessing.models import GeometryConfig
+from tests.helpers import factories
 
 
 def _cube_mask(size: int = 16, inner: tuple[int, int] = (4, 12)) -> sitk.Image:
@@ -18,35 +18,9 @@ def _cube_mask(size: int = 16, inner: tuple[int, int] = (4, 12)) -> sitk.Image:
     return sitk.GetImageFromArray(array)
 
 
-def _mask_volume(image: sitk.Image) -> MaskVolume:
-    return MaskVolume.from_sitk(
-        path=Path("mask.nii.gz"),
-        image=image,
-        identity=MaskIdentity(
-            label="GTV",
-            modality="RTSTRUCT",
-            reference_modality="CT",
-            patient_id="P1",
-            study_instance_uid="1.2.3",
-            reference_series_instance_uid="1.2.3.4",
-        ),
-    )
-
-
-def _image_volume(image: sitk.Image) -> ImageVolume:
-    return ImageVolume.from_sitk(
-        path=Path("image.nii.gz"),
-        image=image,
-        identity=SeriesIdentity(
-            modality="CT",
-            patient_id="P1",
-            study_instance_uid="1.2.3",
-            series_instance_uid="1.2.3.4",
-        ),
-    )
-
-
-def _resample(source: sitk.Image, reference: sitk.Image, interpolator: int) -> np.ndarray:
+def _resample(
+    source: sitk.Image, reference: sitk.Image, interpolator: int
+) -> np.ndarray:
     resampled = sitk.Resample(
         source, reference, sitk.Transform(), interpolator, 0.0, sitk.sitkFloat32
     )
@@ -55,13 +29,15 @@ def _resample(source: sitk.Image, reference: sitk.Image, interpolator: int) -> n
 
 def test_mask_is_resampled_linear_and_thresholded_at_half():
     source = _cube_mask()
-    mask = _mask_volume(source)
+    mask = factories.mask_volume(
+        source, label="GTV", modality="RTSTRUCT", reference_modality="CT"
+    )
 
     # Same 1 mm grid shifted by 0.4 mm on every axis: near the cube corner,
     # nearest neighbour rounds inside while trilinear averaging (0.6**3) does not.
     reference = sitk.Image((16, 16, 16), sitk.sitkFloat32)
     reference.SetOrigin((0.4, 0.4, 0.4))
-    target = _image_volume(reference)
+    target = factories.image_volume(reference, modality="CT")
     geometry_config = GeometryConfig.from_dict({"spacing": [1.0, 1.0, 1.0]})
 
     result = resample_mask_volume_to_reference(

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import logging
+from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeVar, overload
 
 import SimpleITK as sitk
 
-# Import processors for side-effect registration of built-ins.
-import okapy.preprocessing.processors  # noqa: F401
 from okapy.core.geometry import image_physical_box
 from okapy.core.models import (
     ImageMaskSet,
@@ -15,18 +15,21 @@ from okapy.core.models import (
     StudyVolumes,
     VolumeCollection,
 )
+from okapy.dicom.conversion.utils import (
+    join_inside,
+    study_output_dir,
+    write_image_unique,
+)
 from okapy.preprocessing.geometry import (
     compute_common_fov,
+    drop_empty_masks,
+    is_empty_mask,
     make_reference_grid,
     masks_for_image,
     resample_image_volume_to_reference,
     resample_mask_volume_to_reference,
 )
-from okapy.preprocessing.io import (
-    image_output_name,
-    mask_output_name,
-    write_image_unique,
-)
+from okapy.preprocessing.io import image_output_name, mask_output_name
 from okapy.preprocessing.models import (
     GeometryConfig,
     PreprocessingDiagnostics,
@@ -35,6 +38,10 @@ from okapy.preprocessing.models import (
 )
 from okapy.preprocessing.processor_pipeline import ProcessorPipeline
 from okapy.preprocessing.selector import select_section_config
+
+logger = logging.getLogger(__name__)
+
+_Volume = TypeVar("_Volume", ImageVolume, MaskVolume)
 
 
 class StudyPreprocessingStep:
@@ -59,8 +66,8 @@ class StudyPreprocessingStep:
     ) -> None:
         self.study_config = study_config
         self.geometry_section = geometry_section or {}
-        self.image_processors = image_processors or ProcessorPipeline.empty()
-        self.mask_processors = mask_processors or ProcessorPipeline.empty()
+        self.image_processors = image_processors or ProcessorPipeline()
+        self.mask_processors = mask_processors or ProcessorPipeline()
 
     def run(
         self,
@@ -76,19 +83,51 @@ class StudyPreprocessingStep:
         processed_studies: list[StudyVolumes] = []
 
         for index, study in enumerate(volumes.studies):
-            study_name = study.study_instance_uid or f"study_{index:04d}"
-            study_output_dir = output_dir / study_name
-
             processed_study = self.preprocess_study(
                 images=study.images,
                 masks=study.masks,
-                output_dir=study_output_dir,
+                output_dir=study_output_dir(
+                    output_dir, study.study_instance_uid, index
+                ),
                 study_instance_uid=study.study_instance_uid,
             )
 
             processed_studies.append(processed_study)
 
         return VolumeCollection(studies=processed_studies)
+
+    @overload
+    def preprocess_study(
+        self,
+        *,
+        images: list[ImageVolume],
+        masks: list[MaskVolume],
+        output_dir: Path,
+        study_instance_uid: str | None = None,
+        return_diagnostics: Literal[False] = False,
+    ) -> StudyVolumes: ...
+
+    @overload
+    def preprocess_study(
+        self,
+        *,
+        images: list[ImageVolume],
+        masks: list[MaskVolume],
+        output_dir: Path,
+        study_instance_uid: str | None = None,
+        return_diagnostics: Literal[True],
+    ) -> tuple[StudyVolumes, PreprocessingDiagnostics]: ...
+
+    @overload
+    def preprocess_study(
+        self,
+        *,
+        images: list[ImageVolume],
+        masks: list[MaskVolume],
+        output_dir: Path,
+        study_instance_uid: str | None = None,
+        return_diagnostics: bool = False,
+    ) -> StudyVolumes | tuple[StudyVolumes, PreprocessingDiagnostics]: ...
 
     def preprocess_study(
         self,
@@ -102,8 +141,11 @@ class StudyPreprocessingStep:
         """Preprocess one study."""
 
         output_dir = Path(output_dir)
-        image_output_dir = output_dir / self.study_config.image_output_subdir
-        mask_output_dir = output_dir / self.study_config.mask_output_subdir
+        write_outputs = self.study_config.write_outputs
+        image_output_dir = join_inside(
+            output_dir, self.study_config.image_output_subdir
+        )
+        mask_output_dir = join_inside(output_dir, self.study_config.mask_output_subdir)
 
         if study_instance_uid is None and images:
             study_instance_uid = images[0].study_instance_uid
@@ -111,6 +153,9 @@ class StudyPreprocessingStep:
         image_mask_sets: list[ImageMaskSet] = []
         plans: list[PreprocessingPlan] = []
         skipped_images: list[ImageVolume] = []
+
+        # Empty masks have no extent: drop them before any geometry is computed.
+        masks = drop_empty_masks(masks)
 
         common_fov = None
 
@@ -129,11 +174,13 @@ class StudyPreprocessingStep:
                 combine_segmentation=(self.study_config.combine_segmentation),
             )
 
-            if not image_masks and self.study_config.skip_images_without_masks:
+            geometry_config = self._geometry_config_for_image(image)
+
+            if not image_masks and self._skip_image_without_masks(
+                image, geometry_config
+            ):
                 skipped_images.append(image)
                 continue
-
-            geometry_config = self._geometry_config_for_image(image)
 
             if geometry_config.crop_to_common_fov and common_fov is None:
                 raise ValueError(
@@ -149,11 +196,16 @@ class StudyPreprocessingStep:
             )
             physical_roi = image_physical_box(reference_grid)
 
-            output_image_path = image_output_dir / image_output_name(
-                patient_id=image.patient_id,
-                modality_key=image.modality_key,
-                series_instance_uid=image.series_instance_uid,
-            )
+            output_image_path = None
+            if write_outputs:
+                output_image_path = join_inside(
+                    image_output_dir,
+                    image_output_name(
+                        patient_id=image.patient_id,
+                        modality_key=image.modality_key,
+                        series_instance_uid=image.series_instance_uid,
+                    ),
+                )
 
             plan = PreprocessingPlan(
                 image=image,
@@ -163,7 +215,7 @@ class StudyPreprocessingStep:
                 physical_roi=physical_roi,
                 reference_grid=reference_grid,
                 output_image_path=output_image_path,
-                output_mask_dir=mask_output_dir,
+                output_mask_dir=mask_output_dir if write_outputs else None,
             )
             plans.append(plan)
 
@@ -179,13 +231,22 @@ class StudyPreprocessingStep:
             processed_masks: list[MaskVolume] = []
 
             for mask in image_masks:
-                output_mask_path = mask_output_dir / mask_output_name(
-                    patient_id=mask.patient_id,
-                    label=mask.label,
-                    target_modality_key=(geometry_image.modality_key),
-                    target_series_instance_uid=(geometry_image.series_instance_uid),
-                    reference_series_instance_uid=(mask.reference_series_instance_uid),
-                )
+                output_mask_path = None
+                if write_outputs:
+                    output_mask_path = join_inside(
+                        mask_output_dir,
+                        mask_output_name(
+                            patient_id=mask.patient_id,
+                            label=mask.label,
+                            target_modality_key=geometry_image.modality_key,
+                            target_series_instance_uid=(
+                                geometry_image.series_instance_uid
+                            ),
+                            reference_series_instance_uid=(
+                                mask.reference_series_instance_uid
+                            ),
+                        ),
+                    )
 
                 geometry_mask = resample_mask_volume_to_reference(
                     mask,
@@ -195,6 +256,16 @@ class StudyPreprocessingStep:
                     output_path=output_mask_path,
                 )
 
+                if is_empty_mask(geometry_mask):
+                    logger.warning(
+                        "Dropping mask %r for image %s (%s): it is empty after "
+                        "resampling to the target grid.",
+                        mask.label,
+                        image.series_instance_uid,
+                        image.modality_key,
+                    )
+                    continue
+
                 local_mask = self.mask_processors.apply(
                     geometry_mask,
                     key=geometry_image.modality_key,
@@ -203,15 +274,26 @@ class StudyPreprocessingStep:
 
                 processed_masks.append(local_mask)
 
+            if (
+                image_masks
+                and not processed_masks
+                and self._skip_image_without_masks(image, geometry_config)
+            ):
+                # Every mask vanished on the target grid: same rule as an image
+                # without masks, so it gets no plan either.
+                plans.pop()
+                skipped_images.append(image)
+                continue
+
             processed_image = self.image_processors.apply(
                 geometry_image,
                 key=geometry_image.modality_key,
                 masks=processed_masks,
             )
 
-            if self.study_config.write_outputs:
-                processed_image = self._write_image(processed_image)
-                processed_masks = [self._write_mask(mask) for mask in processed_masks]
+            if write_outputs:
+                processed_image = self._write_volume(processed_image)
+                processed_masks = [self._write_volume(mask) for mask in processed_masks]
 
             image_mask_sets.append(
                 ImageMaskSet(
@@ -234,6 +316,35 @@ class StudyPreprocessingStep:
 
         return result
 
+    def _skip_image_without_masks(
+        self,
+        image: ImageVolume,
+        geometry_config: GeometryConfig,
+    ) -> bool:
+        """Decide whether an image without (non-empty) masks is skipped."""
+
+        skip = self.study_config.skip_images_without_masks
+
+        if skip is False and geometry_config.crop_to_masks:
+            raise ValueError(
+                f"Image {image.series_instance_uid} has no masks, but its "
+                "geometry config has crop_to_masks=True and "
+                "skip_images_without_masks=False. Set crop_to_masks=False or "
+                "allow skipping images without masks."
+            )
+
+        if skip is None:
+            skip = geometry_config.crop_to_masks
+
+        if skip:
+            logger.warning(
+                "Skipping image %s (%s): no masks apply to it.",
+                image.series_instance_uid,
+                image.modality_key,
+            )
+
+        return skip
+
     def _geometry_config_for_image(
         self,
         image: ImageVolume,
@@ -247,31 +358,11 @@ class StudyPreprocessingStep:
         return GeometryConfig.from_dict(config)
 
     @staticmethod
-    def _write_image(image: ImageVolume) -> ImageVolume:
-        final_path = write_image_unique(
-            image.image,
-            image.path,
-        )
-
-        if final_path == image.path:
-            return image
-
-        return image.with_image(
-            image.image,
-            path=final_path,
-        )
-
-    @staticmethod
-    def _write_mask(mask: MaskVolume) -> MaskVolume:
-        final_path = write_image_unique(
-            mask.image,
-            mask.path,
-        )
-
-        if final_path == mask.path:
-            return mask
-
-        return mask.with_image(
-            mask.image,
-            path=final_path,
+    def _write_volume(volume: _Volume) -> _Volume:
+        # Only called when write_outputs is set, so the planned path exists.
+        assert volume.path is not None
+        return replace(
+            volume,
+            path=write_image_unique(volume.image, volume.path),
+            metadata=dict(volume.metadata),
         )

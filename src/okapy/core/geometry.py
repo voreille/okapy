@@ -1,20 +1,48 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import product
+from typing import SupportsFloat
 
 import numpy as np
 import SimpleITK as sitk
 
-from okapy.core.models import ImageGeometry
+# Binary masks are always resampled the same way: linear (trilinear in 3D)
+# interpolation of the 0/1 volume, then a threshold at MASK_THRESHOLD. This is
+# the IBSI fractional route and is deliberately not configurable.
+#
+# Linear interpolation places the boundary with sub-voxel precision, which
+# nearest neighbour cannot do. B-spline is not an option because its kernel has
+# negative lobes: interpolating a 0/1 step over- and undershoots, and
+# thresholding the result leaves detached speckle outside the boundary and
+# pinholes inside thin structures. Clamping to [0, 1] does not help, since the
+# ringing values that cross the threshold already lie inside that range.
+# B-spline remains available for images through ``image_interpolator``.
+MASK_INTERPOLATOR = sitk.sitkLinear
+MASK_INTERPOLATOR_NAME = "linear"
+MASK_THRESHOLD = 0.5
+
+Vec3 = tuple[float, float, float]
+"""A 3D point, size or spacing in (x, y, z) order."""
+
+
+def as_vec3(values: Iterable[SupportsFloat]) -> Vec3:
+    """Return ``values`` as a ``Vec3`` of floats.
+
+    Raises ``ValueError`` when ``values`` does not hold exactly three items.
+    """
+
+    x, y, z = values
+    return (float(x), float(y), float(z))
 
 
 @dataclass(frozen=True)
 class PhysicalBox:
     """Axis-aligned physical bounding box in world coordinates, in mm."""
 
-    min_xyz: tuple[float, float, float]
-    max_xyz: tuple[float, float, float]
+    min_xyz: Vec3
+    max_xyz: Vec3
 
     def __post_init__(self) -> None:
         if len(self.min_xyz) != 3:
@@ -22,7 +50,7 @@ class PhysicalBox:
         if len(self.max_xyz) != 3:
             raise ValueError(f"max_xyz must have length 3, got {self.max_xyz}.")
 
-        for min_value, max_value in zip(self.min_xyz, self.max_xyz):
+        for min_value, max_value in zip(self.min_xyz, self.max_xyz, strict=True):
             if min_value >= max_value:
                 raise ValueError(
                     "PhysicalBox min values must be strictly smaller than max "
@@ -30,18 +58,10 @@ class PhysicalBox:
                 )
 
     @property
-    def size_xyz(self) -> tuple[float, float, float]:
-        return tuple(
-            max_value - min_value
-            for min_value, max_value in zip(self.min_xyz, self.max_xyz)
-        )
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "min_xyz": self.min_xyz,
-            "max_xyz": self.max_xyz,
-            "size_xyz": self.size_xyz,
-        }
+    def size_xyz(self) -> Vec3:
+        min_x, min_y, min_z = self.min_xyz
+        max_x, max_y, max_z = self.max_xyz
+        return (max_x - min_x, max_y - min_y, max_z - min_z)
 
 
 def image_physical_box(image: sitk.Image) -> PhysicalBox:
@@ -72,12 +92,21 @@ def image_physical_box(image: sitk.Image) -> PhysicalBox:
     corners_array = np.asarray(corners, dtype=float)
 
     return PhysicalBox(
-        min_xyz=tuple(float(x) for x in np.min(corners_array, axis=0)),
-        max_xyz=tuple(float(x) for x in np.max(corners_array, axis=0)),
+        min_xyz=as_vec3(np.min(corners_array, axis=0)),
+        max_xyz=as_vec3(np.max(corners_array, axis=0)),
     )
 
 
 def intersect_boxes(boxes: list[PhysicalBox]) -> PhysicalBox:
+    """Return the intersection of axis-aligned physical boxes.
+
+    The intersection is computed per world axis, so it is itself an
+    axis-aligned box. For obliquely oriented images, whose FOV boxes (see
+    :func:`image_physical_box`) are the axis-aligned bounding boxes of rotated
+    volumes, the result can include corners that lie outside some of the
+    images: it is a bounding box of the common FOV, not the exact overlap.
+    """
+
     if not boxes:
         raise ValueError("Cannot compute intersection of an empty list of boxes.")
 
@@ -94,13 +123,49 @@ def intersect_boxes(boxes: list[PhysicalBox]) -> PhysicalBox:
         )
 
     return PhysicalBox(
-        min_xyz=tuple(float(x) for x in min_xyz),
-        max_xyz=tuple(float(x) for x in max_xyz),
+        min_xyz=as_vec3(min_xyz),
+        max_xyz=as_vec3(max_xyz),
     )
 
 
 IndexExtent = tuple[np.ndarray, np.ndarray]
 """Continuous (x, y, z) index range ``(lo, hi)`` in the voxel space of an image."""
+
+#: Tolerance, in target voxels, used when deciding whether a target voxel
+#: centre lies inside an extent. A centre exactly on the boundary (a tie) is
+#: kept even when floating-point error puts it a hair outside.
+_TIE_TOLERANCE = 1e-6
+
+
+def _per_axis_padding(padding_voxels: int | tuple[int, int, int]) -> np.ndarray:
+    """``padding_voxels`` (one value or one per axis) as a per-axis int array.
+
+    The values are validated with the configuration
+    (``GeometryConfig.from_dict``); only the shape is checked here.
+    """
+
+    padding = np.asarray(padding_voxels, dtype=int)
+    if padding.ndim == 0:
+        return np.full(3, padding)
+    if padding.shape != (3,):
+        raise ValueError(f"padding_voxels must have 3 values, got {padding_voxels}.")
+    return padding
+
+
+def _centres_inside(
+    extents: list[IndexExtent], start: np.ndarray, step: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return the target voxel range whose centres lie inside all ``extents``.
+
+    Also returns the intersected extent ``(extent_lo, extent_hi)``.
+    """
+
+    extent_lo = np.max([extent[0] for extent in extents], axis=0)
+    extent_hi = np.min([extent[1] for extent in extents], axis=0)
+
+    lo = np.ceil((extent_lo - start) / step - _TIE_TOLERANCE).astype(int)
+    hi = np.floor((extent_hi - start) / step + _TIE_TOLERANCE).astype(int)
+    return lo, hi, extent_lo, extent_hi
 
 
 def mask_index_extent(mask: sitk.Image, image: sitk.Image) -> IndexExtent:
@@ -117,19 +182,25 @@ def mask_index_extent(mask: sitk.Image, image: sitk.Image) -> IndexExtent:
             f"Only 3D masks are supported, got dimension={mask.GetDimension()}."
         )
 
-    nonzero_zyx = np.argwhere(sitk.GetArrayFromImage(mask) != 0)
+    array_zyx = sitk.GetArrayViewFromImage(mask)
 
-    if nonzero_zyx.size == 0:
+    # Per-axis projections give the bounding box of the non-zero voxels.
+    nonzero_x, nonzero_y, nonzero_z = (
+        np.flatnonzero(np.any(array_zyx, axis=axes))
+        for axes in ((0, 1), (0, 2), (1, 2))
+    )
+
+    if nonzero_z.size == 0:
         raise ValueError("Cannot compute the extent of an empty mask.")
 
-    min_xyz = nonzero_zyx.min(axis=0)[::-1]
-    max_xyz = nonzero_zyx.max(axis=0)[::-1]
+    min_xyz = np.array([nonzero_x[0], nonzero_y[0], nonzero_z[0]])
+    max_xyz = np.array([nonzero_x[-1], nonzero_y[-1], nonzero_z[-1]])
 
     corners = [
         image.TransformPhysicalPointToContinuousIndex(
             mask.TransformContinuousIndexToPhysicalPoint(tuple(float(x) for x in index))
         )
-        for index in product(*zip(min_xyz - 0.5, max_xyz + 0.5))
+        for index in product(*zip(min_xyz - 0.5, max_xyz + 0.5, strict=True))
     ]
 
     corners_array = np.asarray(corners, dtype=float)
@@ -141,7 +212,7 @@ def box_index_extent(box: PhysicalBox, image: sitk.Image) -> IndexExtent:
 
     corners = [
         image.TransformPhysicalPointToContinuousIndex(point)
-        for point in product(*zip(box.min_xyz, box.max_xyz))
+        for point in product(*zip(box.min_xyz, box.max_xyz, strict=True))
     ]
 
     corners_array = np.asarray(corners, dtype=float)
@@ -153,7 +224,8 @@ def make_reference_image_on_aligned_grid(
     image: sitk.Image,
     spacing: tuple[float, float, float],
     extents: list[IndexExtent] | None = None,
-    padding_voxels: int = 0,
+    padding_voxels: int | tuple[int, int, int] = 0,
+    clip_extents: list[IndexExtent] | None = None,
     pixel_id: int = sitk.sitkFloat32,
 ) -> sitk.Image:
     """Create an empty SimpleITK image defining the target grid for ``image``.
@@ -167,15 +239,19 @@ def make_reference_image_on_aligned_grid(
     The grid is then cropped to the target voxels whose centres fall inside
     the intersection of ``extents`` (in the index space of ``image``, see
     :func:`mask_index_extent`), padded by ``padding_voxels`` target voxels on
-    each side and clipped to the image. Without extents the full grid is used.
+    each side (one value, or one per axis) and clipped to the image. Without
+    extents the full grid is used. Finally the grid is clipped to the target
+    voxels whose centres fall inside ``clip_extents`` (e.g. the common FOV),
+    so the padding never extends past them.
+
+    Voxel centres exactly on an extent boundary are kept.
     """
 
     if len(spacing) != 3:
         raise ValueError(f"spacing must have length 3, got {spacing}.")
     if any(s <= 0 for s in spacing):
         raise ValueError(f"spacing values must be > 0, got {spacing}.")
-    if padding_voxels < 0:
-        raise ValueError(f"padding_voxels must be >= 0, got {padding_voxels}.")
+    padding = _per_axis_padding(padding_voxels)
 
     native_spacing = np.asarray(image.GetSpacing(), dtype=float)
     native_size = np.asarray(image.GetSize(), dtype=float)
@@ -194,12 +270,7 @@ def make_reference_image_on_aligned_grid(
     hi = full_size - 1
 
     if extents:
-        extent_lo = np.max([extent[0] for extent in extents], axis=0)
-        extent_hi = np.min([extent[1] for extent in extents], axis=0)
-
-        # Target voxels whose centres lie inside the extent.
-        lo = np.ceil((extent_lo - start) / step).astype(int)
-        hi = np.floor((extent_hi - start) / step).astype(int)
+        lo, hi, extent_lo, extent_hi = _centres_inside(extents, start, step)
 
         # An extent narrower than one target voxel keeps the nearest voxel.
         narrow = lo > hi
@@ -207,13 +278,27 @@ def make_reference_image_on_aligned_grid(
         lo[narrow] = centre[narrow]
         hi[narrow] = centre[narrow]
 
-        lo = np.maximum(lo - padding_voxels, 0)
-        hi = np.minimum(hi + padding_voxels, full_size - 1)
+        lo = np.maximum(lo - padding, 0)
+        hi = np.minimum(hi + padding, full_size - 1)
 
         if np.any(lo > hi):
             raise ValueError(
                 "The region to crop does not overlap the image: "
                 f"index extent lo={tuple(extent_lo)}, hi={tuple(extent_hi)}, "
+                f"image size={image.GetSize()}."
+            )
+
+    if clip_extents:
+        clip_lo, clip_hi, extent_lo, extent_hi = _centres_inside(
+            clip_extents, start, step
+        )
+        lo = np.maximum(lo, clip_lo)
+        hi = np.minimum(hi, clip_hi)
+
+        if np.any(lo > hi):
+            raise ValueError(
+                "The region to crop does not overlap the clipping region: "
+                f"clip index extent lo={tuple(extent_lo)}, hi={tuple(extent_hi)}, "
                 f"image size={image.GetSize()}."
             )
 
@@ -231,18 +316,6 @@ def make_reference_image_on_aligned_grid(
     return reference
 
 
-def make_reference_image_from_geometry(
-    geometry: ImageGeometry,
-    *,
-    pixel_id: int = sitk.sitkFloat32,
-) -> sitk.Image:
-    reference = sitk.Image(geometry.size, pixel_id)
-    reference.SetSpacing(geometry.spacing)
-    reference.SetOrigin(geometry.origin)
-    reference.SetDirection(geometry.direction)
-    return reference
-
-
 def resample_to_reference(
     image: sitk.Image,
     reference: sitk.Image,
@@ -257,7 +330,7 @@ def resample_to_reference(
         sitk.Transform(),
         interpolator,
         default_value,
-        output_pixel_type or image.GetPixelID(),
+        image.GetPixelID() if output_pixel_type is None else output_pixel_type,
     )
 
 
@@ -284,6 +357,7 @@ def assert_same_geometry(a: sitk.Image, b: sitk.Image, *, context: str = "") -> 
         f"origin={b.GetOrigin()}, direction={b.GetDirection()}"
     )
 
+
 def interpolator_from_name(name: str | int) -> int:
     if isinstance(name, int):
         return _interpolator_from_order(name)
@@ -309,19 +383,3 @@ def _interpolator_from_order(order: int) -> int:
     if order == 3:
         return sitk.sitkBSpline
     raise ValueError("Unsupported interpolation order. Use 0, 1, or 3.")
-
-
-# Binary masks are always resampled the same way: linear (trilinear in 3D)
-# interpolation of the 0/1 volume, then a threshold at MASK_THRESHOLD. This is
-# the IBSI fractional route and is deliberately not configurable.
-#
-# Linear interpolation places the boundary with sub-voxel precision, which
-# nearest neighbour cannot do. B-spline is not an option because its kernel has
-# negative lobes: interpolating a 0/1 step over- and undershoots, and
-# thresholding the result leaves detached speckle outside the boundary and
-# pinholes inside thin structures. Clamping to [0, 1] does not help, since the
-# ringing values that cross the threshold already lie inside that range.
-# B-spline remains available for images through ``image_interpolator``.
-MASK_INTERPOLATOR = sitk.sitkLinear
-MASK_INTERPOLATOR_NAME = "linear"
-MASK_THRESHOLD = 0.5

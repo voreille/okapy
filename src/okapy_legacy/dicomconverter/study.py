@@ -7,6 +7,8 @@ import logging
 
 import numpy as np
 
+from okapy.dicom.conversion.utils import ensure_inside, safe_name
+
 from okapy_legacy.dicomconverter.dicom_file import DicomFileBase
 from okapy_legacy.dicomconverter.volume import ReferenceFrame
 from okapy_legacy.exceptions import (EmptyContourException,
@@ -72,8 +74,8 @@ class Study():
 
     def save(self, dir_path="./tmp/"):
         path = Path(dir_path)
-        filename = f"{self.patient_id}__{self.study_date}.pkl"
-        file_path = str((path / filename).resolve())
+        filename = f"{safe_name(self.patient_id)}__{safe_name(self.study_date)}.pkl"
+        file_path = str(ensure_inside(path / filename, path).resolve())
         with open(file_path, "wb") as f:
             pickle.dump(self, f)
 
