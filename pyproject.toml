@@ -63,6 +63,8 @@ dev = [
     "ruff",
     "mypy",
     "build",
+    # find_packages check in tests/unit/test_packaging.py (not bundled with 3.12 venvs).
+    "setuptools>=61",
     # Parquet golden files.
     "pyarrow",
     # Used by the frozen okapy_legacy reference code exercised in tests.

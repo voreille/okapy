@@ -1,4 +1,3 @@
-import six
 from pathlib import Path
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -160,7 +159,7 @@ class FeatureExtractorPyradiomicsPT(FeatureExtractorPyradiomics):
     @staticmethod
     def translate_radiomics_output(results):
         results_copy = results.copy()
-        for key, item in six.iteritems(results_copy):
+        for key, item in results_copy.items():
             if key.startswith('original_firstorder'):
                 new_key = key.replace('original_firstorder', 'PET_SUV')
                 results[new_key] = results.pop(key)
