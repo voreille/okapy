@@ -23,7 +23,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12"]
+        include:
+          - python-version: "3.10"
+            coverage-core: ""
+          # coverage's default tracer is ~100x slower on 3.12 for highdicom's
+          # pure-Python SEG encoding; sys.monitoring (3.12+) avoids that.
+          - python-version: "3.12"
+            coverage-core: "sysmon"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -31,6 +37,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: pytest -m "not integration" --cov=okapy --cov-report=term
+        env:
+          COVERAGE_CORE: ${{ matrix.coverage-core }}
 
   package:
     runs-on: ubuntu-latest
