@@ -27,17 +27,15 @@ from okapy.dicom.conversion.suv_common import (
     administration_datetime,
     apply_rescale,
     average_count_rate_time_s,
-    body_surface_area_m2,
+    bqml_to_suvbw,
+    cm2ml_to_suvbw,
     decay_corrected_dose_bq,
     get_optional_float,
     get_optional_str,
-    normalization_factor_kg,
+    gml_to_suvbw,
     normalize_suv_type,
     parse_dicom_datetime,
-    patient_sex,
-    patient_size_m,
     patient_weight_g,
-    patient_weight_kg,
     radionuclide_half_life_s,
     radionuclide_total_dose_bq,
     radiopharmaceutical_item,
@@ -48,7 +46,9 @@ from okapy.dicom.conversion.utils import (
     check_no_duplicate_positions,
     check_stacking_along_normal,
     ensure_inside,
-    safe_name,
+    functional_group_sequences,
+    geometry_from_positions,
+    make_filename,
     short_uid,
     sitk_image_from_array_xyz,
     write_image_unique,
@@ -139,10 +139,13 @@ class EnhancedPETSUVConverter:
         image_xyz = np.transpose(image_xyz, (1, 0, 2))
         image_xyz = image_xyz.astype(self.dtype, copy=False)
 
-        origin, spacing, direction = _geometry(
-            frames=frames,
+        origin, spacing, direction = geometry_from_positions(
+            first_position=frames[0].position,
+            last_position=frames[-1].position,
+            n_slices=len(frames),
             orientation=orientation,
             pixel_spacing=pixel_spacing,
+            single_slice_spacing=lambda: _frame_slice_thickness(frames[0]),
         )
 
         image = sitk_image_from_array_xyz(
@@ -218,74 +221,48 @@ class EnhancedPETSUVConverter:
         return frames, orientation, pixel_spacing
 
     def _make_filename(self, series: DicomSeries) -> str:
-        patient = safe_name(series.patient_id)
-        modality = safe_name(series.modality)
-        uid = short_uid(series.series_instance_uid)
-        return f"{patient}__{modality}__{uid}.{self.extension}"
+        return make_filename(
+            series.patient_id,
+            series.modality,
+            short_uid(series.series_instance_uid),
+            extension=self.extension,
+        )
 
     # -- SUV computation --------------------------------------------------
 
     def _frame_to_suvbw(self, frame: _Frame) -> np.ndarray:
         units, suv_type, scaled = _real_world_values(frame)
         meta = frame.meta
+        # The frame's SUV type, else the instance-level SUV Type (0054,1006).
+        suv_type = normalize_suv_type(suv_type) or normalize_suv_type(meta.suv_type)
 
         if units == "GML":
-            return self._gml_to_suvbw(scaled, suv_type, meta)
+            return gml_to_suvbw(
+                scaled,
+                suv_type=suv_type,
+                patient_weight=meta.patient_weight_kg,
+                patient_size=meta.patient_size_m,
+                sex=meta.patient_sex,
+            )
 
         if units == "CM2ML":
-            return self._cm2ml_to_suvbw(scaled, suv_type, meta)
+            return cm2ml_to_suvbw(
+                scaled,
+                suv_type=suv_type,
+                patient_weight=meta.patient_weight_kg,
+                patient_size=meta.patient_size_m,
+            )
 
         if units == "BQML":
-            weight_g = patient_weight_g(meta.patient_weight_kg)
-            return scaled * weight_g / _dose_at_reference_time(frame)
+            return bqml_to_suvbw(
+                scaled,
+                weight_g=patient_weight_g(meta.patient_weight_kg),
+                dose_bq=_dose_at_reference_time(frame),
+            )
 
         raise SUVComputationError(
             f"Unsupported physical units {units!r} in the Enhanced PET frame."
         )
-
-    def _gml_to_suvbw(
-        self,
-        scaled: np.ndarray,
-        suv_type: str | None,
-        meta: EnhancedPETMetadata,
-    ) -> np.ndarray:
-        suv_type = normalize_suv_type(suv_type) or normalize_suv_type(meta.suv_type)
-
-        if suv_type in {None, "", "BW"}:
-            return scaled
-
-        weight_kg = patient_weight_kg(meta.patient_weight_kg)
-        factor_kg = normalization_factor_kg(
-            suv_type=suv_type,
-            weight_kg=weight_kg,
-            height_m=patient_size_m(meta.patient_size_m),
-            sex=patient_sex(meta.patient_sex),
-        )
-
-        return scaled * weight_kg / factor_kg
-
-    def _cm2ml_to_suvbw(
-        self,
-        scaled: np.ndarray,
-        suv_type: str | None,
-        meta: EnhancedPETMetadata,
-    ) -> np.ndarray:
-        suv_type = normalize_suv_type(suv_type) or normalize_suv_type(meta.suv_type)
-
-        if suv_type not in {"BSA"}:
-            raise SUVComputationError(
-                f"Units=CM2ML requires SUVType=BSA, got {suv_type!r}."
-            )
-
-        bsa_cm2 = (
-            body_surface_area_m2(
-                weight_kg=patient_weight_kg(meta.patient_weight_kg),
-                height_m=patient_size_m(meta.patient_size_m),
-            )
-            * 10_000.0
-        )
-
-        return scaled * patient_weight_g(meta.patient_weight_kg) / bsa_cm2
 
 
 # --------------------------------------------------------------------------
@@ -305,28 +282,10 @@ def _extract_metadata(ds) -> EnhancedPETMetadata:
 
 
 def _functional_group(ds, frame_index: int, name: str):
-    """Per-frame functional group item, falling back to the shared one.
+    """Item of the ``name`` functional group that applies to one frame."""
 
-    Manual: "Shared Functional Groups define default values for all frames,
-    while Per-frame Functional Groups override them where specified."
-    """
-
-    per_frame = ds.PerFrameFunctionalGroupsSequence[frame_index]
-    sequence = getattr(per_frame, name, None)
-
-    if sequence is not None and len(sequence) > 0:
-        return sequence[0]
-
-    shared = getattr(ds, "SharedFunctionalGroupsSequence", None)
-    if shared is None or len(shared) == 0:
-        return None
-
-    sequence = getattr(shared[0], name, None)
-
-    if sequence is None or len(sequence) == 0:
-        return None
-
-    return sequence[0]
+    sequences = functional_group_sequences(ds, frame_index, name)
+    return sequences[0][0] if sequences else None
 
 
 # --------------------------------------------------------------------------
@@ -405,29 +364,9 @@ def _check_frame_geometry(frames, orientation, *, series_uid: str) -> None:
     )
 
 
-def _geometry(*, frames, orientation, pixel_spacing):
-    row = orientation[:3]
-    col = orientation[3:]
-    normal = np.cross(row, col)
-
-    direction = tuple(float(x) for x in np.stack([row, col, normal], axis=1).ravel())
-
-    origin = frames[0].position
-    row_spacing, col_spacing = pixel_spacing
-
-    if len(frames) > 1:
-        first = np.asarray(frames[0].position, dtype=float)
-        last = np.asarray(frames[-1].position, dtype=float)
-        z_spacing = float(np.linalg.norm(last - first) / (len(frames) - 1))
-    else:
-        item = _functional_group(
-            frames[0].dataset,
-            frames[0].index,
-            "PixelMeasuresSequence",
-        )
-        z_spacing = float(getattr(item, "SliceThickness", 1.0) if item else 1.0)
-
-    return origin, (col_spacing, row_spacing, z_spacing), direction
+def _frame_slice_thickness(frame: _Frame) -> float:
+    item = _functional_group(frame.dataset, frame.index, "PixelMeasuresSequence")
+    return float(getattr(item, "SliceThickness", 1.0) if item else 1.0)
 
 
 # --------------------------------------------------------------------------
@@ -507,20 +446,16 @@ def _real_world_values(frame: _Frame) -> tuple[str, str | None, np.ndarray]:
 def _select_real_world_value_mapping(frame: _Frame):
     """Pick the best Real World Value Mapping item for one frame."""
 
-    per_frame = frame.dataset.PerFrameFunctionalGroupsSequence[frame.index]
-    sequence = getattr(per_frame, "RealWorldValueMappingSequence", None)
+    sequences = functional_group_sequences(
+        frame.dataset, frame.index, "RealWorldValueMappingSequence"
+    )
 
-    if sequence is None or len(sequence) == 0:
-        shared = getattr(frame.dataset, "SharedFunctionalGroupsSequence", None)
-        if shared is not None and len(shared) > 0:
-            sequence = getattr(shared[0], "RealWorldValueMappingSequence", None)
-
-    if sequence is None or len(sequence) == 0:
+    if not sequences:
         return None
 
     candidates: list[tuple[int, str, str | None, object]] = []
 
-    for item in sequence:
+    for item in sequences[0]:
         units_and_type = _units_from_measurement_code(item)
 
         if units_and_type is None:

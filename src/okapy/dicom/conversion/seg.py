@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pydicom
@@ -17,14 +16,18 @@ from okapy.core.models import (
 from okapy.dicom.conversion.utils import (
     ensure_inside,
     image_metadata,
-    safe_name,
+    make_filename,
+    referenced_series_uids,
+    short_uid,
     sitk_mask_like_reference,
+    to_jsonable,
     write_image_unique,
 )
 from okapy.dicom.models import DicomSeries
 
 from .seg_highdicom_adapter import (
     FrameBetweenSlicesError,
+    parse_seg,
     read_seg_segment_infos,
     read_seg_with_highdicom,
     segment_to_sitk,
@@ -74,7 +77,8 @@ class SegMaskConverter:
                 series=series,
             )
 
-        segment_numbers, segment_infos = read_seg_segment_infos(dcm)
+        seg = parse_seg(dcm)
+        segment_numbers, segment_infos = read_seg_segment_infos(seg)
 
         # Frames on the reference grid are placed slice by slice; SEGs on
         # another in-plane grid, or with frames between the reference slices,
@@ -90,7 +94,7 @@ class SegMaskConverter:
                 exc,
             )
             masks_xyz = None
-        raw_volume = read_seg_with_highdicom(dcm) if masks_xyz is None else None
+        raw_volume = read_seg_with_highdicom(seg) if masks_xyz is None else None
 
         requested_labels = set(labels) if labels is not None else None
 
@@ -143,7 +147,7 @@ class SegMaskConverter:
                         metadata={
                             "seg_series_instance_uid": series.series_instance_uid,
                             "segment_number": int(segment_number),
-                            "segment_info": _to_jsonable(segment_info),
+                            "segment_info": to_jsonable(segment_info),
                         },
                     ),
                     stage=VolumeStage.CONVERTED,
@@ -172,14 +176,14 @@ class SegMaskConverter:
         label: str,
         segment_number: int,
     ) -> str:
-        patient = safe_name(reference_image.patient_id)
-        label = safe_name(label)
-        reference_modality = safe_name(reference_image.modality)
-        reference_uid = safe_name(_short_uid(reference_image.series_instance_uid))
-
-        return (
-            f"{patient}__{label}__seg{int(segment_number)}__SEG__"
-            f"{reference_modality}__{reference_uid}.{self.extension}"
+        return make_filename(
+            reference_image.patient_id,
+            label,
+            f"seg{int(segment_number)}",
+            "SEG",
+            reference_image.modality,
+            short_uid(reference_image.series_instance_uid),
+            extension=self.extension,
         )
 
 
@@ -190,7 +194,7 @@ def _check_reference_uid(
     series: DicomSeries,
 ) -> None:
     referenced_uids = set(series.referenced_series_uids)
-    referenced_uids.update(_referenced_series_uids_from_dataset(dcm))
+    referenced_uids.update(referenced_series_uids(dcm, rtstruct=False, derivation=True))
 
     if not referenced_uids:
         logger.warning(
@@ -205,64 +209,3 @@ def _check_reference_uid(
             f"SEG references series {sorted(referenced_uids)}, but the provided "
             f"reference image is {reference_image.series_instance_uid}."
         )
-
-
-def _referenced_series_uids_from_dataset(dcm) -> set[str]:
-    """Best-effort extraction of referenced series UIDs from a DICOM SEG."""
-
-    uids: set[str] = set()
-
-    # Common direct path.
-    for item in getattr(dcm, "ReferencedSeriesSequence", []):
-        uid = getattr(item, "SeriesInstanceUID", None)
-        if uid is not None:
-            uids.add(str(uid))
-
-    # Common nested path through DerivationImageSequence /
-    # SourceImageSequence. This often contains referenced SOPs rather than a
-    # series UID, but keep this best-effort logic for datasets that include it.
-    for frame_group in getattr(dcm, "PerFrameFunctionalGroupsSequence", []):
-        derivation_sequence = getattr(frame_group, "DerivationImageSequence", [])
-        for derivation in derivation_sequence:
-            for source in getattr(derivation, "SourceImageSequence", []):
-                uid = getattr(source, "SeriesInstanceUID", None)
-                if uid is not None:
-                    uids.add(str(uid))
-
-    # Shared functional groups can also carry derivation information.
-    for shared_group in getattr(dcm, "SharedFunctionalGroupsSequence", []):
-        derivation_sequence = getattr(shared_group, "DerivationImageSequence", [])
-        for derivation in derivation_sequence:
-            for source in getattr(derivation, "SourceImageSequence", []):
-                uid = getattr(source, "SeriesInstanceUID", None)
-                if uid is not None:
-                    uids.add(str(uid))
-
-    return uids
-
-
-def _to_jsonable(value: Any) -> Any:
-    """Convert pydicom/highdicom metadata to simple serializable values."""
-
-    if value is None:
-        return None
-
-    if isinstance(value, (str, int, float, bool)):
-        return value
-
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="ignore")
-
-    if isinstance(value, dict):
-        return {str(k): _to_jsonable(v) for k, v in value.items()}
-
-    if isinstance(value, (list, tuple)):
-        return [_to_jsonable(v) for v in value]
-
-    return str(value)
-
-
-def _short_uid(uid: str | None) -> str:
-    if uid is None:
-        return "unknown"
-    return str(uid).split(".")[-1]

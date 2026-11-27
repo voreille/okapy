@@ -19,6 +19,8 @@ from datetime import date, datetime, time, timedelta
 
 import numpy as np
 
+from okapy.dicom.conversion.utils import get_optional_str
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,16 +64,6 @@ def warn_once(emitted_warnings: set[str], key: str, message: str, *args) -> None
 # --------------------------------------------------------------------------
 # Attribute access
 # --------------------------------------------------------------------------
-
-
-def get_optional_str(ds, name: str) -> str | None:
-    value = getattr(ds, name, None)
-
-    if value is None:
-        return None
-
-    value = str(value).strip()
-    return value or None
 
 
 def get_optional_float(ds, name: str) -> float | None:
@@ -342,6 +334,77 @@ def body_surface_area_m2(weight_kg: float, height_m: float) -> float:
 
     height_cm = height_m * 100.0
     return 0.007184 * (weight_kg**0.425) * (height_cm**0.725)
+
+
+# --------------------------------------------------------------------------
+# Conversion of real-world values to SUVbw
+# --------------------------------------------------------------------------
+
+
+def bqml_to_suvbw(
+    activity_bqml: np.ndarray,
+    *,
+    weight_g: float,
+    dose_bq: float,
+) -> np.ndarray:
+    """SUVbw from an activity concentration in Bq/ml."""
+
+    return activity_bqml * weight_g / dose_bq
+
+
+def gml_to_suvbw(
+    scaled: np.ndarray,
+    *,
+    suv_type: str | None,
+    patient_weight: float | None,
+    patient_size: float | None,
+    sex: str | None,
+    emitted_warnings: set[str] | None = None,
+) -> np.ndarray:
+    """SUVbw from SUVx values (Units=GML) of SUV type ``suv_type``."""
+
+    suv_type = normalize_suv_type(suv_type)
+
+    if suv_type in {None, "", "BW"}:
+        return scaled
+
+    weight_kg = patient_weight_kg(patient_weight)
+    factor_kg = normalization_factor_kg(
+        suv_type=suv_type,
+        weight_kg=weight_kg,
+        height_m=patient_size_m(patient_size, emitted_warnings=emitted_warnings),
+        sex=patient_sex(sex),
+    )
+
+    # scaled is SUVx = activity * factor_g / dose.
+    # SUVbw = SUVx / factor_g * weight_g.
+    return scaled * weight_kg / factor_kg
+
+
+def cm2ml_to_suvbw(
+    scaled: np.ndarray,
+    *,
+    suv_type: str | None,
+    patient_weight: float | None,
+    patient_size: float | None,
+    emitted_warnings: set[str] | None = None,
+) -> np.ndarray:
+    """SUVbw from SUVbsa values (Units=CM2ML); ``suv_type`` must be BSA."""
+
+    if normalize_suv_type(suv_type) not in {"BSA"}:
+        raise SUVComputationError(
+            f"Units=CM2ML requires SUVType=BSA, got {suv_type!r}."
+        )
+
+    weight_g = patient_weight_g(patient_weight)
+
+    bsa_m2 = body_surface_area_m2(
+        weight_kg=patient_weight_kg(patient_weight),
+        height_m=patient_size_m(patient_size, emitted_warnings=emitted_warnings),
+    )
+    bsa_cm2 = bsa_m2 * 10_000.0
+
+    return scaled * weight_g / bsa_cm2
 
 
 # --------------------------------------------------------------------------

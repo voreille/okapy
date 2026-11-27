@@ -20,21 +20,19 @@ from okapy.dicom.conversion.suv_common import (
     administration_datetime,
     apply_rescale,
     average_count_rate_time_s,
-    body_surface_area_m2,
+    bqml_to_suvbw,
+    cm2ml_to_suvbw,
     decay_corrected_dose_bq,
     get_optional_float,
     get_optional_str,
     get_required_float,
-    normalization_factor_kg,
+    gml_to_suvbw,
     normalize_manufacturer,
     normalize_suv_type,
     parse_dicom_date,
     parse_dicom_datetime,
     parse_dicom_time,
-    patient_sex,
-    patient_size_m,
     patient_weight_g,
-    patient_weight_kg,
     positive_float_tag,
     private_tag,
     radionuclide_half_life_s,
@@ -136,10 +134,23 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
             return self._bqml_to_suvbw(scaled, s, meta)
 
         if units == "GML":
-            return self._gml_to_suvbw(scaled, meta)
+            return gml_to_suvbw(
+                scaled,
+                suv_type=meta.suv_type,
+                patient_weight=meta.patient_weight_kg,
+                patient_size=meta.patient_size_m,
+                sex=meta.patient_sex,
+                emitted_warnings=meta.emitted_warnings,
+            )
 
         if units == "CM2ML":
-            return self._cm2ml_to_suvbw(scaled, meta)
+            return cm2ml_to_suvbw(
+                scaled,
+                suv_type=meta.suv_type,
+                patient_weight=meta.patient_weight_kg,
+                patient_size=meta.patient_size_m,
+                emitted_warnings=meta.emitted_warnings,
+            )
 
         if units == "CNTS":
             return self._cnts_to_suvbw(scaled, s, meta)
@@ -152,49 +163,11 @@ class PETSUVConverter(SimpleITKImageSeriesConverter):
     def _bqml_to_suvbw(
         self, activity_bqml: np.ndarray, s, meta: PETMetadata
     ) -> np.ndarray:
-        weight_g = patient_weight_g(meta.patient_weight_kg)
-        dose_bq = _dose_at_image_reference_time(s, meta)
-        return activity_bqml * weight_g / dose_bq
-
-    def _gml_to_suvbw(self, scaled: np.ndarray, meta: PETMetadata) -> np.ndarray:
-        suv_type = normalize_suv_type(meta.suv_type)
-
-        if suv_type in {None, "", "BW"}:
-            return scaled
-
-        weight_kg = patient_weight_kg(meta.patient_weight_kg)
-        factor_kg = normalization_factor_kg(
-            suv_type=suv_type,
-            weight_kg=weight_kg,
-            height_m=patient_size_m(
-                meta.patient_size_m, emitted_warnings=meta.emitted_warnings
-            ),
-            sex=patient_sex(meta.patient_sex),
+        return bqml_to_suvbw(
+            activity_bqml,
+            weight_g=patient_weight_g(meta.patient_weight_kg),
+            dose_bq=_dose_at_image_reference_time(s, meta),
         )
-
-        # scaled is SUVx = activity * factor_g / dose.
-        # SUVbw = SUVx / factor_g * weight_g.
-        return scaled * weight_kg / factor_kg
-
-    def _cm2ml_to_suvbw(self, scaled: np.ndarray, meta: PETMetadata) -> np.ndarray:
-        suv_type = normalize_suv_type(meta.suv_type)
-
-        if suv_type not in {"BSA"}:
-            raise SUVComputationError(
-                f"Units=CM2ML requires SUVType=BSA, got {meta.suv_type!r}."
-            )
-
-        weight_g = patient_weight_g(meta.patient_weight_kg)
-
-        bsa_m2 = body_surface_area_m2(
-            weight_kg=patient_weight_kg(meta.patient_weight_kg),
-            height_m=patient_size_m(
-                meta.patient_size_m, emitted_warnings=meta.emitted_warnings
-            ),
-        )
-        bsa_cm2 = bsa_m2 * 10_000.0
-
-        return scaled * weight_g / bsa_cm2
 
     def _cnts_to_suvbw(
         self, scaled_counts: np.ndarray, s, meta: PETMetadata

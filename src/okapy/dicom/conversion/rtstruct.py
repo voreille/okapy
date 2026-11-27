@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -19,7 +20,8 @@ from okapy.dicom.conversion.utils import (
     SLICE_MATCH_TOLERANCE,
     ensure_inside,
     image_metadata,
-    safe_name,
+    make_filename,
+    referenced_series_uids,
     sitk_mask_like_reference,
     write_image_unique,
 )
@@ -46,11 +48,33 @@ class RTStructMaskConverter:
         *,
         extension: str = "nii.gz",
         skip_empty: bool = True,
-        check_reference: bool = True,
+        check_reference_uid: bool = True,
+        check_reference: bool | None = None,
     ) -> None:
+        if check_reference is not None:
+            warnings.warn(
+                "RTStructMaskConverter(check_reference=...) is deprecated; use "
+                "check_reference_uid=... instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            check_reference_uid = check_reference
+
         self.extension = extension
         self.skip_empty = skip_empty
-        self.check_reference = check_reference
+        self.check_reference_uid = check_reference_uid
+
+    @property
+    def check_reference(self) -> bool:
+        """Deprecated alias of :attr:`check_reference_uid`."""
+
+        warnings.warn(
+            "RTStructMaskConverter.check_reference is deprecated; use "
+            "check_reference_uid instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.check_reference_uid
 
     def convert(
         self,
@@ -75,7 +99,7 @@ class RTStructMaskConverter:
 
         dcm = datasets[0]
 
-        if self.check_reference:
+        if self.check_reference_uid:
             self._check_reference_series(
                 dcm=dcm,
                 reference_image=reference_image,
@@ -268,7 +292,7 @@ class RTStructMaskConverter:
         reference_image: ImageVolume,
         rtstruct_series: DicomSeries,
     ) -> None:
-        referenced_uids = set(_get_referenced_series_uids_from_rtstruct(dcm))
+        referenced_uids = set(referenced_series_uids(dcm))
 
         if not referenced_uids:
             logger.warning(
@@ -290,14 +314,13 @@ class RTStructMaskConverter:
         reference_image: ImageVolume,
         label: str,
     ) -> str:
-        patient = safe_name(reference_image.patient_id)
-        label = safe_name(label)
-        reference_modality = safe_name(reference_image.modality)
-        reference_uid = safe_name(reference_image.series_instance_uid)
-
-        return (
-            f"{patient}__{label}__RTSTRUCT__{reference_modality}__"
-            f"{reference_uid}.{self.extension}"
+        return make_filename(
+            reference_image.patient_id,
+            label,
+            "RTSTRUCT",
+            reference_image.modality,
+            reference_image.series_instance_uid,
+            extension=self.extension,
         )
 
 
@@ -316,24 +339,3 @@ def _roi_number_to_contours(dcm) -> dict[int, object]:
         mapping[roi_number] = getattr(roi_contour, "ContourSequence", [])
 
     return mapping
-
-
-def _get_referenced_series_uids_from_rtstruct(dcm) -> tuple[str, ...]:
-    """Extract image series UIDs referenced by an RTSTRUCT dataset."""
-
-    refs: list[str] = []
-
-    for frame_ref in getattr(dcm, "ReferencedFrameOfReferenceSequence", []):
-        for study_ref in getattr(frame_ref, "RTReferencedStudySequence", []):
-            for series_ref in getattr(study_ref, "RTReferencedSeriesSequence", []):
-                uid = getattr(series_ref, "SeriesInstanceUID", None)
-                if uid is not None:
-                    refs.append(str(uid))
-
-    # Some objects may also contain the direct sequence.
-    for series_ref in getattr(dcm, "ReferencedSeriesSequence", []):
-        uid = getattr(series_ref, "SeriesInstanceUID", None)
-        if uid is not None:
-            refs.append(str(uid))
-
-    return tuple(dict.fromkeys(refs))

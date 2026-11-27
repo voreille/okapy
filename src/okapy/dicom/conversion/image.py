@@ -13,7 +13,8 @@ from okapy.dicom.conversion.utils import (
     check_no_duplicate_positions,
     check_stacking_along_normal,
     ensure_inside,
-    safe_name,
+    geometry_from_positions,
+    make_filename,
     short_uid,
     sitk_image_from_array_xyz,
     write_image_unique,
@@ -82,9 +83,15 @@ class SimpleITKImageSeriesConverter:
 
         image_xyz = image_xyz.astype(self.dtype, copy=False)
 
-        origin, spacing, direction = _geometry_from_slices(
-            slices=slices,
-            expected_n_slices=image_xyz.shape[2],
+        origin, spacing, direction = geometry_from_positions(
+            first_position=slices[0].ImagePositionPatient,
+            last_position=slices[-1].ImagePositionPatient,
+            n_slices=image_xyz.shape[2],
+            orientation=slices[0].ImageOrientationPatient,
+            pixel_spacing=slices[0].PixelSpacing,
+            single_slice_spacing=lambda: (
+                _float_or_default(slices[0], "SliceThickness", 1.0) or 1.0
+            ),
         )
 
         image = sitk_image_from_array_xyz(
@@ -166,10 +173,12 @@ class SimpleITKImageSeriesConverter:
         return np.stack(arrays, axis=-1)
 
     def _make_filename(self, series: DicomSeries) -> str:
-        patient = safe_name(series.patient_id)
-        modality = safe_name(series.modality)
-        uid = short_uid(series.series_instance_uid)
-        return f"{patient}__{modality}__{uid}.{self.extension}"
+        return make_filename(
+            series.patient_id,
+            series.modality,
+            short_uid(series.series_instance_uid),
+            extension=self.extension,
+        )
 
 
 def _keep_most_common_shape(slices, paths, orthogonal_positions, *, dimension: str):
@@ -331,33 +340,3 @@ def _fill_discontinuity(
         ),
         axis=2,
     )
-
-
-def _geometry_from_slices(slices, expected_n_slices: int):
-    first = slices[0]
-    last = slices[-1]
-
-    origin = tuple(float(x) for x in first.ImagePositionPatient)
-
-    orientation = np.asarray(first.ImageOrientationPatient, dtype=float)
-    row = orientation[:3]
-    col = orientation[3:]
-    normal = np.cross(row, col)
-
-    direction_matrix = np.stack([row, col, normal], axis=1)
-    direction = tuple(float(x) for x in direction_matrix.ravel())
-
-    row_spacing, col_spacing = [float(x) for x in first.PixelSpacing]
-
-    if expected_n_slices > 1:
-        first_pos = np.asarray(first.ImagePositionPatient, dtype=float)
-        last_pos = np.asarray(last.ImagePositionPatient, dtype=float)
-        z_spacing = float(
-            np.linalg.norm(last_pos - first_pos) / (expected_n_slices - 1)
-        )
-    else:
-        z_spacing = _float_or_default(first, "SliceThickness", 1.0) or 1.0
-
-    spacing = (col_spacing, row_spacing, z_spacing)
-
-    return origin, spacing, direction

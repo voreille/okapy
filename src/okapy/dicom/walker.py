@@ -8,6 +8,11 @@ from typing import Any
 import pydicom
 from pydicom.errors import InvalidDicomError
 
+from okapy.dicom.conversion.utils import (
+    get_optional_str,
+    referenced_series_uids,
+    to_jsonable,
+)
 from okapy.dicom.models import (
     ALLOWED_MODALITIES,
     IMAGE_MODALITIES,
@@ -149,7 +154,7 @@ class DicomWalker:
             logger.debug("Skipping non-DICOM file %s: %s", path, exc)
             return None
 
-        modality = _get_str(ds, "Modality")
+        modality = get_optional_str(ds, "Modality")
 
         if modality is None:
             logger.debug("Skipping DICOM without Modality, likely DICOMDIR: %s", path)
@@ -178,17 +183,17 @@ class DicomWalker:
 
         return DicomFileRecord(
             path=path.resolve(),
-            sop_class_uid=_get_str(ds, "SOPClassUID"),
+            sop_class_uid=get_optional_str(ds, "SOPClassUID"),
             modality=modality,
-            patient_id=_get_str(ds, "PatientID"),
-            study_instance_uid=_get_str(ds, "StudyInstanceUID"),
-            series_instance_uid=_get_str(ds, "SeriesInstanceUID"),
-            sop_instance_uid=_get_str(ds, "SOPInstanceUID"),
+            patient_id=get_optional_str(ds, "PatientID"),
+            study_instance_uid=get_optional_str(ds, "StudyInstanceUID"),
+            series_instance_uid=get_optional_str(ds, "SeriesInstanceUID"),
+            sop_instance_uid=get_optional_str(ds, "SOPInstanceUID"),
             instance_number=_get_int(ds, "InstanceNumber"),
-            series_description=_get_str(ds, "SeriesDescription"),
+            series_description=get_optional_str(ds, "SeriesDescription"),
             image_position_patient=image_position_patient,
             image_orientation_patient=image_orientation_patient,
-            referenced_series_uids=_get_referenced_series_uids(ds),
+            referenced_series_uids=referenced_series_uids(ds),
             extra_dicom_tags=self._get_extra_dicom_tags(ds),
         )
 
@@ -213,51 +218,12 @@ def _unique_preserve_order(values: Iterable[str]) -> list[str]:
 def _get_dicom_value(ds, name: str) -> Any:
     """Extract a DICOM value in a CSV/JSON-friendly form.
 
-    This is deliberately conservative: simple scalar values are preserved,
-    bytes are decoded, multi-values become lists, and complex DICOM objects are
-    converted to strings. Sequence-valued tags should usually be handled by
-    dedicated code instead of being requested as extra tags.
+    Simple scalar values are preserved, bytes are decoded, and complex DICOM
+    objects (including multi-values) are converted to strings. Sequence-valued
+    tags should usually be handled by dedicated code instead of being requested
+    as extra tags.
     """
-    value = getattr(ds, name, None)
-
-    if value is None:
-        return None
-
-    if isinstance(value, (str, int, float, bool)):
-        return value
-
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="ignore")
-
-    # pydicom MultiValue behaves enough like a list for this conversion.
-    if isinstance(value, (list, tuple)):
-        return [_dicom_scalar_to_python(v) for v in value]
-
-    return _dicom_scalar_to_python(value)
-
-
-def _dicom_scalar_to_python(value) -> Any:
-    if value is None:
-        return None
-
-    if isinstance(value, (str, int, float, bool)):
-        return value
-
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="ignore")
-
-    # pydicom DSfloat/IS can generally be converted to float/int, but keeping
-    # str is safer for metadata export because it avoids surprises with VRs.
-    return str(value)
-
-
-def _get_str(ds, name: str) -> str | None:
-    value = getattr(ds, name, None)
-    if value is None:
-        return None
-
-    value = str(value).strip()
-    return value or None
+    return to_jsonable(getattr(ds, name, None))
 
 
 def _get_int(ds, name: str) -> int | None:
@@ -308,34 +274,6 @@ def _get_float_tuple6(
         )
 
     return result[0], result[1], result[2], result[3], result[4], result[5]
-
-
-def _get_referenced_series_uids(ds) -> tuple[str, ...]:
-    """Extract referenced SeriesInstanceUID values from common DICOM locations.
-
-    SEG commonly exposes ReferencedSeriesSequence directly.
-    RTSTRUCT usually nests it under:
-      ReferencedFrameOfReferenceSequence
-        -> RTReferencedStudySequence
-        -> RTReferencedSeriesSequence
-    """
-    refs: list[str] = []
-
-    # Common for SEG and some other objects.
-    for item in getattr(ds, "ReferencedSeriesSequence", []):
-        uid = getattr(item, "SeriesInstanceUID", None)
-        if uid is not None:
-            refs.append(str(uid))
-
-    # Common for RTSTRUCT.
-    for frame_item in getattr(ds, "ReferencedFrameOfReferenceSequence", []):
-        for study_item in getattr(frame_item, "RTReferencedStudySequence", []):
-            for series_item in getattr(study_item, "RTReferencedSeriesSequence", []):
-                uid = getattr(series_item, "SeriesInstanceUID", None)
-                if uid is not None:
-                    refs.append(str(uid))
-
-    return tuple(dict.fromkeys(refs))
 
 
 def _is_hidden(path: Path, root: Path) -> bool:

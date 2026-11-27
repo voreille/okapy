@@ -8,7 +8,10 @@ import numpy as np
 import SimpleITK as sitk
 from pydicom.dataset import Dataset
 
-from okapy.dicom.conversion.utils import SLICE_MATCH_TOLERANCE
+from okapy.dicom.conversion.utils import (
+    SLICE_MATCH_TOLERANCE,
+    functional_group_sequences,
+)
 
 
 class FrameBetweenSlicesError(ValueError):
@@ -30,10 +33,6 @@ class HighdicomSegmentReadResult:
     volume: hd.Volume
     segment_numbers: tuple[int, ...]
     segment_infos: dict[int, dict[str, Any]]
-
-    @property
-    def available_segments(self) -> list[int]:
-        return list(self.segment_numbers)
 
     def segment_data(self, segment_number: int) -> np.ndarray:
         """Return one segment in z, y, x array order."""
@@ -73,18 +72,17 @@ class HighdicomSegmentReadResult:
         return array[..., channel_index]
 
 
+def parse_seg(dcm: Dataset) -> hd.seg.Segmentation:
+    """Parse a DICOM SEG dataset once; ``dcm`` itself is left unchanged."""
+
+    return hd.seg.Segmentation.from_dataset(dcm)
+
+
 def read_seg_segment_infos(
-    dcm: Dataset,
+    seg: hd.seg.Segmentation,
 ) -> tuple[tuple[int, ...], dict[int, dict[str, Any]]]:
     """Return the segment numbers and their labels / descriptions."""
 
-    seg = hd.seg.Segmentation.from_dataset(dcm)
-    return _segment_infos(seg)
-
-
-def _segment_infos(
-    seg: hd.seg.Segmentation,
-) -> tuple[tuple[int, ...], dict[int, dict[str, Any]]]:
     segment_numbers = tuple(int(n) for n in seg.get_segment_numbers())
 
     if not segment_numbers:
@@ -110,12 +108,14 @@ def _segment_infos(
 
 
 def read_seg_with_highdicom(
-    dcm: Dataset,
+    seg: hd.seg.Segmentation,
 ) -> HighdicomSegmentReadResult:
-    """Read a regularly spaced patient-coordinate DICOM SEG."""
+    """Read a regularly spaced patient-coordinate DICOM SEG.
 
-    seg = hd.seg.Segmentation.from_dataset(dcm)
-    segment_numbers, segment_infos = _segment_infos(seg)
+    ``seg`` is the SEG parsed by :func:`parse_seg`.
+    """
+
+    segment_numbers, segment_infos = read_seg_segment_infos(seg)
 
     volume = seg.get_volume(
         segment_numbers=segment_numbers,
@@ -293,16 +293,8 @@ def segments_on_reference_grid(
 def _frame_attribute(dcm: Dataset, frame: int, sequence: str, keyword: str):
     """Return ``keyword`` from the per-frame or shared functional groups."""
 
-    groups = []
-    if "PerFrameFunctionalGroupsSequence" in dcm:
-        groups.append(dcm.PerFrameFunctionalGroupsSequence[frame])
-    if "SharedFunctionalGroupsSequence" in dcm:
-        groups.append(dcm.SharedFunctionalGroupsSequence[0])
-
-    for group in groups:
-        if sequence in group and len(group[sequence].value) > 0:
-            item = group[sequence].value[0]
-            if keyword in item:
-                return item[keyword].value
+    for items in functional_group_sequences(dcm, frame, sequence):
+        if keyword in items[0]:
+            return items[0][keyword].value
 
     return None

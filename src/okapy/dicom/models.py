@@ -24,8 +24,32 @@ SPECIAL_MODALITIES = {
 ALLOWED_MODALITIES = IMAGE_MODALITIES | SPECIAL_MODALITIES
 
 
+class _ModalityKindMixin:
+    """``is_image`` / ``is_rtstruct`` / ``is_seg`` from a ``modality`` field."""
+
+    modality: str
+
+    @property
+    def is_image(self) -> bool:
+        """Whether this represents an image volume."""
+
+        return self.modality in IMAGE_MODALITIES
+
+    @property
+    def is_rtstruct(self) -> bool:
+        """Whether this is an RT Structure Set."""
+
+        return self.modality == "RTSTRUCT"
+
+    @property
+    def is_seg(self) -> bool:
+        """Whether this is a DICOM Segmentation object."""
+
+        return self.modality == "SEG"
+
+
 @dataclass(frozen=True)
-class DicomFileRecord:
+class DicomFileRecord(_ModalityKindMixin):
     """Lightweight metadata record for one DICOM file.
 
     This object is produced by DicomWalker and consumed by collectors/groupers.
@@ -56,25 +80,9 @@ class DicomFileRecord:
     referenced_series_uids: tuple[str, ...] = field(default_factory=tuple)
     extra_dicom_tags: dict[str, object] = field(default_factory=dict)
 
-    @property
-    def is_image(self) -> bool:
-        return self.modality in IMAGE_MODALITIES
-
-    @property
-    def is_rtstruct(self) -> bool:
-        return self.modality == "RTSTRUCT"
-
-    @property
-    def is_seg(self) -> bool:
-        return self.modality == "SEG"
-
-    @property
-    def is_mask(self) -> bool:
-        return self.is_rtstruct or self.is_seg
-
 
 @dataclass(frozen=True)
-class DicomSeries:
+class DicomSeries(_ModalityKindMixin):
     """A DICOM series grouped from one or more file records."""
 
     series_instance_uid: str
@@ -161,30 +169,6 @@ class DicomSeries:
                 uid for record in self.records for uid in record.referenced_series_uids
             )
         )
-
-    @property
-    def is_image(self) -> bool:
-        """Whether this series represents an image volume."""
-
-        return self.modality in IMAGE_MODALITIES
-
-    @property
-    def is_rtstruct(self) -> bool:
-        """Whether this series is an RT Structure Set."""
-
-        return self.modality == "RTSTRUCT"
-
-    @property
-    def is_seg(self) -> bool:
-        """Whether this series is a DICOM Segmentation object."""
-
-        return self.modality == "SEG"
-
-    @property
-    def is_mask(self) -> bool:
-        """Whether this series represents a supported segmentation object."""
-
-        return self.is_rtstruct or self.is_seg
 
 
 @dataclass(frozen=True)

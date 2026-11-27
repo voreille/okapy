@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
-import pydicom
 import SimpleITK as sitk
 
 #: Maximum distance, in voxels, between a SEG frame or RTSTRUCT contour and the
@@ -49,6 +50,15 @@ def short_uid(uid: str | None) -> str:
     if uid is None:
         return "unknown"
     return safe_name(str(uid).split(".")[-1])
+
+
+def make_filename(*parts: object, extension: str) -> str:
+    """Return ``part1__part2__...extension`` with every part :func:`safe_name`-d.
+
+    :func:`safe_name` and :func:`short_uid` results pass through unchanged.
+    """
+
+    return "__".join(safe_name(part) for part in parts) + f".{extension}"
 
 
 def ensure_inside(path: Path, root: Path) -> Path:
@@ -110,16 +120,143 @@ def check_stacking_along_normal(
         )
 
 
-def read_dicom(path_or_dataset):
-    if hasattr(path_or_dataset, "SOPInstanceUID"):
-        return path_or_dataset
-    return pydicom.dcmread(str(path_or_dataset))
+def geometry_from_positions(
+    *,
+    first_position,
+    last_position,
+    n_slices: int,
+    orientation,
+    pixel_spacing,
+    single_slice_spacing: Callable[[], float],
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, ...]]:
+    """Return the (origin, spacing, direction) of a stack of slices.
+
+    ``first_position`` / ``last_position`` are the ImagePositionPatient of the
+    first and last of ``n_slices`` slices sorted along the normal, and
+    ``pixel_spacing`` is PixelSpacing (row, column). The z spacing of a single
+    slice is ``single_slice_spacing()``, called only in that case.
+    """
+
+    origin = tuple(float(x) for x in first_position)
+
+    orientation = np.asarray(orientation, dtype=float)
+    row = orientation[:3]
+    col = orientation[3:]
+    normal = np.cross(row, col)
+
+    direction = tuple(float(x) for x in np.stack([row, col, normal], axis=1).ravel())
+
+    row_spacing, col_spacing = (float(x) for x in pixel_spacing)
+
+    if n_slices > 1:
+        first = np.asarray(first_position, dtype=float)
+        last = np.asarray(last_position, dtype=float)
+        z_spacing = float(np.linalg.norm(last - first) / (n_slices - 1))
+    else:
+        z_spacing = single_slice_spacing()
+
+    return origin, (col_spacing, row_spacing, z_spacing), direction
 
 
-def read_dicom_header(path_or_dataset):
-    if hasattr(path_or_dataset, "SOPInstanceUID"):
-        return path_or_dataset
-    return pydicom.dcmread(str(path_or_dataset), stop_before_pixels=True)
+def get_optional_str(ds, name: str) -> str | None:
+    """Attribute ``name`` of ``ds`` as a stripped string, None if absent/empty."""
+
+    value = getattr(ds, name, None)
+
+    if value is None:
+        return None
+
+    value = str(value).strip()
+    return value or None
+
+
+def to_jsonable(value: Any) -> Any:
+    """Convert pydicom/highdicom metadata to simple serializable values.
+
+    Scalars are kept, bytes are decoded, lists/tuples and dicts are converted
+    item by item and anything else (including pydicom multi-values) becomes a
+    string.
+    """
+
+    if value is None:
+        return None
+
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="ignore")
+
+    if isinstance(value, dict):
+        return {str(k): to_jsonable(v) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple)):
+        return [to_jsonable(v) for v in value]
+
+    return str(value)
+
+
+def referenced_series_uids(
+    ds,
+    *,
+    rtstruct: bool = True,
+    derivation: bool = False,
+) -> tuple[str, ...]:
+    """Unique referenced SeriesInstanceUID values of ``ds``, in order found.
+
+    Always read from ReferencedSeriesSequence (SEG and others). ``rtstruct``
+    adds the RTSTRUCT nesting ReferencedFrameOfReferenceSequence ->
+    RTReferencedStudySequence -> RTReferencedSeriesSequence; ``derivation``
+    adds the SourceImageSequence items of the DerivationImageSequence in the
+    per-frame, then shared, functional groups (best effort: they often
+    reference SOP instances only).
+    """
+
+    items = list(getattr(ds, "ReferencedSeriesSequence", []))
+
+    if rtstruct:
+        for frame_item in getattr(ds, "ReferencedFrameOfReferenceSequence", []):
+            for study_item in getattr(frame_item, "RTReferencedStudySequence", []):
+                items.extend(getattr(study_item, "RTReferencedSeriesSequence", []))
+
+    if derivation:
+        for groups_name in (
+            "PerFrameFunctionalGroupsSequence",
+            "SharedFunctionalGroupsSequence",
+        ):
+            for group in getattr(ds, groups_name, []):
+                for derivation_item in getattr(group, "DerivationImageSequence", []):
+                    items.extend(getattr(derivation_item, "SourceImageSequence", []))
+
+    uids = (getattr(item, "SeriesInstanceUID", None) for item in items)
+    return tuple(dict.fromkeys(str(uid) for uid in uids if uid is not None))
+
+
+def functional_group_sequences(ds, frame_index: int, name: str) -> list:
+    """Non-empty ``name`` sequences of one frame, per-frame group first.
+
+    Shared Functional Groups define default values for all frames, while
+    Per-frame Functional Groups override them where specified; the first
+    sequence returned is therefore the one that applies.
+    """
+
+    groups = []
+
+    per_frame = getattr(ds, "PerFrameFunctionalGroupsSequence", None)
+    if per_frame is not None:
+        groups.append(per_frame[frame_index])
+
+    shared = getattr(ds, "SharedFunctionalGroupsSequence", None)
+    if shared is not None and len(shared) > 0:
+        groups.append(shared[0])
+
+    sequences = []
+    for group in groups:
+        sequence = getattr(group, name, None)
+        if sequence is not None and len(sequence) > 0:
+            sequences.append(sequence)
+
+    return sequences
 
 
 def image_metadata(image: sitk.Image) -> dict:

@@ -41,7 +41,9 @@ def build_dicom_conversion_step(
         ),
         rtstruct_converter=RTStructMaskConverter(
             extension=extension,
-            check_reference=bool(conversion.get("check_rtstruct_reference_uid", True)),
+            check_reference_uid=bool(
+                conversion.get("check_rtstruct_reference_uid", True)
+            ),
         ),
         seg_converter=SegMaskConverter(
             extension=extension,
