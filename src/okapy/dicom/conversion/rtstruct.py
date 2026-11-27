@@ -76,6 +76,16 @@ class RTStructMaskConverter:
         )
         return self.check_reference_uid
 
+    @check_reference.setter
+    def check_reference(self, value: bool) -> None:
+        warnings.warn(
+            "RTStructMaskConverter.check_reference is deprecated; use "
+            "check_reference_uid instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.check_reference_uid = value
+
     def convert(
         self,
         series: DicomSeries,

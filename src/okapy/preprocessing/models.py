@@ -43,14 +43,13 @@ _STUDY_KEYS = frozenset(
 )
 
 #: Keys of the ``general`` section read by other parts of okapy (DICOM
-#: conversion identity/walker options, feature result format).
+#: conversion identity/walker options).
 _OTHER_GENERAL_KEYS = frozenset(
     {
         "submodalities",
         "submodality_separator",
         "submodality_modalities",
         "additional_dicom_tags",
-        "result_format",
     }
 )
 
@@ -178,6 +177,20 @@ class StudyPreprocessingConfig:
     def from_dict(cls, config: dict[str, Any] | None) -> StudyPreprocessingConfig:
         config = config or {}
         general = config.get("general") or {}
+
+        misplaced = sorted(str(key) for key in config if key in _STUDY_KEYS)
+        if misplaced:
+            raise ValueError(
+                f"Study option(s) {misplaced} must be set under 'general', not "
+                "at the top level of the config."
+            )
+
+        if "result_format" in general:
+            raise ValueError(
+                "'result_format' in 'general' is a legacy option and is ignored "
+                "in a new-shape config: set 'feature_extraction.result_format' "
+                "instead."
+            )
 
         if "padding" in general:
             raise ValueError(

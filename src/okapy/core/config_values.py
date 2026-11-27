@@ -11,13 +11,16 @@ _FALSE_STRINGS = frozenset({"false", "no", "0", "off"})
 def parse_bool(value: Any, *, key: str) -> bool:
     """Parse a boolean config value strictly.
 
-    Real booleans pass through; the strings ``true/yes/1/on`` and
-    ``false/no/0/off`` (case-insensitive) are accepted. Anything else raises
-    ``ValueError`` naming ``key``.
+    Real booleans pass through; the integers ``1``/``0`` and the strings
+    ``true/yes/1/on`` and ``false/no/0/off`` (case-insensitive) are accepted.
+    Anything else raises ``ValueError`` naming ``key``.
     """
 
     if isinstance(value, bool):
         return value
+
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
 
     if isinstance(value, str):
         lowered = value.strip().lower()

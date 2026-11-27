@@ -321,7 +321,11 @@ def _image_reference_datetime_for_start(
     source = "AcquisitionDateTime (0008,002A)"
     series_dt = _series_datetime(s)
 
-    if series_dt is not None and acquisition_dt == series_dt:
+    # Compared at whole seconds: fractional seconds in one of the two values
+    # must not disable the shortcut. The returned datetime keeps them.
+    if series_dt is not None and acquisition_dt.replace(
+        microsecond=0
+    ) == series_dt.replace(microsecond=0):
         return acquisition_dt, acquisition_offset, source
 
     frame_reference_s = _frame_reference_time_s(s)

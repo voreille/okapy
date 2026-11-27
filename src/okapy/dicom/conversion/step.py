@@ -250,8 +250,17 @@ class DicomConversionStep:
 
         return masks
 
-    @staticmethod
+    def _checks_reference_uid(self, series: DicomSeries) -> bool:
+        """Whether the converter of ``series`` checks its reference UID."""
+
+        if series.is_rtstruct:
+            return self.rtstruct_converter.check_reference_uid
+        if series.is_seg:
+            return self.seg_converter.check_reference_uid
+        return True
+
     def _resolve_reference_image(
+        self,
         *,
         series: DicomSeries,
         images_by_uid: dict[str, ImageVolume],
@@ -265,6 +274,26 @@ class DicomConversionStep:
 
             if image is not None:
                 return image
+
+        if (
+            referenced_uids
+            and len(images_by_uid) == 1
+            and not self._checks_reference_uid(series)
+        ):
+            # The reference UID check is disabled: keep the old behaviour of
+            # putting the mask on the only image of the study.
+            image = next(iter(images_by_uid.values()))
+
+            logger.warning(
+                "Mask series %s references image series %s, which are not "
+                "available, and its reference UID check is disabled. Using the "
+                "only available image series %s.",
+                series.series_instance_uid,
+                list(referenced_uids),
+                image.series_instance_uid,
+            )
+
+            return image
 
         if referenced_uids:
             # The referenced image is missing or failed to convert: never put

@@ -45,7 +45,7 @@ def _build_backend(config: dict[str, Any]):
     if backend_type == "command":
         return CommandFeatureBackend(
             name=name,
-            command=[str(x) for x in config["command"]],
+            command=config["command"],
             params_path=Path(config["params"]),
             timeout_seconds=config.get("timeout_seconds"),
             environment=config.get("environment"),

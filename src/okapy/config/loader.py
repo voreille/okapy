@@ -9,7 +9,11 @@ from typing import Any
 
 import yaml
 
-from okapy.config.legacy import is_legacy_config, migrate_legacy_config
+from okapy.config.legacy import (
+    check_not_mixed_config,
+    is_legacy_config,
+    migrate_legacy_config,
+)
 
 Config = dict[str, Any]
 ConfigSource = str | Path | Mapping[str, Any]
@@ -37,8 +41,9 @@ def load_config(source: ConfigSource) -> Config:
     FileNotFoundError
         If the configuration path does not exist.
     ValueError
-        If the YAML is empty or its root is not a mapping, or a legacy
-        configuration cannot be migrated.
+        If the YAML is empty or its root is not a mapping, a legacy
+        configuration cannot be migrated, or legacy keys are mixed with
+        new-shape sections.
     """
 
     if isinstance(source, Mapping):
@@ -65,6 +70,7 @@ def load_config(source: ConfigSource) -> Config:
         raise ValueError("Okapy configuration cannot be empty.")
 
     if is_legacy_config(config):
+        check_not_mixed_config(config)
         return migrate_legacy_config(config)
 
     return config

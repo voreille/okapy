@@ -245,6 +245,7 @@ class EnhancedPETSUVConverter:
                 patient_weight=meta.patient_weight_kg,
                 patient_size=meta.patient_size_m,
                 sex=meta.patient_sex,
+                emitted_warnings=meta.emitted_warnings,
             )
 
         if units == "CM2ML":
@@ -253,6 +254,7 @@ class EnhancedPETSUVConverter:
                 suv_type=suv_type,
                 patient_weight=meta.patient_weight_kg,
                 patient_size=meta.patient_size_m,
+                emitted_warnings=meta.emitted_warnings,
             )
 
         if units == "BQML":

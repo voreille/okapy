@@ -4,7 +4,10 @@ import hashlib
 import json
 import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
+
+import SimpleITK as sitk
 
 from okapy.core.models import ImageVolume, MaskVolume
 from okapy.dicom.conversion.utils import ensure_inside, safe_name
@@ -20,18 +23,26 @@ class CommandFeatureBackend(FeatureBackend):
     """CLI contract: --image, --mask, --params, --output.
 
     The command is run as configured: configs using this backend are trusted
-    input.
+    input. A volume that is only in memory (``path is None``, e.g. with
+    ``general.write_outputs: false``) is written as NIfTI into the per-pair
+    work dir before the command runs.
     """
 
     def __init__(
         self,
         *,
-        command: list[str],
+        command: Sequence[str],
         params_path: Path | str,
         name: str,
         timeout_seconds: float | None = None,
         environment: dict[str, str] | None = None,
     ) -> None:
+        if isinstance(command, str | bytes):
+            raise ValueError(
+                f"Feature backend {name!r}: 'command' must be a list of "
+                f"arguments (e.g. ['python', 'script.py']), got the string "
+                f"{command!r}."
+            )
         if not command:
             raise ValueError("CommandFeatureBackend requires a non-empty command.")
         self.name = name
@@ -49,12 +60,14 @@ class CommandFeatureBackend(FeatureBackend):
         output_path = pair_dir / "features.json"
         # Never read a previous run's output if the command does not write one.
         output_path.unlink(missing_ok=True)
+        image_path = _volume_path(image.path, image.image, pair_dir / "image.nii.gz")
+        mask_path = _volume_path(mask.path, mask.image, pair_dir / "mask.nii.gz")
         command = [
             *self.command,
             "--image",
-            str(image.path),
+            str(image_path),
             "--mask",
-            str(mask.path),
+            str(mask_path),
             "--params",
             str(self.params_path),
             "--output",
@@ -122,3 +135,12 @@ class CommandFeatureBackend(FeatureBackend):
             / f"{safe_name(mask.label)}-{digest}"
             / safe_name(self.name)
         )
+
+
+def _volume_path(path: Path | None, image: sitk.Image, fallback: Path) -> Path:
+    """``path``, or ``image`` written to ``fallback`` when it is only in memory."""
+
+    if path is not None:
+        return path
+    sitk.WriteImage(image, str(fallback))
+    return fallback

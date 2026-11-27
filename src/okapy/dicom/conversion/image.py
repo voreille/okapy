@@ -235,23 +235,29 @@ def _handle_slice_gaps(
 ) -> np.ndarray:
     """Fill missing slices and check the resulting slice spacing is uniform."""
 
-    d_slices = np.diff(np.asarray(orthogonal_positions, dtype=float))
-    slice_spacing = _reference_gap(d_slices)
+    d_slices = np.round(
+        np.diff(np.asarray(orthogonal_positions, dtype=float)), decimals=5
+    )
+    median_spacing = float(np.median(d_slices)) if len(d_slices) else 1.0
 
-    if slice_spacing <= 0:
+    if median_spacing <= 0:
         raise ValueError(
-            f"The median slice spacing of series {series_uid} is {slice_spacing}."
+            f"The median slice spacing of series {series_uid} is {median_spacing}."
         )
+
+    # Gaps that round to zero median spacings are not slice steps at all.
+    near_duplicates = np.round(d_slices / median_spacing) < 1
+    if np.any(near_duplicates):
+        raise ValueError(
+            f"Series {series_uid} has near-duplicate slices: gap(s) of "
+            f"{d_slices[near_duplicates].tolist()} mm for a slice spacing of "
+            f"{median_spacing} mm."
+        )
+
+    slice_spacing = _reference_gap(d_slices)
 
     # Number of slice spacings covered by each gap.
     n_steps = np.round(d_slices / slice_spacing).astype(int)
-
-    if np.any(n_steps < 1):
-        raise ValueError(
-            f"Series {series_uid} has near-duplicate slices: gap(s) of "
-            f"{d_slices[n_steps < 1].tolist()} mm for a slice spacing of "
-            f"{slice_spacing} mm."
-        )
 
     residual = np.abs(d_slices / n_steps - slice_spacing) / slice_spacing
     if np.any(residual > SLICE_SPACING_TOLERANCE):
@@ -292,17 +298,25 @@ def _handle_slice_gaps(
     )
 
 
-def _reference_gap(values: np.ndarray) -> float:
-    """Reference slice spacing: the median gap.
+#: Gaps up to this factor of the smallest gap count as single slice steps when
+#: computing the reference slice spacing.
+_SINGLE_STEP_GAP_FACTOR = 1.5
 
-    Unlike the most frequent gap it does not depend on the slice order when
-    every gap is jittered, and a few missing-slice gaps do not move it.
+
+def _reference_gap(values: np.ndarray) -> float:
+    """Reference slice spacing: the median of the single-step gaps.
+
+    Single-step gaps are those up to 1.5 times the smallest gap, so missing
+    slices do not move the reference even when they are a large share of the
+    gaps (e.g. 2 gaps, one of them missing a slice). The median does not depend
+    on the slice order when every gap is jittered.
     """
 
     if len(values) == 0:
         return 1.0
 
-    return float(np.median(np.round(values, decimals=5)))
+    single_steps = values[values <= _SINGLE_STEP_GAP_FACTOR * values.min()]
+    return float(np.median(single_steps))
 
 
 def _interp_missing_slice(image_xyz: np.ndarray, idx: int) -> np.ndarray:

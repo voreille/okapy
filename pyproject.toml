@@ -67,6 +67,7 @@ dev = [
     "pyarrow",
     # Used by the frozen okapy_legacy reference code exercised in tests.
     "scipy",
+    "tqdm",
 ]
 
 [project.urls]

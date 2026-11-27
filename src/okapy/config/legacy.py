@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
 from okapy.core.geometry import MASK_THRESHOLD
+
+logger = logging.getLogger(__name__)
 
 #: Legacy ``general.padding`` default, in millimetres.
 _LEGACY_DEFAULT_PADDING_MM = 10.0
@@ -17,6 +20,13 @@ _RESERVED_FEATURE_KEYS = frozenset(
     {"common", "continue_on_error", "result_format", "include_backend"}
 )
 _FEATURE_OPTION_KEYS = _RESERVED_FEATURE_KEYS - {"common"}
+
+#: Legacy ``general.study_processor`` values.
+_LEGACY_STANDARD_STUDY_PROCESSOR = "studyprocessor"
+_LEGACY_DEEP_STUDY_PROCESSOR = "studyprocessor_deep"
+
+#: Top-level sections that only exist in the new config shape.
+_NEW_SHAPE_SECTIONS = ("geometry_preprocessing", "local_preprocessing")
 
 
 def is_legacy_config(config: Mapping[str, Any]) -> bool:
@@ -31,12 +41,20 @@ def is_legacy_config(config: Mapping[str, Any]) -> bool:
     - a ``binary_bspline_resampler`` in ``mask_preprocessing``.
     """
 
+    return bool(legacy_config_keys(config))
+
+
+def legacy_config_keys(config: Mapping[str, Any]) -> list[str]:
+    """The legacy-only keys found in ``config`` (see :func:`is_legacy_config`)."""
+
+    keys: list[str] = []
+
     if "volume_preprocessing" in config:
-        return True
+        keys.append("volume_preprocessing")
 
     general = config.get("general") or {}
     if isinstance(general, Mapping) and "padding" in general:
-        return True
+        keys.append("general.padding")
 
     features = config.get("feature_extraction") or {}
     if isinstance(features, Mapping) and any(
@@ -44,18 +62,58 @@ def is_legacy_config(config: Mapping[str, Any]) -> bool:
         for selector, value in features.items()
         if selector not in _FEATURE_OPTION_KEYS
     ):
-        return True
+        keys.append("feature_extraction")
 
     mask_preprocessing = config.get("mask_preprocessing") or {}
-    return isinstance(mask_preprocessing, Mapping) and any(
+    if isinstance(mask_preprocessing, Mapping) and any(
         isinstance(stack, Mapping) and "binary_bspline_resampler" in stack
         for stack in mask_preprocessing.values()
-    )
+    ):
+        keys.append("mask_preprocessing.binary_bspline_resampler")
+
+    return keys
+
+
+def new_shape_config_sections(config: Mapping[str, Any]) -> list[str]:
+    """The new-shape-only sections found in ``config``.
+
+    These are ``geometry_preprocessing``, ``local_preprocessing`` and a
+    ``feature_extraction`` whose selectors already map to backend lists.
+    """
+
+    sections = [name for name in _NEW_SHAPE_SECTIONS if name in config]
+
+    features = config.get("feature_extraction") or {}
+    if isinstance(features, Mapping) and any(
+        isinstance(value, list) and value
+        for selector, value in features.items()
+        if selector not in _FEATURE_OPTION_KEYS
+    ):
+        sections.append("feature_extraction")
+
+    return sections
+
+
+def check_not_mixed_config(config: Mapping[str, Any]) -> None:
+    """Reject a config that mixes legacy keys with new-shape sections."""
+
+    legacy_keys = legacy_config_keys(config)
+    new_sections = new_shape_config_sections(config)
+    if legacy_keys and new_sections:
+        raise ValueError(
+            "The configuration mixes legacy keys "
+            f"({', '.join(legacy_keys)}) with new-shape sections "
+            f"({', '.join(new_sections)}). Do not mix them: either use the "
+            "legacy shape only (it is migrated automatically) or migrate the "
+            "legacy keys to the new shape."
+        )
 
 
 def migrate_legacy_config(
     config: dict[str, Any],
 ) -> dict[str, Any]:
+    _check_legacy_study_processor(config.get("general") or {})
+
     migrated = deepcopy(config)
 
     preprocessing = migrate_legacy_preprocessing_config(config)
@@ -76,6 +134,18 @@ def migrate_legacy_config(
     general = deepcopy(config.get("general") or {})
     general.pop("padding", None)
     general.pop("result_format", None)
+    if "patch_size" in general:
+        logger.warning(
+            "Legacy general.patch_size=%r is not used by the new pipeline; "
+            "dropping it.",
+            general.pop("patch_size"),
+        )
+    if "study_processor" in general:
+        logger.warning(
+            "Legacy general.study_processor=%r is the only study processor of "
+            "the new pipeline; dropping the option.",
+            general.pop("study_processor"),
+        )
 
     migrated["general"] = general
 
@@ -120,6 +190,7 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
     # ---------------------------------------------------------------------
     # General legacy options
     # ---------------------------------------------------------------------
+    explicit_padding = "padding" in general
     padding = general.get("padding", _LEGACY_DEFAULT_PADDING_MM)
     crop_to_masks = padding != _LEGACY_WHOLE_IMAGE
     geometry_preprocessing["common"] = {"crop_to_masks": crop_to_masks}
@@ -204,9 +275,21 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
     # ---------------------------------------------------------------------
     if crop_to_masks:
         for selector in sorted(image_spacing_selectors):
+            spacing = geometry_preprocessing[selector].get("spacing")
+            if selector == "common" and spacing is None and not explicit_padding:
+                # The implicit 10 mm default cannot be converted without a
+                # target grid: keep the new default (no padding) instead.
+                logger.warning(
+                    "Legacy config has no general.padding (default %s mm) and "
+                    "no common target spacing: the default padding cannot be "
+                    "converted to voxels, so 'common' gets no padding. Set "
+                    "'padding_voxels' in 'geometry_preprocessing' if needed.",
+                    _LEGACY_DEFAULT_PADDING_MM,
+                )
+                continue
             geometry_preprocessing[selector]["padding_voxels"] = _padding_to_voxels(
                 padding,
-                geometry_preprocessing[selector].get("spacing"),
+                spacing,
                 selector=selector,
             )
 
@@ -298,7 +381,15 @@ def _padding_to_voxels(padding: Any, spacing: Any, *, selector: str) -> int | li
         # 0 mm is 0 voxels on any grid, native spacing included.
         return 0
 
-    axes = [float(value) for value in spacing] if spacing is not None else []
+    if spacing is None:
+        raise ValueError(
+            f"Cannot migrate legacy general.padding={padding} mm for selector "
+            f"{selector!r}: its target spacing is missing, so millimetres cannot "
+            "be converted to voxels. Set an explicit 'padding_voxels' in "
+            "'geometry_preprocessing' instead."
+        )
+
+    axes = [float(value) for value in spacing]
     if len(axes) != 3 or any(value <= 0 for value in axes):
         raise ValueError(
             f"Cannot migrate legacy general.padding={padding} mm for selector "
@@ -311,6 +402,17 @@ def _padding_to_voxels(padding: Any, spacing: Any, *, selector: str) -> int | li
     if len(set(voxels)) == 1:
         return voxels[0]
     return voxels
+
+
+def _check_legacy_study_processor(general: Mapping[str, Any]) -> None:
+    """Refuse the legacy deep-learning study processor."""
+
+    if general.get("study_processor") == _LEGACY_DEEP_STUDY_PROCESSOR:
+        raise ValueError(
+            f"Legacy general.study_processor={_LEGACY_DEEP_STUDY_PROCESSOR!r} is "
+            "not supported by the new pipeline. Remove it (or use "
+            f"{_LEGACY_STANDARD_STUDY_PROCESSOR!r})."
+        )
 
 
 def _order_to_interpolator(order: int) -> str:
