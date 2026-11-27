@@ -188,12 +188,26 @@ class DicomSeries:
 
 
 @dataclass(frozen=True)
+class InvalidDicomSeries:
+    """A series the collector could not group into a :class:`DicomSeries`.
+
+    It is kept (instead of aborting the collection) so that the conversion step
+    can report it, or skip it when ``continue_on_error`` is set.
+    """
+
+    series_instance_uid: str
+    reason: str
+    paths: tuple[Path, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
 class DicomStudy:
     """A DICOM study containing image series and mask objects."""
 
     study_instance_uid: str
     patient_id: str | None
     series: tuple[DicomSeries, ...] = field(default_factory=tuple)
+    invalid_series: tuple[InvalidDicomSeries, ...] = field(default_factory=tuple)
 
     @property
     def image_series(self) -> tuple[DicomSeries, ...]:
@@ -235,3 +249,9 @@ class DicomCollection:
     @property
     def mask_series(self) -> tuple[DicomSeries, ...]:
         return self.rtstruct_series + self.seg_series
+
+    @property
+    def invalid_series(self) -> tuple[InvalidDicomSeries, ...]:
+        return tuple(
+            series for study in self.studies for series in study.invalid_series
+        )

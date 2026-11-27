@@ -17,6 +17,7 @@ from okapy.core.models import (
 )
 from okapy.dicom.conversion.utils import (
     SLICE_MATCH_TOLERANCE,
+    ensure_inside,
     image_metadata,
     safe_name,
     sitk_mask_like_reference,
@@ -123,7 +124,9 @@ class RTStructMaskConverter:
                 reference_image=reference_image,
                 label=label,
             )
-            path = write_image_unique(mask_image, output_dir / filename)
+            path = write_image_unique(
+                mask_image, ensure_inside(output_dir / filename, output_dir)
+            )
 
             masks.append(
                 MaskVolume.from_sitk(
@@ -168,6 +171,10 @@ class RTStructMaskConverter:
 
         size_xyz = reference_image.GetSize()
         mask_xyz = np.zeros(size_xyz, dtype=np.uint8)
+        # Contours are XOR-ed per slice, so a contour inside another one on the
+        # same slice is a hole, whatever their order in the sequence.
+        planes: dict[int, np.ndarray] = {}
+        clipped = 0
 
         for contour in contour_sequence:
             contour_data = getattr(contour, "ContourData", None)
@@ -209,33 +216,48 @@ class RTStructMaskConverter:
                 )
 
             if z_index < 0 or z_index >= mask_xyz.shape[2]:
-                raise RuntimeError(
-                    f"RTSTRUCT contour for label {label!r} has out-of-bounds "
-                    f"z index {z_index}; mask z size is {mask_xyz.shape[2]}."
+                logger.warning(
+                    "Skipping RTSTRUCT contour for label %r: it is outside the "
+                    "reference image grid (z index %d, %d slices).",
+                    label,
+                    z_index,
+                    mask_xyz.shape[2],
                 )
+                continue
+
+            # A pixel centre is on the grid when its index is in [0, size - 1];
+            # vertices beyond half a voxel outside it mean the polygon is clipped.
+            in_plane = voxel_indices[:, :2]
+            if np.any(in_plane < -0.5) or np.any(
+                in_plane > np.asarray(mask_xyz.shape[:2]) - 0.5
+            ):
+                clipped += 1
 
             # mask_xyz is indexed as [x, y, z]. skimage.draw.polygon returns
             # coordinates for the first and second array dimensions, so we pass
-            # x and y coordinates in that order.
-            rr, cc = polygon(voxel_indices[:, 0], voxel_indices[:, 1])
+            # x and y coordinates in that order; ``shape`` clips to the grid.
+            rr, cc = polygon(
+                voxel_indices[:, 0], voxel_indices[:, 1], shape=mask_xyz.shape[:2]
+            )
 
-            if len(rr) == 0 or len(cc) == 0:
+            if len(rr) == 0:
                 continue
 
-            if (
-                np.min(rr) < 0
-                or np.min(cc) < 0
-                or np.max(rr) >= mask_xyz.shape[0]
-                or np.max(cc) >= mask_xyz.shape[1]
-            ):
-                raise RuntimeError(
-                    f"RTSTRUCT contour for label {label!r} is out of bounds. "
-                    f"x range=({np.min(rr)}, {np.max(rr)}), "
-                    f"y range=({np.min(cc)}, {np.max(cc)}), "
-                    f"mask shape={mask_xyz.shape}."
-                )
+            contour_plane = np.zeros(mask_xyz.shape[:2], dtype=bool)
+            contour_plane[rr, cc] = True
+            plane = planes.setdefault(z_index, np.zeros(mask_xyz.shape[:2], dtype=bool))
+            plane ^= contour_plane
 
-            mask_xyz[rr, cc, z_index] = 1
+        if clipped:
+            logger.warning(
+                "%d RTSTRUCT contour(s) for label %r extend outside the reference "
+                "image grid; they were clipped to it.",
+                clipped,
+                label,
+            )
+
+        for z_index, plane in planes.items():
+            mask_xyz[:, :, z_index] = plane
 
         return mask_xyz
 
@@ -256,12 +278,10 @@ class RTStructMaskConverter:
             return
 
         if reference_image.series_instance_uid not in referenced_uids:
-            logger.warning(
-                "RTSTRUCT series %s references image series %s, but it is being "
-                "rasterized on series %s.",
-                rtstruct_series.series_instance_uid,
-                sorted(referenced_uids),
-                reference_image.series_instance_uid,
+            raise ValueError(
+                f"RTSTRUCT series {rtstruct_series.series_instance_uid} references "
+                f"image series {sorted(referenced_uids)}, not the reference image "
+                f"series {reference_image.series_instance_uid}."
             )
 
     def _make_filename(

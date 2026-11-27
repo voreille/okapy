@@ -15,6 +15,7 @@ from okapy.core.models import (
     VolumeStage,
 )
 from okapy.dicom.conversion.utils import (
+    ensure_inside,
     image_metadata,
     safe_name,
     sitk_mask_like_reference,
@@ -23,6 +24,7 @@ from okapy.dicom.conversion.utils import (
 from okapy.dicom.models import DicomSeries
 
 from .seg_highdicom_adapter import (
+    FrameBetweenSlicesError,
     read_seg_segment_infos,
     read_seg_with_highdicom,
     segment_to_sitk,
@@ -74,9 +76,20 @@ class SegMaskConverter:
 
         segment_numbers, segment_infos = read_seg_segment_infos(dcm)
 
-        # Frames on the reference grid are placed slice by slice; only SEGs on
-        # another in-plane grid are rebuilt as a volume and resampled.
-        masks_xyz = segments_on_reference_grid(dcm, reference_image.image)
+        # Frames on the reference grid are placed slice by slice; SEGs on
+        # another in-plane grid, or with frames between the reference slices,
+        # are rebuilt as a volume and resampled.
+        try:
+            masks_xyz = segments_on_reference_grid(dcm, reference_image.image)
+        except FrameBetweenSlicesError as exc:
+            logger.warning(
+                "SEG series %s is not on the slices of reference series %s (%s). "
+                "Resampling it onto the reference grid.",
+                series.series_instance_uid,
+                reference_image.series_instance_uid,
+                exc,
+            )
+            masks_xyz = None
         raw_volume = read_seg_with_highdicom(dcm) if masks_xyz is None else None
 
         requested_labels = set(labels) if labels is not None else None
@@ -112,7 +125,9 @@ class SegMaskConverter:
                 label=label,
                 segment_number=segment_number,
             )
-            path = write_image_unique(mask_image, output_dir / filename)
+            path = write_image_unique(
+                mask_image, ensure_inside(output_dir / filename, output_dir)
+            )
 
             masks.append(
                 MaskVolume.from_sitk(

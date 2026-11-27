@@ -44,6 +44,10 @@ from okapy.dicom.conversion.suv_common import (
     warn_once,
 )
 from okapy.dicom.conversion.utils import (
+    SLICE_SPACING_TOLERANCE,
+    check_no_duplicate_positions,
+    check_stacking_along_normal,
+    ensure_inside,
     safe_name,
     short_uid,
     sitk_image_from_array_xyz,
@@ -148,7 +152,10 @@ class EnhancedPETSUVConverter:
             direction=direction,
         )
 
-        path = write_image_unique(image, output_dir / self._make_filename(series))
+        path = write_image_unique(
+            image,
+            ensure_inside(output_dir / self._make_filename(series), output_dir),
+        )
 
         return ImageVolume.from_sitk(
             path=path,
@@ -204,6 +211,9 @@ class EnhancedPETSUVConverter:
             )
 
         frames.sort(key=lambda frame: frame.orthogonal_position)
+        _check_frame_geometry(
+            frames, orientation, series_uid=series.series_instance_uid
+        )
 
         return frames, orientation, pixel_spacing
 
@@ -364,6 +374,37 @@ def _frame_pixel_spacing(ds, frame_index: int, *, path: Path) -> tuple[float, fl
     return row_spacing, col_spacing
 
 
+def _check_frame_geometry(frames, orientation, *, series_uid: str) -> None:
+    """Reject frames that do not form a regularly spaced, untilted stack.
+
+    Enhanced PET frames are not gap-filled: every spacing between consecutive
+    frames must match the median one within ``SLICE_SPACING_TOLERANCE``.
+    """
+
+    if len(frames) < 2:
+        return
+
+    orthogonal_positions = [frame.orthogonal_position for frame in frames]
+    check_no_duplicate_positions(orthogonal_positions, series_uid=series_uid)
+
+    d_frames = np.diff(np.asarray(orthogonal_positions, dtype=float))
+    spacing = float(np.median(d_frames))
+    deviation = np.abs(d_frames - spacing) / spacing
+
+    if np.any(deviation > SLICE_SPACING_TOLERANCE):
+        raise ValueError(
+            f"Enhanced PET series {series_uid} has non-uniform frame spacing: "
+            f"gaps of {d_frames[deviation > SLICE_SPACING_TOLERANCE].tolist()} mm "
+            f"for a frame spacing of {spacing} mm."
+        )
+
+    check_stacking_along_normal(
+        np.asarray([frame.position for frame in frames], dtype=float),
+        np.cross(orientation[:3], orientation[3:]),
+        series_uid=series_uid,
+    )
+
+
 def _geometry(*, frames, orientation, pixel_spacing):
     row = orientation[:3]
     col = orientation[3:]
@@ -403,7 +444,10 @@ def _real_world_values(frame: _Frame) -> tuple[str, str | None, np.ndarray]:
     Transformation Sequence combined with Rescale Type.
     """
 
-    stored = frame.dataset.pixel_array[frame.index]
+    stored = frame.dataset.pixel_array
+    # pydicom returns a 2D array for a single-frame instance.
+    if stored.ndim == 3:
+        stored = stored[frame.index]
     mapping = _select_real_world_value_mapping(frame)
 
     if mapping is not None:

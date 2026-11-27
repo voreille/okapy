@@ -97,7 +97,12 @@ class DicomWalker:
     ) -> Iterator[DicomFileRecord]:
         """Yield DicomFileRecord objects for valid and supported DICOM files."""
         for path in self.iter_paths(root):
-            record = self._read_record(path)
+            try:
+                record = self._read_record(path)
+            except Exception as exc:
+                # One malformed file must not abort the discovery of the others.
+                logger.warning("Skipping malformed DICOM file %s: %s", path, exc)
+                continue
             if record is not None:
                 yield record
 
@@ -110,7 +115,7 @@ class DicomWalker:
 
     def _iter_paths_one(self, root: Path) -> Iterator[Path]:
         if root.is_file():
-            if self._accept_path(root):
+            if self._accept_path(root, root.parent):
                 yield root
             return
 
@@ -120,11 +125,11 @@ class DicomWalker:
         pattern = "**/*" if self.recursive else "*"
 
         for path in root.glob(pattern):
-            if path.is_file() and self._accept_path(path):
+            if path.is_file() and self._accept_path(path, root):
                 yield path
 
-    def _accept_path(self, path: Path) -> bool:
-        if not self.include_hidden and _is_hidden(path):
+    def _accept_path(self, path: Path, root: Path) -> bool:
+        if not self.include_hidden and _is_hidden(path, root):
             return False
 
         if self.extensions is None:
@@ -333,5 +338,11 @@ def _get_referenced_series_uids(ds) -> tuple[str, ...]:
     return tuple(dict.fromkeys(refs))
 
 
-def _is_hidden(path: Path) -> bool:
-    return any(part.startswith(".") for part in path.parts)
+def _is_hidden(path: Path, root: Path) -> bool:
+    """Whether a part of ``path`` below ``root`` is hidden.
+
+    Only the parts relative to ``root`` are checked, so a root that itself
+    lives under a hidden directory (e.g. ``~/.cache/data``) is still walked.
+    """
+
+    return any(part.startswith(".") for part in path.relative_to(root).parts)

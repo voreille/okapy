@@ -11,6 +11,10 @@ from pydicom.dataset import Dataset
 from okapy.dicom.conversion.utils import SLICE_MATCH_TOLERANCE
 
 
+class FrameBetweenSlicesError(ValueError):
+    """A SEG frame is on the reference in-plane grid but between its slices."""
+
+
 @dataclass(frozen=True)
 class HighdicomSegmentReadResult:
     """Decoded DICOM SEG volume and segment metadata.
@@ -188,8 +192,9 @@ def segments_on_reference_grid(
     Returns binary masks in x, y, z order per segment number, or None when the
     frames do not share the in-plane grid of ``reference`` (other size,
     orientation, pixel spacing or in-plane origin); the caller then has to
-    resample. Raises ValueError when a frame lies between reference slices or
-    outside the reference volume.
+    resample. Raises FrameBetweenSlicesError (a ValueError) when a frame lies
+    between reference slices, and ValueError when it is outside the reference
+    volume.
     """
 
     size_xyz = reference.GetSize()
@@ -201,7 +206,9 @@ def segments_on_reference_grid(
     direction = np.asarray(reference.GetDirection(), dtype=float).reshape(3, 3)
     spacing = reference.GetSpacing()
 
-    frames: list[tuple[int, int]] = []
+    # Read every frame position first: a frame on another in-plane grid means
+    # resampling, whatever the other frames look like.
+    frame_positions: list[tuple[int, tuple[float, ...], np.ndarray]] = []
 
     for frame in range(n_frames):
         orientation = _frame_attribute(
@@ -233,33 +240,35 @@ def segments_on_reference_grid(
         ):
             return None
 
-        index = np.asarray(
-            reference.TransformPhysicalPointToContinuousIndex(
-                tuple(float(x) for x in position)
-            )
-        )
+        position = tuple(float(x) for x in position)
+        index = np.asarray(reference.TransformPhysicalPointToContinuousIndex(position))
 
         if np.any(np.abs(index[:2]) > SLICE_MATCH_TOLERANCE):
             return None
 
+        frame_positions.append((int(segment_number or 1), position, index))
+
+    frames: list[tuple[int, int]] = []
+
+    for frame, (segment_number, position, index) in enumerate(frame_positions):
         slice_index = round(index[2])
         offset = abs(index[2] - slice_index)
 
         if offset > SLICE_MATCH_TOLERANCE:
-            raise ValueError(
-                f"SEG frame {frame + 1} at {tuple(float(x) for x in position)} lies "
+            raise FrameBetweenSlicesError(
+                f"SEG frame {frame + 1} at {position} lies "
                 f"{offset:.2f} slices from the nearest slice of the reference image "
                 f"(tolerance {SLICE_MATCH_TOLERANCE})."
             )
 
         if not 0 <= slice_index < size_xyz[2]:
             raise ValueError(
-                f"SEG frame {frame + 1} at {tuple(float(x) for x in position)} is "
+                f"SEG frame {frame + 1} at {position} is "
                 f"outside the reference image (slice index {slice_index}, "
                 f"{size_xyz[2]} slices)."
             )
 
-        frames.append((int(segment_number or 1), slice_index))
+        frames.append((segment_number, slice_index))
 
     pixels = np.asarray(dcm.pixel_array)
     if n_frames == 1:
