@@ -120,6 +120,8 @@ class SegMaskConverter:
                 )
                 mask_image = sitk_mask_like_reference(mask_xyz, reference_image.image)
             else:
+                # raw_volume is read above whenever masks_xyz is None.
+                assert raw_volume is not None
                 native_mask_image = segment_to_sitk(raw_volume, segment_number)
                 mask_image = sitk.Resample(
                     native_mask_image,

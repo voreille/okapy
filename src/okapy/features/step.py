@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from okapy.core.models import ImageMaskSet, VolumeCollection
+from okapy.features.backends.base import FeatureBackend
 from okapy.features.models import FeatureRecord
 from okapy.features.selector import select_backends
 
@@ -14,8 +16,8 @@ class FeatureExtractionStep:
     def __init__(
         self,
         *,
-        backends_by_selector: dict[str, list[object]] | None = None,
-        common_backends: list[object] | None = None,
+        backends_by_selector: Mapping[str, Sequence[FeatureBackend]] | None = None,
+        common_backends: Sequence[FeatureBackend] | None = None,
         continue_on_error: bool = False,
     ) -> None:
         self.backends_by_selector = backends_by_selector or {}

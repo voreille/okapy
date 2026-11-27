@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pydicom
+from numpy.typing import DTypeLike
 
 from okapy.core.models import ImageVolume, VolumeStage
 from okapy.dicom.conversion.utils import (
@@ -42,7 +43,7 @@ class SimpleITKImageSeriesConverter:
         self,
         *,
         extension: str = "nii.gz",
-        dtype: np.dtype = np.float32,
+        dtype: DTypeLike = np.float32,
         identity_config: SeriesIdentityConfig | None = None,
     ) -> None:
         self.extension = extension
@@ -136,8 +137,8 @@ class SimpleITKImageSeriesConverter:
         zipped = list(zip(slices, paths, orthogonal_positions, strict=True))
         zipped.sort(key=lambda x: x[2])
 
-        slices, paths, orthogonal_positions = zip(*zipped, strict=True)
-        return list(slices), list(paths), list(orthogonal_positions)
+        sorted_slices, sorted_paths, sorted_positions = zip(*zipped, strict=True)
+        return list(sorted_slices), list(sorted_paths), list(sorted_positions)
 
     def _clean_slices(self, slices, paths, orthogonal_positions, *, series_uid: str):
         slices, paths, orthogonal_positions = _keep_most_common_shape(
@@ -194,6 +195,10 @@ class SimpleITKImageSeriesConverter:
                 np.multiply(pixels, slope, out=out[..., i])
                 out[..., i] += intercept
 
+        # ``out`` is None only for an empty ``slices``, which convert() never
+        # passes (_read_and_sort_slices fails on an empty series): the first
+        # slice either allocates ``out`` or returns from the loop.
+        assert out is not None
         return out
 
     def _make_filename(self, series: DicomSeries) -> str:

@@ -20,7 +20,9 @@ from pathlib import Path
 
 import numpy as np
 import pydicom
+from numpy.typing import DTypeLike
 
+from okapy.core.geometry import as_vec3
 from okapy.core.models import ImageVolume, VolumeStage
 from okapy.dicom.conversion.suv_common import (
     ReferenceDatetime,
@@ -120,7 +122,7 @@ class EnhancedPETSUVConverter:
         self,
         *,
         extension: str = "nii.gz",
-        dtype: np.dtype = np.float32,
+        dtype: DTypeLike = np.float32,
         identity_config: SeriesIdentityConfig | None = None,
     ) -> None:
         self.extension = extension
@@ -310,7 +312,7 @@ def _frame_position(ds, frame_index: int, *, path: Path) -> tuple[float, float, 
             f"Sequence (0020,9113) of frame {frame_index} in {path.name}."
         )
 
-    return tuple(float(x) for x in value)
+    return as_vec3(value)
 
 
 def _frame_pixel_spacing(ds, frame_index: int, *, path: Path) -> tuple[float, float]:
@@ -387,6 +389,8 @@ def _real_world_values(frame: _Frame) -> tuple[str, str | None, np.ndarray]:
         units, suv_type, item = mapping
         slope = get_optional_float(item, "RealWorldValueSlope")
         intercept = get_optional_float(item, "RealWorldValueIntercept")
+        # _select_real_world_value_mapping only keeps items with a slope.
+        assert slope is not None
 
         scaled = apply_rescale(
             stored,

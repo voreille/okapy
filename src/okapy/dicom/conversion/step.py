@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 from okapy.core.models import (
@@ -160,7 +161,7 @@ class DicomConversionStep:
 
     def _convert_images(
         self,
-        series_list: list[DicomSeries],
+        series_list: Sequence[DicomSeries],
         *,
         output_dir: Path,
     ) -> list[ImageVolume]:
@@ -196,7 +197,7 @@ class DicomConversionStep:
 
     def _convert_masks(
         self,
-        series_list: list[DicomSeries],
+        series_list: Sequence[DicomSeries],
         *,
         images_by_uid: dict[str, ImageVolume],
         output_dir: Path,

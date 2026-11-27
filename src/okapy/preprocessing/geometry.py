@@ -12,6 +12,7 @@ from okapy.core.geometry import (
     MASK_INTERPOLATOR_NAME,
     MASK_THRESHOLD,
     PhysicalBox,
+    as_vec3,
     box_index_extent,
     image_physical_box,
     interpolator_from_name,
@@ -88,7 +89,7 @@ def _resolve_target_spacing(
     if len(configured_spacing) != 3:
         raise ValueError(f"Expected 3 spacing values, got {configured_spacing}.")
 
-    resolved = tuple(
+    resolved = as_vec3(
         native_spacing[axis] if value == -1 else float(value)
         for axis, value in enumerate(configured_spacing)
     )

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import product
+from typing import SupportsFloat
 
 import numpy as np
 import SimpleITK as sitk
@@ -21,13 +23,26 @@ MASK_INTERPOLATOR = sitk.sitkLinear
 MASK_INTERPOLATOR_NAME = "linear"
 MASK_THRESHOLD = 0.5
 
+Vec3 = tuple[float, float, float]
+"""A 3D point, size or spacing in (x, y, z) order."""
+
+
+def as_vec3(values: Iterable[SupportsFloat]) -> Vec3:
+    """Return ``values`` as a ``Vec3`` of floats.
+
+    Raises ``ValueError`` when ``values`` does not hold exactly three items.
+    """
+
+    x, y, z = values
+    return (float(x), float(y), float(z))
+
 
 @dataclass(frozen=True)
 class PhysicalBox:
     """Axis-aligned physical bounding box in world coordinates, in mm."""
 
-    min_xyz: tuple[float, float, float]
-    max_xyz: tuple[float, float, float]
+    min_xyz: Vec3
+    max_xyz: Vec3
 
     def __post_init__(self) -> None:
         if len(self.min_xyz) != 3:
@@ -43,11 +58,10 @@ class PhysicalBox:
                 )
 
     @property
-    def size_xyz(self) -> tuple[float, float, float]:
-        return tuple(
-            max_value - min_value
-            for min_value, max_value in zip(self.min_xyz, self.max_xyz, strict=True)
-        )
+    def size_xyz(self) -> Vec3:
+        min_x, min_y, min_z = self.min_xyz
+        max_x, max_y, max_z = self.max_xyz
+        return (max_x - min_x, max_y - min_y, max_z - min_z)
 
 
 def image_physical_box(image: sitk.Image) -> PhysicalBox:
@@ -78,8 +92,8 @@ def image_physical_box(image: sitk.Image) -> PhysicalBox:
     corners_array = np.asarray(corners, dtype=float)
 
     return PhysicalBox(
-        min_xyz=tuple(float(x) for x in np.min(corners_array, axis=0)),
-        max_xyz=tuple(float(x) for x in np.max(corners_array, axis=0)),
+        min_xyz=as_vec3(np.min(corners_array, axis=0)),
+        max_xyz=as_vec3(np.max(corners_array, axis=0)),
     )
 
 
@@ -109,8 +123,8 @@ def intersect_boxes(boxes: list[PhysicalBox]) -> PhysicalBox:
         )
 
     return PhysicalBox(
-        min_xyz=tuple(float(x) for x in min_xyz),
-        max_xyz=tuple(float(x) for x in max_xyz),
+        min_xyz=as_vec3(min_xyz),
+        max_xyz=as_vec3(max_xyz),
     )
 
 

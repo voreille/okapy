@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar, overload
 
 import SimpleITK as sitk
 
@@ -95,6 +95,39 @@ class StudyPreprocessingStep:
             processed_studies.append(processed_study)
 
         return VolumeCollection(studies=processed_studies)
+
+    @overload
+    def preprocess_study(
+        self,
+        *,
+        images: list[ImageVolume],
+        masks: list[MaskVolume],
+        output_dir: Path,
+        study_instance_uid: str | None = None,
+        return_diagnostics: Literal[False] = False,
+    ) -> StudyVolumes: ...
+
+    @overload
+    def preprocess_study(
+        self,
+        *,
+        images: list[ImageVolume],
+        masks: list[MaskVolume],
+        output_dir: Path,
+        study_instance_uid: str | None = None,
+        return_diagnostics: Literal[True],
+    ) -> tuple[StudyVolumes, PreprocessingDiagnostics]: ...
+
+    @overload
+    def preprocess_study(
+        self,
+        *,
+        images: list[ImageVolume],
+        masks: list[MaskVolume],
+        output_dir: Path,
+        study_instance_uid: str | None = None,
+        return_diagnostics: bool = False,
+    ) -> StudyVolumes | tuple[StudyVolumes, PreprocessingDiagnostics]: ...
 
     def preprocess_study(
         self,

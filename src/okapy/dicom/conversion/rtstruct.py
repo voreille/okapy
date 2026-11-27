@@ -216,7 +216,7 @@ class RTStructMaskConverter:
             if contour_data is None:
                 continue
 
-            nodes = np.asarray(contour_data, dtype=float).reshape((-1, 3))
+            nodes = np.asarray(contour_data, dtype=float).reshape(-1, 3)
 
             if nodes.shape[0] < 3:
                 logger.debug(

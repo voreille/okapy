@@ -252,7 +252,7 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
         stack = stack or {}
 
         mask_stack: dict[str, Any] = {}
-        geometry_cfg: dict[str, Any] = {}
+        mask_geometry_cfg: dict[str, Any] = {}
 
         for name, params in stack.items():
             params = params or {}
@@ -261,18 +261,18 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
                 _check_legacy_mask_resampler(params)
 
                 if "resampling_spacing" in params:
-                    geometry_cfg["spacing"] = params["resampling_spacing"]
+                    mask_geometry_cfg["spacing"] = params["resampling_spacing"]
 
                 if "cval" in params:
-                    geometry_cfg["default_mask_value"] = params["cval"]
+                    mask_geometry_cfg["default_mask_value"] = params["cval"]
 
             else:
                 mask_stack[name] = params
 
-        if geometry_cfg:
+        if mask_geometry_cfg:
             geometry_preprocessing[selector] = _merge_dicts(
                 geometry_preprocessing.get(selector, {}),
-                geometry_cfg,
+                mask_geometry_cfg,
             )
 
         if mask_stack:

@@ -34,7 +34,7 @@ class LocalPyradiomicsBackend(FeatureBackend):
         )
 
     def extract(
-        self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path
+        self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path | str
     ) -> FeatureSet:
         del work_dir
         result = self._extractor.execute(image.image, mask.image, **self.execute_kwargs)

@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import SimpleITK as sitk
 
+from okapy.core.geometry import as_vec3
 from okapy.dicom.tags import get_optional_str as get_optional_str
 from okapy.dicom.tags import referenced_series_uids as referenced_series_uids
 from okapy.dicom.tags import to_jsonable as to_jsonable
@@ -179,7 +180,7 @@ def geometry_from_positions(
     slice is ``single_slice_spacing()``, called only in that case.
     """
 
-    origin = tuple(float(x) for x in first_position)
+    origin = as_vec3(first_position)
 
     orientation = np.asarray(orientation, dtype=float)
     row = orientation[:3]

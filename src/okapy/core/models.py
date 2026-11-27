@@ -7,6 +7,8 @@ from typing import Any
 
 import SimpleITK as sitk
 
+from okapy.core.geometry import as_vec3
+
 Metadata = dict[str, Any]
 
 
@@ -96,10 +98,11 @@ class ImageGeometry:
                 f"Only 3D images are supported, got dimension={image.GetDimension()}."
             )
 
+        size_x, size_y, size_z = image.GetSize()
         return cls(
-            size=tuple(int(x) for x in image.GetSize()),
-            spacing=tuple(float(x) for x in image.GetSpacing()),
-            origin=tuple(float(x) for x in image.GetOrigin()),
+            size=(int(size_x), int(size_y), int(size_z)),
+            spacing=as_vec3(image.GetSpacing()),
+            origin=as_vec3(image.GetOrigin()),
             direction=tuple(float(x) for x in image.GetDirection()),
         )
 

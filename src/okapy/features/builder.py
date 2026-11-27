@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from okapy.core.config_values import FEATURE_OPTION_KEYS, get_bool
+from okapy.features.backends.base import FeatureBackend
 from okapy.features.backends.command import CommandFeatureBackend
 from okapy.features.backends.pet import PETFeatureBackend, PETFeatureConfig
 from okapy.features.backends.pyradiomics_local import LocalPyradiomicsBackend
@@ -28,7 +29,7 @@ def build_feature_extraction_step(config: dict[str, Any]) -> FeatureExtractionSt
     )
 
 
-def _build_backend(config: dict[str, Any]):
+def _build_backend(config: dict[str, Any]) -> FeatureBackend:
     backend_type = str(config["type"])
     name = str(config.get("name", backend_type))
     if backend_type == "pyradiomics_local":

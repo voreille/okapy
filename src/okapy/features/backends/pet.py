@@ -9,7 +9,7 @@ import SimpleITK as sitk
 from okapy.core.geometry import assert_same_geometry
 from okapy.core.models import ImageVolume, MaskVolume
 from okapy.features.backends.base import FeatureBackend
-from okapy.features.models import FeatureSet
+from okapy.features.models import FeatureSet, FeatureValue
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class PETFeatureBackend(FeatureBackend):
         self.config = config or PETFeatureConfig()
 
     def extract(
-        self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path
+        self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path | str
     ) -> FeatureSet:
         del work_dir
         if image.modality != "PT":
@@ -71,6 +71,7 @@ class PETFeatureBackend(FeatureBackend):
                 image_array=image_array,
             )
         suffix = self._feature_suffix()
+        features: dict[str, FeatureValue]
         if self.config.preserve_legacy_names:
             features = {
                 f"original_firstorder_MTV{suffix}": mtv_ml,
