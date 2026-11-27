@@ -22,7 +22,10 @@ class FeatureExtractionStep:
         self.common_backends = common_backends or []
         self.continue_on_error = continue_on_error
 
-    def run(self, volumes: VolumeCollection, *, work_dir: Path) -> list[FeatureRecord]:
+    def run(
+        self, volumes: VolumeCollection, *, work_dir: Path | str
+    ) -> list[FeatureRecord]:
+        work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
         return [
             record

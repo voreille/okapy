@@ -1,17 +1,27 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 from pathlib import Path
 
 from okapy.core.models import ImageVolume, MaskVolume
+from okapy.dicom.conversion.utils import ensure_inside, safe_name
 from okapy.features.backends.base import FeatureBackend
 from okapy.features.models import FeatureSet
 
+#: Mask metadata keys holding the series UID of the RTSTRUCT/SEG a mask comes
+#: from (set by the mask converters).
+_MASK_SERIES_UID_KEYS = ("rtstruct_series_instance_uid", "seg_series_instance_uid")
+
 
 class CommandFeatureBackend(FeatureBackend):
-    """CLI contract: --image, --mask, --params, --output."""
+    """CLI contract: --image, --mask, --params, --output.
+
+    The command is run as configured: configs using this backend are trusted
+    input.
+    """
 
     def __init__(
         self,
@@ -31,16 +41,14 @@ class CommandFeatureBackend(FeatureBackend):
         self.environment = environment
 
     def extract(
-        self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path
+        self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path | str
     ) -> FeatureSet:
-        pair_dir = (
-            work_dir
-            / _safe_name(image.series_instance_uid)
-            / _safe_name(mask.label)
-            / _safe_name(self.name)
-        )
+        work_dir = Path(work_dir)
+        pair_dir = ensure_inside(self._pair_dir(image, mask, work_dir), work_dir)
         pair_dir.mkdir(parents=True, exist_ok=True)
         output_path = pair_dir / "features.json"
+        # Never read a previous run's output if the command does not write one.
+        output_path.unlink(missing_ok=True)
         command = [
             *self.command,
             "--image",
@@ -84,12 +92,33 @@ class CommandFeatureBackend(FeatureBackend):
             metadata=dict(payload.get("metadata") or {}),
         )
 
+    def _pair_dir(self, image: ImageVolume, mask: MaskVolume, work_dir: Path) -> Path:
+        """Work dir unique per (image, mask, backend).
 
-def _safe_name(value: str) -> str:
-    return (
-        str(value)
-        .replace(" ", "_")
-        .replace("/", "_")
-        .replace("\\", "_")
-        .replace(":", "-")
-    )
+        Sanitized names keep it readable; a hash of the raw identifiers keeps
+        it unique when different values sanitize to the same name.
+        """
+
+        mask_series_uid = next(
+            (
+                mask.identity.metadata[key]
+                for key in _MASK_SERIES_UID_KEYS
+                if mask.identity.metadata.get(key)
+            ),
+            None,
+        )
+        raw = [
+            image.series_instance_uid,
+            str(image.path),
+            mask.label,
+            mask_series_uid,
+            str(mask.path),
+            self.name,
+        ]
+        digest = hashlib.sha1(json.dumps(raw).encode("utf-8")).hexdigest()[:12]
+        return (
+            work_dir
+            / safe_name(image.series_instance_uid)
+            / f"{safe_name(mask.label)}-{digest}"
+            / safe_name(self.name)
+        )

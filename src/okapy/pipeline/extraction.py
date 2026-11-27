@@ -28,11 +28,13 @@ class ExtractionPipeline:
 
     def run(
         self,
-        input_dir: Path,
+        input_dir: Path | str,
         *,
-        work_dir: Path,
+        work_dir: Path | str,
         labels: list[str] | None = None,
     ) -> pd.DataFrame:
+        input_dir = Path(input_dir)
+        work_dir = Path(work_dir)
         work_dir.mkdir(parents=True, exist_ok=True)
 
         converted = self.conversion.run(

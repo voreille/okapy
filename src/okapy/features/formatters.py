@@ -43,6 +43,13 @@ def _to_long_dataframe(
     rows = []
     for record in records:
         base = _base_row(record)
+        if not record.feature_sets:
+            # Keep records without features (e.g. every backend failed with
+            # continue_on_error), as the wide format does.
+            row = {**base, "feature_name": None, "feature_value": None}
+            if include_backend:
+                row["feature_backend"] = None
+            rows.append(row)
         for feature_set in record.feature_sets:
             for feature_name, feature_value in feature_set.features.items():
                 row = {

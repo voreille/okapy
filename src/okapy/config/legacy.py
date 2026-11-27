@@ -1,9 +1,56 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
 from okapy.core.geometry import MASK_THRESHOLD
+
+#: Legacy ``general.padding`` default, in millimetres.
+_LEGACY_DEFAULT_PADDING_MM = 10.0
+
+#: Legacy ``general.padding`` value meaning "do not crop".
+_LEGACY_WHOLE_IMAGE = "whole_image"
+
+#: Keys of ``feature_extraction`` that are options, not selectors.
+_RESERVED_FEATURE_KEYS = frozenset(
+    {"common", "continue_on_error", "result_format", "include_backend"}
+)
+_FEATURE_OPTION_KEYS = _RESERVED_FEATURE_KEYS - {"common"}
+
+
+def is_legacy_config(config: Mapping[str, Any]) -> bool:
+    """Whether ``config`` uses the legacy (pre-refactor) YAML shape.
+
+    Only keys that cannot appear in a new-shape config are used:
+
+    - a top-level ``volume_preprocessing`` section;
+    - ``general.padding`` (millimetres; replaced by ``padding_voxels``);
+    - ``feature_extraction`` selectors mapping to extractor groups, e.g.
+      ``{CT: {pyradiomics: {original: ...}}}``, instead of backend lists;
+    - a ``binary_bspline_resampler`` in ``mask_preprocessing``.
+    """
+
+    if "volume_preprocessing" in config:
+        return True
+
+    general = config.get("general") or {}
+    if isinstance(general, Mapping) and "padding" in general:
+        return True
+
+    features = config.get("feature_extraction") or {}
+    if isinstance(features, Mapping) and any(
+        isinstance(value, Mapping)
+        for selector, value in features.items()
+        if selector not in _FEATURE_OPTION_KEYS
+    ):
+        return True
+
+    mask_preprocessing = config.get("mask_preprocessing") or {}
+    return isinstance(mask_preprocessing, Mapping) and any(
+        isinstance(stack, Mapping) and "binary_bspline_resampler" in stack
+        for stack in mask_preprocessing.values()
+    )
 
 
 def migrate_legacy_config(
@@ -47,13 +94,12 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
     - ``local_preprocessing`` for image-only/local operations;
     - ``mask_preprocessing`` for post-geometry mask cleanup.
 
-    Legacy:
-        general.padding
-
-    becomes:
-        geometry_preprocessing.common.padding_voxels
-
-    The padding is a number of voxels of the target grid, not millimetres.
+    Legacy ``general.padding`` is in millimetres (default 10 mm). It becomes
+    ``padding_voxels`` (voxels of the target grid, per axis) for ``common`` and
+    for every selector with its own image resampling spacing:
+    ``round(padding / spacing)`` on each axis. A target spacing that is native
+    (``-1``) or missing along any axis cannot be converted and is rejected.
+    ``padding: whole_image`` becomes ``crop_to_masks: False``.
 
     A legacy ``mask_preprocessing.<selector>.binary_bspline_resampler`` only
     migrates ``resampling_spacing`` and ``cval``. The interpolation order and
@@ -74,18 +120,11 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
     # ---------------------------------------------------------------------
     # General legacy options
     # ---------------------------------------------------------------------
-    common_geometry: dict[str, Any] = {}
-
-    if "padding" in general:
-        common_geometry["padding_voxels"] = general["padding"]
-
-    # Reasonable default matching the old behavior:
-    # crop around masks if padding was provided.
-    if "padding" in general:
-        common_geometry["crop_to_masks"] = True
-
-    if common_geometry:
-        geometry_preprocessing["common"] = common_geometry
+    padding = general.get("padding", _LEGACY_DEFAULT_PADDING_MM)
+    crop_to_masks = padding != _LEGACY_WHOLE_IMAGE
+    geometry_preprocessing["common"] = {"crop_to_masks": crop_to_masks}
+    # Selectors whose image resampling spacing defines their padding grid.
+    image_spacing_selectors = {"common"}
 
     # ---------------------------------------------------------------------
     # Volume preprocessing: split geometry processors from local processors.
@@ -102,6 +141,7 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
             if name == "bspline_resampler":
                 if "resampling_spacing" in params:
                     geometry_cfg["spacing"] = params["resampling_spacing"]
+                    image_spacing_selectors.add(selector)
 
                 if "order" in params:
                     geometry_cfg["image_interpolator"] = _order_to_interpolator(
@@ -160,6 +200,17 @@ def migrate_legacy_preprocessing_config(config: dict[str, Any]) -> dict[str, Any
             new_mask_preprocessing[selector] = mask_stack
 
     # ---------------------------------------------------------------------
+    # Padding: millimetres -> voxels of each selector's target grid.
+    # ---------------------------------------------------------------------
+    if crop_to_masks:
+        for selector in sorted(image_spacing_selectors):
+            geometry_preprocessing[selector]["padding_voxels"] = _padding_to_voxels(
+                padding,
+                geometry_preprocessing[selector].get("spacing"),
+                selector=selector,
+            )
+
+    # ---------------------------------------------------------------------
     # Clean old keys and inject new structure.
     # ---------------------------------------------------------------------
     new_config.pop("volume_preprocessing", None)
@@ -184,7 +235,14 @@ def migrate_legacy_feature_extraction_config(
     }
 
     for selector, extractor_groups in feature_config.items():
+        if selector in _FEATURE_OPTION_KEYS:
+            migrated[selector] = deepcopy(extractor_groups)
+            continue
         if not extractor_groups:
+            continue
+        if not isinstance(extractor_groups, Mapping):
+            # Already a new-shape backend list.
+            migrated[selector] = deepcopy(extractor_groups)
             continue
 
         backends: list[dict[str, Any]] = []
@@ -222,6 +280,34 @@ def migrate_legacy_feature_extraction_config(
         migrated[selector] = backends
 
     return migrated
+
+
+def _padding_to_voxels(padding: Any, spacing: Any, *, selector: str) -> int | list[int]:
+    """Legacy padding (mm) as voxels of the ``spacing`` grid, per axis."""
+
+    if isinstance(padding, bool) or not isinstance(padding, (int, float)):
+        raise ValueError(
+            f"Cannot migrate legacy general.padding={padding!r}: expected a "
+            f"number of millimetres or {_LEGACY_WHOLE_IMAGE!r}."
+        )
+    if padding < 0:
+        raise ValueError(
+            f"Cannot migrate legacy general.padding={padding!r}: it must be >= 0."
+        )
+
+    axes = [float(value) for value in spacing] if spacing is not None else []
+    if len(axes) != 3 or any(value <= 0 for value in axes):
+        raise ValueError(
+            f"Cannot migrate legacy general.padding={padding} mm for selector "
+            f"{selector!r}: its target spacing ({spacing}) is native along at "
+            "least one axis, so millimetres cannot be converted to voxels. Set "
+            "an explicit 'padding_voxels' in 'geometry_preprocessing' instead."
+        )
+
+    voxels = [round(padding / value) for value in axes]
+    if len(set(voxels)) == 1:
+        return voxels[0]
+    return voxels
 
 
 def _order_to_interpolator(order: int) -> str:

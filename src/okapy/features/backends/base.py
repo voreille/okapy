@@ -12,6 +12,6 @@ class FeatureBackend(ABC):
 
     @abstractmethod
     def extract(
-        self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path
+        self, image: ImageVolume, mask: MaskVolume, *, work_dir: Path | str
     ) -> FeatureSet:
         raise NotImplementedError

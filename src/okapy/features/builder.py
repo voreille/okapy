@@ -12,11 +12,11 @@ from okapy.features.step import FeatureExtractionStep
 def build_feature_extraction_step(config: dict[str, Any]) -> FeatureExtractionStep:
     feature_config = config.get("feature_extraction") or {}
     common_backends = [
-        _build_backend(item) for item in feature_config.get("common", [])
+        _build_backend(item) for item in feature_config.get("common") or []
     ]
     reserved = {"common", "continue_on_error", "result_format", "include_backend"}
     backends_by_selector = {
-        selector: [_build_backend(item) for item in backend_configs]
+        selector: [_build_backend(item) for item in backend_configs or []]
         for selector, backend_configs in feature_config.items()
         if selector not in reserved
     }
